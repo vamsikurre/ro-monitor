@@ -1,0 +1,57 @@
+===============================================================================
+                     RS485 RETURN-LOOPBACK DAISY-CHAIN TOPOLOGY
+===============================================================================
+
+Physical Layout: RWT and TWT are in opposite directions from the Central Skid.
+Electrical Line: 100% Continuous Sequential Daisy-Chain (No Star Taps)
+
+ [120Ω TERM RESISTOR]
+┌─────────────────────┐
+│   ESP32-S HUB       │
+│ (Bus Master, 0x00)  │
+│   XY-485 Master     │
+└──────────┬──────────┘
+           │
+           │ (Internal bus link)
+           ▼
+┌─────────────────────┐
+│ DOSING TANK NODE    │
+│ (Slave Node 0x01)   │
+│ Arduino Nano + JSN  │
+│   XY-485 Module     │
+└──────────┬──────────┘
+           │
+           │ CAT5e Cable 1 (Outbound Pair: Blue / White-Blue)
+           ▼
+┌─────────────────────┐
+│  RAW WATER TANK     │
+│ (Slave Node 0x02)   │
+│ Arduino Nano + JSN  │
+│   XY-485 Module     │
+└──────────┬──────────┘
+           │
+           │ (Physical Loopback at RWT Terminal Block)
+           │
+           │ CAT5e Cable 1 (Return Pair: Brown / White-Brown)
+           ▼
+┌─────────────────────┐
+│ CENTRAL JUNCTION BOX│ (Direct pass-through splice: Return Pair -> Cable 2 Outbound)
+└──────────┬──────────┘
+           │
+           │ CAT5e Cable 2 (Outbound Pair: Blue / White-Blue)
+           ▼
+┌─────────────────────┐
+│ TREATED WATER TANK  │
+│ (Slave Node 0x03)   │
+│ Arduino Nano + JSN  │
+│   XY-485 Module     │
+│ [120Ω TERM RESISTOR]│
+└─────────────────────┘
+
+===============================================================================
+                             ELECTRICAL SIGNAL PATH
+===============================================================================
+
+  Hub (Start, 120Ω) ──> Dosing ──> [Cable 1 Out] ──> RWT Node
+                                                       │ (Loopback)
+  TWT Node (End, 120Ω) <── [Cable 2 Out] <── [Cable 1 Return] ◄─┘

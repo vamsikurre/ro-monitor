@@ -1,0 +1,1028 @@
+You are working on my RO Water Purifier Monitoring and IoT project.
+
+PROJECT DIRECTORY:
+ro-monitor/
+
+IMPORTANT:
+I have added photographs of the actual RO plant/controller/equipment to:
+
+ro-monitor/images/
+
+Before writing hardware-specific code or making assumptions about the RO controller, inspect ALL images in this directory. These are photographs of the actual installation and controller. Use them to identify terminals, relays, indicators, wiring, sensors, power supplies, and equipment wherever possible.
+
+Do NOT assume a generic RO controller pinout when the actual photos can provide evidence.
+
+============================================================
+1. PROJECT GOAL
+============================================================
+
+Build a reliable local RO plant monitoring system using:
+
+- ESP32S as the main HUB
+- Arduino Nano nodes for remote tank-level measurement
+- RS485/Modbus-style communication between the HUB and tank nodes
+- Ultrasonic waterproof sensors for tank levels
+- Optically isolated inputs for 240V AC signals
+- PC817 isolation for low-voltage/dry-contact signals
+- SHT30 temperature/humidity sensor
+- WiFi connectivity from the ESP32 HUB
+- A local monitoring web interface
+- Architecture that can later be extended for IoT/cloud integration
+
+The system should be designed as an industrial-style monitoring system rather than a hobby/demo sketch.
+
+Reliability, electrical isolation, fault detection, watchdog recovery, communication timeout handling, and safe startup behavior are important.
+
+============================================================
+2. HARDWARE ARCHITECTURE
+============================================================
+
+PHASE 1 = HUB
+
+The HUB will be installed near the RO controller.
+
+Main controller:
+
+- ESP32S 38-pin development board
+- WiFi + Bluetooth
+- ESP32 is the main processor and communication gateway
+
+Power:
+
+- Hi-Link HLK-20M12
+- Input: 100–240V AC
+- Output: 12V DC
+- Rated power: 20W
+- This is the main 12V supply for the system
+
+The HUB will use a 12V -> 5V buck converter for the ESP32 and 5V peripherals.
+
+The 12V supply will also be distributed through CAT5e to remote tank modules.
+
+Do NOT use the previously considered HLK-5M12 5W module.
+
+The selected main PSU is:
+
+HLK-20M12, 12V / 20W.
+
+============================================================
+3. HUB INPUTS
+============================================================
+
+The following signals are planned for the HUB.
+
+A) HPP
+
+HPP = High Pressure Pump signal.
+
+The signal is 240V AC.
+
+Interface:
+
+240V AC -> appropriate AC opto-isolator -> ESP32 GPIO
+
+The firmware must treat this as an isolated digital input.
+
+B) RWP
+
+RWP = Raw Water Pump signal.
+
+The signal is 240V AC.
+
+Interface:
+
+240V AC -> appropriate AC opto-isolator -> ESP32 GPIO
+
+Again, this must be electrically isolated from the ESP32.
+
+IMPORTANT:
+
+Do not connect 240V directly to the ESP32.
+
+Do not assume the exact controller terminal until the photographs in /images have been inspected.
+
+C) TWT FLOAT
+
+TWT has a float switch/digital contact.
+
+Interface:
+
+TWT float -> PC817 optocoupler -> ESP32 GPIO
+
+Determine from the actual hardware whether the float is NO/NC and design the firmware so that the logical state can be configured rather than hard-coded.
+
+D) RL1 / RL2
+
+RL1 and RL2 are relay/status signals.
+
+Use PC817 optocoupler isolation where appropriate.
+
+The software should represent these as named status inputs rather than generic GPIOs.
+
+Example:
+
+RL1_STATUS
+RL2_STATUS
+
+The exact meaning of RL1/RL2 must be determined from the actual controller/photos/documentation rather than guessed.
+
+============================================================
+4. RO ROOM ENVIRONMENT SENSOR
+============================================================
+
+Use:
+
+GY-SHT30-D
+
+Measure:
+
+- Temperature
+- Relative humidity
+
+This sensor is located in the RO room near the HUB.
+
+Use I2C.
+
+The firmware should periodically read:
+
+temperature_c
+humidity_percent
+
+Handle sensor read failures gracefully.
+
+Do not allow a failed SHT30 reading to crash or block the main monitoring loop.
+
+============================================================
+5. DOSING TANK
+============================================================
+
+The dosing tank requires a level measurement.
+
+Use an ultrasonic waterproof sensor.
+
+The sensor I purchased is an industrial-style waterproof ultrasonic sensor with:
+
+- 5V supply
+- Trigger
+- Echo
+- GND
+- approximately 0.3m–3m stated range
+- approximately 25cm blind zone
+- approximately 40kHz operation
+- approximately 0.5cm stated resolution
+
+It is similar electrically to an HC-SR04 but uses a waterproof probe.
+
+The dosing tank sensor will initially be connected to the HUB if practical.
+
+The software must convert measured distance into:
+
+- distance_mm
+- level_mm
+- level_percent
+
+The tank geometry must be configurable rather than hard-coded.
+
+Allow configuration for:
+
+- tank height
+- sensor mounting offset
+- minimum measurable distance
+- maximum measurable distance
+- empty level
+- full level
+
+Because the sensor has a blind zone, reject impossible measurements.
+
+Do not blindly accept 0cm or out-of-range readings.
+
+============================================================
+6. PHASE 2 — REMOTE TANK MODULES
+============================================================
+
+There are multiple tanks.
+
+Initially:
+
+1. Dosing Tank
+2. Raw Water Tank
+3. Treated Water Tank
+
+The architecture must support at least 3 remote tank nodes.
+
+Each tank node will use:
+
+- Arduino Nano
+- Waterproof ultrasonic sensor
+- RS485 transceiver
+- 5V buck converter
+- 12V supplied from the HUB through CAT5e
+
+Each Arduino Nano measures its tank level and communicates with the ESP32 HUB through RS485.
+
+The Arduino Nano does NOT need WiFi.
+
+============================================================
+7. CAT5e POWER + COMMUNICATION
+============================================================
+
+The remote tank modules are only approximately 5–10 meters from the RO controller/HUB, with the tanks approximately one slab above.
+
+I have CAT5e cable available and intend to use it.
+
+12V DC will be sent from the HUB to the remote tank module through the CAT5e cable.
+
+At the remote tank module:
+
+12V -> 5V buck converter -> Arduino Nano + ultrasonic sensor + RS485 transceiver
+
+The CAT5e cable will also carry RS485 communication.
+
+Use twisted pairs intelligently.
+
+Prefer:
+
+Pair 1:
+RS485 A / RS485 B
+
+Pair 2:
+12V / GND
+
+Additional conductors/pairs may be used as appropriate.
+
+Document the exact proposed CAT5e pin/pair assignment.
+
+Do not use Ethernet networking over this cable.
+
+It is simply being used as convenient multi-conductor cable for:
+
+- 12V power
+- GND
+- RS485 differential communication
+
+The 5–10 meter distance is short for RS485, so the design should be robust at this distance.
+
+============================================================
+8. RS485 NETWORK
+============================================================
+
+There will be ONE RS485 bus connected to the ESP32 HUB.
+
+Multiple Arduino Nano tank nodes will share the same bus.
+
+Example:
+
+ESP32 HUB
+    |
+    +---- RS485 ---- Tank Node 1 (Dosing)
+    |
+    +---- RS485 ---- Tank Node 2 (Raw Water)
+    |
+    +---- RS485 ---- Tank Node 3 (Treated Water)
+
+This must NOT be implemented as three separate UART interfaces unless there is a compelling reason.
+
+Use a single RS485 bus with device addressing.
+
+Each tank node must have a unique address.
+
+Example:
+
+0x01 = DOSING_TANK
+0x02 = RAW_WATER_TANK
+0x03 = TREATED_WATER_TANK
+
+Reserve additional addresses for future nodes.
+
+Use a simple deterministic request/response protocol, preferably Modbus RTU-compatible or a clearly documented lightweight protocol.
+
+The architecture should make it easy to migrate to standard Modbus RTU later.
+
+============================================================
+9. RS485 TRANSCEIVER
+============================================================
+
+I have considered several RS485 modules.
+
+One selected module is the 3.3V/5V-compatible TTL-to-RS485 board shown in the project discussion.
+
+It exposes:
+
+- VCC
+- TXD
+- RXD
+- GND
+- A+
+- B-
+- optional earth/shield connection
+
+The module supports 3.3V/5V logic and automatic RS485 direction control.
+
+Use this style of module where appropriate.
+
+I also have generic MAX485 modules available, but the design should not depend on a specific board footprint.
+
+Create a hardware abstraction so the firmware only cares about:
+
+RS485 TX
+RS485 RX
+baud rate
+node address
+protocol
+
+============================================================
+10. RS485 TERMINATION / TOPOLOGY
+============================================================
+
+Use proper RS485 bus topology.
+
+Do NOT create a star network.
+
+The preferred physical topology is:
+
+HUB ---- Node 1 ---- Node 2 ---- Node 3
+
+or another daisy-chain arrangement following the actual cable routing.
+
+Termination should be used only at the two physical ends of the RS485 bus.
+
+The firmware/project documentation must explain:
+
+- A/B polarity
+- termination
+- common ground/reference
+- cable pair assignment
+- node addressing
+- communication timeout
+- retry behavior
+
+Because the cable distance is short, do not over-engineer the communication speed.
+
+A conservative baud rate such as 9600 or 19200 is acceptable.
+
+Reliability is more important than speed.
+
+============================================================
+11. ARDUINO NANO TANK NODE
+============================================================
+
+Each Nano node should perform the following:
+
+1. Boot
+2. Initialize ultrasonic sensor
+3. Initialize RS485
+4. Measure tank level periodically
+5. Filter invalid readings
+6. Calculate level percentage
+7. Respond to HUB requests
+8. Report sensor faults
+9. Continue operating even if HUB communication is temporarily lost
+
+The Nano should NOT depend on the HUB being available to perform measurements.
+
+Each node should maintain its own sensor state.
+
+Example status:
+
+OK
+SENSOR_ERROR
+OUT_OF_RANGE
+NO_ECHO
+COMMUNICATION_ERROR
+
+The HUB should be able to distinguish:
+
+"tank is empty"
+
+from
+
+"tank sensor is not responding."
+
+============================================================
+12. ULTRASONIC MEASUREMENT
+============================================================
+
+Implement robust measurement filtering.
+
+Do not use one raw ultrasonic reading directly as the displayed level.
+
+Suggested approach:
+
+- Take multiple samples
+- Reject invalid/out-of-range samples
+- Apply median filtering
+- Optionally apply moving average/exponential smoothing
+- Detect sudden impossible changes
+- Track sensor timeout
+
+Make all filtering parameters configurable.
+
+Example:
+
+ULTRASONIC_SAMPLE_COUNT
+ULTRASONIC_TIMEOUT_US
+LEVEL_FILTER_ALPHA
+MAX_LEVEL_CHANGE_PER_UPDATE
+
+The system should produce stable readings without introducing excessive delay.
+
+============================================================
+13. TANK CONFIGURATION
+============================================================
+
+Do NOT hard-code physical tank dimensions into the firmware.
+
+Each node should have configuration such as:
+
+tank_id
+tank_name
+tank_height_mm
+sensor_offset_mm
+empty_distance_mm
+full_distance_mm
+
+The HUB should maintain a configuration table.
+
+Example:
+
+DOSING_TANK
+RAW_WATER_TANK
+TREATED_WATER_TANK
+
+The exact dimensions will be filled in later after measuring the actual tanks.
+
+============================================================
+14. HUB DATA MODEL
+============================================================
+
+Create a clean internal data model.
+
+Example:
+
+ROSystemStatus
+
+Fields should include:
+
+timestamp
+hpp_status
+rwp_status
+twt_float_status
+rl1_status
+rl2_status
+dosing_tank_level
+raw_water_tank_level
+treated_water_tank_level
+temperature
+humidity
+rs485_status
+sensor_faults
+communication_faults
+
+Tank status should include:
+
+tankId
+tankName
+distance
+level
+percentage
+lastUpdate
+online
+sensorStatus
+
+============================================================
+15. FAULT DETECTION
+============================================================
+
+The HUB must detect:
+
+- Tank node offline
+- RS485 timeout
+- Invalid sensor reading
+- Ultrasonic out-of-range
+- SHT30 failure
+- Unexpected signal transitions
+- ESP32 restart
+- Watchdog reset
+- Communication errors
+
+Do not simply display "0%" when a tank node is offline.
+
+Offline should be a separate state.
+
+Example:
+
+ONLINE
+STALE
+OFFLINE
+SENSOR_ERROR
+
+============================================================
+16. ESP32 RELIABILITY
+============================================================
+
+Implement:
+
+- watchdog protection
+- non-blocking main loop
+- WiFi reconnect
+- RS485 timeout handling
+- sensor timeout handling
+- periodic health monitoring
+- graceful recovery from peripheral failures
+
+Avoid long delay() calls.
+
+Prefer millis()-based scheduling/state machines.
+
+A temporary WiFi failure must not stop:
+
+- local monitoring
+- RS485 polling
+- input monitoring
+- sensor acquisition
+
+============================================================
+17. LOCAL WEB INTERFACE
+============================================================
+
+Build a local web dashboard hosted by the ESP32.
+
+The dashboard should show:
+
+RO PLANT MONITOR
+
+SYSTEM
+- ESP32 online
+- uptime
+- WiFi RSSI
+- firmware version
+- last reboot reason
+
+PUMPS / CONTROLLER
+- HPP
+- RWP
+- TWT Float
+- RL1
+- RL2
+
+TANK LEVELS
+- Dosing Tank
+- Raw Water Tank
+- Treated Water Tank
+
+Each tank should display:
+
+- percentage
+- level
+- distance
+- online/offline
+- sensor status
+- last update time
+
+ENVIRONMENT
+- RO room temperature
+- humidity
+
+COMMUNICATION
+- RS485 status
+- number of online nodes
+- last successful poll
+- communication errors
+
+The UI should clearly distinguish normal, warning, fault and offline conditions.
+
+Do not rely exclusively on color; include text/status labels.
+
+============================================================
+18. API
+============================================================
+
+Expose a simple local REST API from the ESP32.
+
+For example:
+
+GET /api/status
+
+GET /api/tanks
+
+GET /api/environment
+
+GET /api/inputs
+
+GET /api/health
+
+GET /api/config
+
+If appropriate, create a WebSocket or Server-Sent Events endpoint for live dashboard updates.
+
+Do not make the frontend dependent on cloud services.
+
+The system must work completely on the local network.
+
+============================================================
+19. FUTURE CLOUD / BLYNK / ESP RAINMAKER
+============================================================
+
+Keep the architecture modular so cloud integration can be added later.
+
+Do NOT make the core monitoring functionality dependent on Blynk, ESP RainMaker, or any cloud service.
+
+The local ESP32 monitoring system must continue functioning without Internet access.
+
+Cloud integration can later consume the same internal data model/API.
+
+============================================================
+20. ACTUAL RO CONTROLLER PHOTOS
+============================================================
+
+IMPORTANT:
+
+Inspect every image under:
+
+images/
+
+These photos are from the actual RO plant.
+
+Use them to identify:
+
+- controller board
+- terminal blocks
+- pump wiring
+- HPP
+- RWP
+- TWT
+- relay outputs
+- dosing system
+- rotameters
+- electrical enclosure
+- existing sensors
+- existing power supplies
+- possible RS485 interfaces
+- existing communication modules
+
+Pay particular attention to images showing:
+
+- controller terminal blocks
+- relay boards
+- green terminal connectors
+- existing wiring
+- controller display
+- GSM/communication modules
+- PCB labels
+
+If a terminal or signal cannot be identified confidently from the photographs, mark it as UNKNOWN rather than guessing.
+
+Create a document:
+
+docs/RO_HARDWARE_ANALYSIS.md
+
+containing:
+
+1. Image-by-image observations
+2. Identified equipment
+3. Identified terminals
+4. Candidate signals
+5. Confirmed signals
+6. Unknown signals
+7. Recommended interface method
+8. Safety notes
+9. Wiring assumptions requiring physical verification
+
+Use the actual photographs as evidence.
+
+============================================================
+21. ELECTRICAL SAFETY
+============================================================
+
+This system interfaces with 240V AC equipment.
+
+Treat all mains interfaces as dangerous.
+
+Never connect 240V directly to:
+
+- ESP32
+- Arduino Nano
+- SHT30
+- RS485 transceiver
+- ultrasonic sensor
+
+Use appropriate opto-isolation.
+
+Keep SELV electronics physically separated from mains wiring.
+
+Use suitable fusing, insulation, enclosure, cable management and terminal blocks.
+
+Do not implement any mains switching/control functionality until the actual controller circuitry and required isolation have been verified.
+
+For the first implementation, prioritize MONITORING.
+
+============================================================
+22. POWER BUDGET
+============================================================
+
+Main supply:
+
+HLK-20M12
+12V
+20W
+approximately 1.6A maximum output
+
+The system should calculate/estimate the power budget.
+
+HUB loads include:
+
+- ESP32
+- SHT30
+- RS485 transceiver
+- optocoupler input circuits
+- dosing ultrasonic sensor
+- future expansion
+
+Remote nodes include:
+
+- Arduino Nano
+- ultrasonic sensor
+- RS485 transceiver
+- buck converter losses
+
+The 12V distribution should have adequate margin.
+
+Do not assume the full 20W is available continuously without considering converter efficiency and wiring losses.
+
+============================================================
+23. SOFTWARE PROJECT STRUCTURE
+============================================================
+
+First inspect the existing repository.
+
+Do NOT overwrite an existing project blindly.
+
+Determine whether the repository is currently:
+
+- empty
+- Arduino
+- PlatformIO
+- ESP-IDF
+- mixed ESP32 + Arduino firmware
+
+Prefer PlatformIO if it is appropriate for supporting both ESP32 and Arduino Nano firmware cleanly.
+
+A possible structure:
+
+firmware/
+    hub/
+    tank_node/
+
+src/
+    ...
+
+include/
+    ...
+
+web/
+    ...
+
+docs/
+    RO_HARDWARE_ANALYSIS.md
+    HARDWARE.md
+    RS485_PROTOCOL.md
+    WIRING.md
+    POWER_BUDGET.md
+
+images/
+    [existing RO photos]
+
+tests/
+
+Use clean separation between:
+
+hardware drivers
+communication
+business logic
+configuration
+web/API
+logging
+fault management
+
+============================================================
+24. RS485 PROTOCOL
+============================================================
+
+Design and document a deterministic protocol.
+
+Minimum requirements:
+
+- node address
+- command
+- response
+- payload
+- checksum/CRC
+- timeout
+- retry
+
+Prefer CRC16 if implementing a custom protocol.
+
+Example commands:
+
+READ_STATUS
+READ_LEVEL
+READ_SENSOR
+PING
+GET_CONFIG
+SET_CONFIG
+
+The HUB should poll nodes sequentially.
+
+Example:
+
+HUB -> Node 1: READ_STATUS
+Node 1 -> HUB: response
+
+HUB -> Node 2: READ_STATUS
+Node 2 -> HUB: response
+
+HUB -> Node 3: READ_STATUS
+Node 3 -> HUB: response
+
+Do not allow multiple nodes to transmit simultaneously.
+
+============================================================
+25. CONFIGURATION
+============================================================
+
+Configuration should be centralized and easy to change.
+
+Include:
+
+WiFi SSID/password
+device name
+RS485 baud rate
+node addresses
+tank dimensions
+sensor calibration
+poll interval
+timeouts
+filter parameters
+warning thresholds
+critical thresholds
+
+Avoid scattering constants throughout the code.
+
+============================================================
+26. LOGGING
+============================================================
+
+Implement useful structured logging.
+
+Examples:
+
+[INFO] RS485 node 1 online
+[INFO] Tank 2 level = 67.2%
+[WARN] Tank 3 ultrasonic timeout
+[WARN] RS485 node 2 offline
+[INFO] WiFi reconnected
+[ERROR] SHT30 read failed
+
+Avoid excessive logging in normal operation.
+
+============================================================
+27. IMPLEMENTATION STRATEGY
+============================================================
+
+Do NOT immediately write the entire system.
+
+Work in stages.
+
+PHASE A:
+Inspect repository and all images.
+
+Create:
+
+docs/RO_HARDWARE_ANALYSIS.md
+docs/HARDWARE.md
+docs/WIRING.md
+docs/RS485_PROTOCOL.md
+docs/POWER_BUDGET.md
+
+Then summarize your understanding.
+
+PHASE B:
+Implement ESP32 HUB base firmware.
+
+Verify:
+
+- boot
+- WiFi
+- web server
+- logging
+- watchdog
+- SHT30
+- digital isolated inputs
+
+PHASE C:
+Implement RS485 communication.
+
+Initially test with one simulated node.
+
+PHASE D:
+Implement Arduino Nano tank-node firmware.
+
+Test:
+
+- ultrasonic sensor
+- level calculation
+- filtering
+- RS485 response
+
+PHASE E:
+Add multiple tank nodes.
+
+Test addresses:
+
+1 = Dosing
+2 = Raw Water
+3 = Treated Water
+
+PHASE F:
+Integrate the local dashboard.
+
+PHASE G:
+Add fault handling and persistence.
+
+============================================================
+28. IMPORTANT DEVELOPMENT RULES
+============================================================
+
+1. Inspect existing code before modifying it.
+
+2. Inspect every image under images/.
+
+3. Never invent a controller terminal assignment.
+
+4. Never assume a signal meaning merely because of a similar generic RO controller.
+
+5. Keep hardware-specific mappings in one place.
+
+6. Use meaningful names instead of GPIO numbers throughout application code.
+
+7. Separate hardware drivers from business logic.
+
+8. Do not use blocking delays for normal operation.
+
+9. Handle communication failures explicitly.
+
+10. Treat an offline sensor differently from a valid zero reading.
+
+11. Make tank dimensions configurable.
+
+12. Make node addresses configurable.
+
+13. Document all wiring.
+
+14. Document all assumptions.
+
+15. Do not implement mains control unless explicitly requested later.
+
+16. The local system must work without Internet access.
+
+17. Do not introduce unnecessary cloud dependencies.
+
+18. Keep the system extensible for additional tanks and sensors.
+
+============================================================
+29. FIRST TASK
+============================================================
+
+Your FIRST task is NOT to write the complete firmware.
+
+First:
+
+1. Inspect the entire repository.
+2. Inspect every image under images/.
+3. Identify the current project structure.
+4. Identify what code already exists.
+5. Analyze the actual RO controller from the photographs.
+6. Produce the hardware analysis documents.
+7. Propose the GPIO allocation for the ESP32 HUB.
+8. Propose the Arduino Nano pin allocation.
+9. Propose RS485 wiring.
+10. Propose CAT5e pair allocation.
+11. Produce the power budget.
+12. Identify anything that cannot be determined safely from the photos.
+13. Only then begin implementation.
+
+At the end of the first stage, provide:
+
+- repository assessment
+- hardware findings
+- proposed architecture
+- GPIO map
+- RS485 architecture
+- CAT5e wiring
+- power budget
+- unresolved questions
+- implementation plan
+
+Do not guess where physical evidence is unavailable.
+
+The goal is to build this incrementally and verify each hardware layer before moving to the next one.

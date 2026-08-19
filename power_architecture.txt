@@ -1,0 +1,25 @@
+230V AC
+   │
+   ▼
+HLK-20M12
+   │
+   └── 12V DC
+        │
+        ├── HUB
+        │    └── 5V buck
+        │         ├── ESP32
+        │         ├── SHT30
+        │         ├── RS485
+        │         └── sensors
+        │
+        ├── CAT5e → Tank Node 1
+        │             └── 5V buck
+        │                  ├── Arduino Nano
+        │                  ├── ultrasonic
+        │                  └── RS485
+        │
+        ├── CAT5e → Tank Node 2
+        │             └── 5V buck
+        │
+        └── CAT5e → Tank Node 3
+                      └── 5V buck
