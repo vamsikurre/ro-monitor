@@ -1,0 +1,67 @@
+# Draw.io temporary and backup files
+.$*.drawio.bkp
+*.drawio.bkp
+*.drawio.dtmp
+
+# Operating System Files
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / Editor Files
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Embedded Development & Build Artifacts (PlatformIO / Arduino / ESP-IDF)
+.pio/
+.pioenvs/
+.piolibdeps/
+.clangd/
+build/
+dist/
+out/
+*.hex
+*.elf
+*.bin
+*.map
+*.o
+*.obj
+*.a
+*.lib
+
+# Secrets & Environment Configurations
+.env
+.env.*
+!.env.example
+secrets.h
+config.local.h
+
+# Python (Diagnostic / Tooling Scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Logs & Temporary Files
+*.log
+scratch/
+tmp/
+temp/
