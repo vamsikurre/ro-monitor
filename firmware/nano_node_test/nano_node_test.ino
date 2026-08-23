@@ -16,12 +16,33 @@
 #define PIN_US_TRIG     7   // JSN-SR04T Trigger Pin
 #define PIN_US_ECHO     8   // JSN-SR04T Echo Pin
 #define PIN_LED         13  // Onboard Activity LED
+#define PIN_ADDR_0      A0  // Hardware Address Bit 0
+#define PIN_ADDR_1      A1  // Hardware Address Bit 1
 
-// Configuration
-const uint8_t MY_NODE_ID = 0x01; // Default Test Node ID (Dosing / Tank 1)
+// Dynamic Node Address (Determined at boot via A0/A1 or defaults to 0x01)
+uint8_t MY_NODE_ID = 0x01;
 
 // SoftwareSerial for RS485 (9600 baud)
 SoftwareSerial rs485(PIN_RS485_RX, PIN_RS485_TX);
+
+// Read Node Address from A0 & A1 (Internal Pullup: Open = 1, Jumper to GND = 0)
+// Jumper Truth Table:
+// - A1=0, A0=1 (0b01) -> 0x01 (Dosing Tank)
+// - A1=1, A0=0 (0b10) -> 0x02 (Raw Water Tank)
+// - A1=1, A0=1 (0b11) -> 0x03 (Treated Water Tank / Default Unconnected)
+// - A1=0, A0=0 (0b00) -> 0x04 (Aux / 4th Node)
+uint8_t readNodeAddress() {
+  pinMode(PIN_ADDR_0, INPUT_PULLUP);
+  pinMode(PIN_ADDR_1, INPUT_PULLUP);
+  delay(10); // Settle pullups
+
+  uint8_t bit0 = (digitalRead(PIN_ADDR_0) == HIGH) ? 1 : 0;
+  uint8_t bit1 = (digitalRead(PIN_ADDR_1) == HIGH) ? 1 : 0;
+  uint8_t raw = (bit1 << 1) | bit0;
+
+  if (raw == 0) return 0x04; // Both jumpered to GND -> Node 4
+  return raw;               // 0x01, 0x02, or 0x03
+}
 
 // Global Variables
 unsigned long lastMeasureTime = 0;
@@ -64,10 +85,13 @@ void setup() {
   digitalWrite(PIN_US_TRIG, LOW);
   digitalWrite(PIN_LED, LOW);
 
+  // Read Address from Jumpers (A0 / A1)
+  MY_NODE_ID = readNodeAddress();
+
   Serial.println(F("========================================"));
   Serial.println(F("  RO MONITOR - NANO TANK NODE TEST     "));
   Serial.println(F("========================================"));
-  Serial.print(F("Assigned Node ID: 0x0"));
+  Serial.print(F("Auto-Detected Node ID: 0x0"));
   Serial.println(MY_NODE_ID, HEX);
   Serial.println(F("Listening for ESP32 Hub polls on RS485..."));
 }

@@ -153,12 +153,18 @@ void loop() {
     Serial.println(F("[SHT30 Sensor]  FAILED / NOT DETECTED"));
   }
 
-  // 2. RS485 Nano Node 0x01
-  uint16_t distanceMM = 0;
-  if (pollNanoNode(0x01, distanceMM)) {
-    Serial.printf("[RS485 Node 0x01] Response OK! Tank Distance: %d mm (%.1f cm)\n", distanceMM, distanceMM / 10.0);
-  } else {
-    Serial.println(F("[RS485 Node 0x01] TIMEOUT / NO RESPONSE"));
+  // 2. RS485 Nano Nodes (Poll 0x01 through 0x04)
+  const char* nodeLabels[] = { "Dosing Tank", "Raw Water (RWT)", "Treated Water (TWT)", "Node 4 / Aux" };
+  for (uint8_t nodeId = 1; nodeId <= 4; nodeId++) {
+    uint16_t distanceMM = 0;
+    if (pollNanoNode(nodeId, distanceMM)) {
+      Serial.printf("[RS485 Node 0x%02X - %-19s] OK! Tank Dist: %4d mm (%.1f cm)\n", 
+                    nodeId, nodeLabels[nodeId - 1], distanceMM, distanceMM / 10.0);
+    } else {
+      Serial.printf("[RS485 Node 0x%02X - %-19s] TIMEOUT / NO RESPONSE\n", 
+                    nodeId, nodeLabels[nodeId - 1]);
+    }
+    delay(40); // Short gap between successive polls on the bus
   }
 
   // 3. Optocoupler Status Readings (Filtered for AC inputs)
