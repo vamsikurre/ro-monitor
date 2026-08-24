@@ -134,7 +134,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* earth below grade */
 .earth{
   grid-column:1 / -1; grid-row:5; align-self:stretch; position:relative; z-index:0;
-  margin:-16px -14px -14px -14px;
+  margin:-44px -14px -14px -14px;
   background:repeating-linear-gradient(45deg,
     transparent 0 7px, color-mix(in srgb,var(--line) 85%,transparent) 7px 8px);
 }
@@ -146,7 +146,7 @@ h1 span{color:var(--ink-3); font-weight:400}
   align-self:end; z-index:0; display:flex; align-items:flex-end;
   pointer-events:none; opacity:.42; margin-bottom:-12px;
 }
-.scenery.cars{justify-content:space-evenly; padding:0 24px}
+.scenery.cars{justify-content:space-evenly; padding:0 30px}
 .scenery.plants{justify-content:flex-start; gap:20px; padding-left:22px}
 
 /* level marker, as on an architectural elevation */
@@ -341,7 +341,10 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
        L ${pad} ${pad + 7} Q ${pad} ${pad} ${pad + 7} ${pad} Z`;
 
   const cid = "clip-" + id;
-  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  const svg = el("svg", {
+    width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true",
+    "data-pad": pad, "data-ih": ih, "data-amp": AMP,
+  });
   const defs = el("defs");
   defs.appendChild(el("clipPath", { id: cid }, [el("path", { d: silhouette })]));
 
@@ -366,7 +369,7 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
   if (state === "OFFLINE" || state === "SENSOR_ERROR") {
     body.appendChild(el("rect", { x: 0, y: 0, width: w, height: h, fill: `url(#hatch-${id})` }));
   } else {
-    const level = el("g");
+    const level = el("g", { class: "lvl" });
     const top = pad + ih - (ih * Math.max(0, Math.min(100, pct)) / 100);
     level.setAttribute("transform", `translate(0 ${top - AMP})`);
     level.style.transition = "transform .9s cubic-bezier(.4,0,.2,1)";
@@ -537,6 +540,7 @@ function equipUnit(draw, label, id, w, h) {
 /* ── unit builders ────────────────────────────────────────── */
 function tankUnit(t, cfg) {
   const u = node("unit");
+  u.dataset.u = cfg.id;
   const v = node("vessel");
   v.dataset.a = cfg.id;
   const g = node("glyph");
@@ -563,6 +567,7 @@ function tankUnit(t, cfg) {
 
 function machineUnit(m, label, id, r) {
   const u = node("unit");
+  u.dataset.u = id;
   const dead = m.state && m.state !== "ONLINE";
   const w = node("unit" + (m.on && !dead ? " spin" : ""));
   w.dataset.a = id;
@@ -662,7 +667,7 @@ const LOC = {
   filter: "Terrace \u00b7 RO room", mf: "Terrace \u00b7 RO room", memb: "Terrace \u00b7 RO room",
 };
 
-function drawPlant(s) {
+function buildPlant(s) {
   const host = $("#plant");
   [...host.children].forEach(c => { if (c.tagName.toLowerCase() !== "svg") c.remove(); });
   const narrow = window.matchMedia("(max-width:900px)").matches;
@@ -699,8 +704,12 @@ function drawPlant(s) {
     const e = s.env.ro_room, env = node("roomenv");
     env.appendChild(txt("legend", "Room air"));
     if (e.state === "ONLINE") {
-      env.appendChild(node("vals", `${e.t.toFixed(1)}<u>\u00b0C</u>`));
-      env.appendChild(node("vals", `${e.rh.toFixed(0)}<u>%</u>`));
+      const vt = node("vals", `${e.t.toFixed(1)}<u>\u00b0C</u>`);
+      const vh = node("vals", `${e.rh.toFixed(0)}<u>%</u>`);
+      vt.dataset.env = "t";
+      vh.dataset.env = "rh";
+      env.appendChild(vt);
+      env.appendChild(vh);
     } else {
       env.appendChild(chip("Sensor offline", "fault"));
     }
@@ -715,7 +724,9 @@ function drawPlant(s) {
     fu.appendChild(fan({ r: 24, running: B.fan, dead: B.state !== "ONLINE" }));
     ab.appendChild(fu);
     ab.appendChild(txt("name", "Exhaust Fan"));
-    ab.appendChild(txt("sub", B.state === "ONLINE" ? `${B.t.toFixed(1)} \u00b0C \u00b7 ${B.rh.toFixed(0)} %` : "\u2014"));
+    const asub = txt("sub", "");
+    asub.dataset.annex = "1";
+    ab.appendChild(asub);
     let bt = "Off", bk = "off";
     if (B.state !== "ONLINE") { bt = "Offline"; bk = "fault"; }
     else if (B.fan) { bt = "Running"; bk = "on"; }
@@ -742,17 +753,17 @@ function drawPlant(s) {
 
     TEE_AXIS = "v";
     ROUTES = [
-      { from: "bore",   fs: "b", to: "sump",   ts: "t", fluid: "raw",     flow: live("borewell") },
-      { from: "sump",   fs: "b", to: "smotor", ts: "t", fluid: "raw",     flow: live("sump_motor") },
-      { from: "smotor", fs: "b", to: "rwt",    ts: "t", fluid: "raw",     flow: live("sump_motor") },
-      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
-      { from: "rwp",    fs: "b", to: "filter", ts: "t", fluid: "raw",     flow: live("rwp") },
-      { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     flow: live("rwp") },
-      { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "bore",   fs: "b", to: "sump",   ts: "t", fluid: "raw",     pump: "borewell" },
+      { from: "sump",   fs: "b", to: "smotor", ts: "t", fluid: "raw",     pump: "sump_motor" },
+      { from: "smotor", fs: "b", to: "rwt",    ts: "t", fluid: "raw",     pump: "sump_motor" },
+      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     pump: "rwp" },
+      { from: "rwp",    fs: "b", to: "filter", ts: "t", fluid: "raw",     pump: "rwp" },
+      { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     pump: "rwp" },
+      { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     pump: "rwp" },
 
-      { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", flow: live("rwp"), thin: true },
-      { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     flow: live("hpp") },
-      { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", flow: live("hpp") },
+      { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", pump: "rwp", thin: true },
+      { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     pump: "hpp" },
+      { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", pump: "hpp" },
     ];
   } else {
     [["Roof top", "above RO room", 1], ["Terrace", "RO room \u00b7 battery room", 2],
@@ -762,8 +773,8 @@ function drawPlant(s) {
     add(roomBox(), "c3 / span 5", 2);
 
     // slabs: roof of the RO room, terrace floor, then grade
-    add(node("slab"), "c3 / -1", 1);
-    add(node("slab"), "c3 / -1", 2);
+    add(node("slab"), "1 / -1", 1);
+    add(node("slab"), "1 / -1", 2);
     const grade = node("slab grade");
     add(grade, "c1 / -1", 3);
     const earth = node("earth");
@@ -787,25 +798,145 @@ function drawPlant(s) {
     add(plants, "c1 / span 2", 2);
 
     const cars = node("scenery cars");
-    [88, 80, 88, 80].forEach(w => cars.appendChild(carGlyph(w)));
+    [430, 386].forEach(w => cars.appendChild(carGlyph(w)));
     add(cars, "c3 / -1", 3);
     cell("bore", "c1", 5);
 
     TEE_AXIS = "h";
     ROUTES = [
-      { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     flow: live("borewell") },
-      { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     flow: live("sump_motor") },
-      { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     flow: live("sump_motor") },
-      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
-      { from: "rwp",    fs: "r", to: "filter", ts: "l", fluid: "raw",     flow: live("rwp") },
-      { from: "filter", fs: "r", to: "mf",     ts: "l", fluid: "raw",     flow: live("rwp") },
-      { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
-      { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", flow: live("rwp"), thin: true },
-      { from: "hpp",    fs: "r", to: "memb",   ts: "l", fluid: "raw",     flow: live("hpp") },
-      { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
+      { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     pump: "borewell" },
+      { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     pump: "sump_motor" },
+      { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     pump: "sump_motor" },
+      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     pump: "rwp" },
+      { from: "rwp",    fs: "r", to: "filter", ts: "l", fluid: "raw",     pump: "rwp" },
+      { from: "filter", fs: "r", to: "mf",     ts: "l", fluid: "raw",     pump: "rwp" },
+      { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     pump: "rwp" },
+      { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", pump: "rwp", thin: true },
+      { from: "hpp",    fs: "r", to: "memb",   ts: "l", fluid: "raw",     pump: "hpp" },
+      { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", pump: "hpp" },
     ];
   }
-  requestAnimationFrame(relayout);
+}
+
+/* ── live update ──────────────────────────────────────────────
+   The plant is built once and mutated afterwards. Rebuilding the DOM
+   on every poll restarted every CSS transition and dash animation,
+   which is what made the levels and flow jump each second. */
+let PLANT_SIG = "", PIPE_SIG = "";
+
+const TANK_SRC = { rwt: "rwt", twt: "twt", dos: "dosing", sump: "sump" };
+const PUMP_SRC = { rwp: "rwp", hpp: "hpp", smotor: "sump_motor", bore: "borewell" };
+
+function structSig(s) {
+  const tank = o => (o.state === "OFFLINE" || o.state === "SENSOR_ERROR") ? "1" : "0";
+  const mach = o => (o.state && o.state !== "ONLINE") ? "1" : "0";
+  return (window.matchMedia("(max-width:900px)").matches ? "n" : "w")
+    + Object.values(TANK_SRC).map(k => tank(s.tanks[k])).join("")
+    + Object.values(PUMP_SRC).map(k => mach(s.pumps[k])).join("")
+    + (s.env.battery_room.state !== "ONLINE" ? "1" : "0");
+}
+
+function setLevel(id, pct) {
+  const svg = document.querySelector(`[data-g="${id}"] svg`);
+  const lvl = svg && svg.querySelector(".lvl");
+  if (!lvl) return;
+  const pad = +svg.getAttribute("data-pad"), ih = +svg.getAttribute("data-ih"), amp = +svg.getAttribute("data-amp");
+  const top = pad + ih - (ih * Math.max(0, Math.min(100, pct)) / 100);
+  lvl.setAttribute("transform", `translate(0 ${top - amp})`);
+}
+
+function paintRotor(svg, on, dead) {
+  if (!svg) return;
+  const col = dead ? "var(--offline)" : on ? "var(--treated)" : "var(--ink-3)";
+  svg.querySelectorAll(".rotor path").forEach(e => e.setAttribute("stroke", col));
+  svg.querySelectorAll(".rotor circle").forEach(e => e.setAttribute("fill", col));
+  const casing = svg.querySelector("circle, rect");
+  if (casing) casing.setAttribute("stroke", dead ? "var(--offline)" : "var(--line-2)");
+}
+
+function setSpin(el2, on, extra) {
+  if (!el2) return;
+  const cls = "unit" + (on ? " spin" : "") + (extra || "");
+  if (el2.className !== cls) el2.className = cls;
+}
+
+function updatePlant(s) {
+  Object.entries(TANK_SRC).forEach(([id, key]) => {
+    const t = s.tanks[key], u = document.querySelector(`[data-u="${id}"]`);
+    if (!u) return;
+    const dead = t.state === "OFFLINE" || t.state === "SENSOR_ERROR";
+    if (!dead) setLevel(id, t.pct);
+    const pctEl = u.querySelector(".pct");
+    if (pctEl && !dead) pctEl.innerHTML = `${t.pct.toFixed(0)}<small>% full</small>`;
+    const sub = u.querySelector(".sub");
+    if (sub) sub.textContent = dead ? "\u2014" : `${t.distance_mm} mm`;
+    const c = u.querySelector(".chip");
+    if (c) {
+      let label = t.state, kind = "fault";
+      if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : "warn"; }
+      else if (t.state === "STALE") { kind = "warn"; }
+      c.textContent = label;
+      c.className = "chip " + kind;
+    }
+  });
+
+  Object.entries(PUMP_SRC).forEach(([id, key]) => {
+    const m = s.pumps[key], u = document.querySelector(`[data-u="${id}"]`);
+    if (!u) return;
+    const dead = m.state && m.state !== "ONLINE";
+    const w = u.querySelector(`[data-a="${id}"]`);
+    setSpin(w, m.on && !dead);
+    paintRotor(w && w.querySelector("svg"), m.on, dead);
+    const c = u.querySelector(".chip");
+    if (c) {
+      let label = "Idle", kind = "off";
+      if (dead) { label = "Offline"; kind = "fault"; }
+      else if (m.on) { label = "Running"; kind = "on"; }
+      c.textContent = label;
+      c.className = "chip " + kind;
+    }
+  });
+
+  const e = s.env.ro_room;
+  const vt = document.querySelector('[data-env="t"]'), vh = document.querySelector('[data-env="rh"]');
+  if (vt && e.state === "ONLINE") vt.innerHTML = `${e.t.toFixed(1)}<u>\u00b0C</u>`;
+  if (vh && e.state === "ONLINE") vh.innerHTML = `${e.rh.toFixed(0)}<u>%</u>`;
+
+  const B = s.env.battery_room;
+  const asub = document.querySelector("[data-annex]");
+  if (asub) asub.textContent = B.state === "ONLINE" ? `${B.t.toFixed(1)} \u00b0C \u00b7 ${B.rh.toFixed(0)} %` : "\u2014";
+  const annex = document.querySelector(".annex");
+  if (annex) {
+    const fw = annex.querySelector(".unit .unit");
+    setSpin(fw, B.fan, B.fan ? " fast" : "");
+    paintRotor(fw && fw.querySelector("svg"), B.fan, B.state !== "ONLINE");
+    const c = annex.querySelector(".chip");
+    if (c) {
+      let label = "Off", kind = "off";
+      if (B.state !== "ONLINE") { label = "Offline"; kind = "fault"; }
+      else if (B.fan) { label = "Running"; kind = "on"; }
+      c.textContent = label;
+      c.className = "chip " + kind;
+    }
+  }
+}
+
+function syncPipes(force) {
+  const sig = ROUTES.map(r => r.flow ? "1" : "0").join("");
+  if (!force && sig === PIPE_SIG) return;
+  PIPE_SIG = sig;
+  drawPipes();
+}
+
+function drawPlant(s) {
+  const sig = structSig(s);
+  const rebuilt = sig !== PLANT_SIG;
+  if (rebuilt) { PLANT_SIG = sig; buildPlant(s); }
+  const live = k => s.pumps[k].on && s.pumps[k].state === "ONLINE";
+  ROUTES.forEach(r => { r.flow = live(r.pump); });
+  updatePlant(s);
+  if (rebuilt) requestAnimationFrame(() => { relayout(); syncPipes(true); });
+  else syncPipes(false);
 }
 
 /* ── panels ───────────────────────────────────────────────── */
@@ -886,16 +1017,23 @@ function render(s) {
   climate($("#cBatt"), s.env.battery_room);
 
   const B = s.env.battery_room, fh = $("#cBattFan");
-  fh.textContent = "";
-  const fw = node("unit" + (B.fan ? " spin fast" : ""));
-  fw.appendChild(fan({ r: 21, running: B.fan, dead: B.state !== "ONLINE" }));
-  fh.appendChild(fw);
-  const ftxt = node("txtblk", `<span class="legend">Exhaust fan</span>`);
+  if (!fh.firstChild) {
+    const fw0 = node("unit");
+    fw0.appendChild(fan({ r: 21, running: false, dead: false }));
+    fh.appendChild(fw0);
+    const ftxt = node("txtblk", `<span class="legend">Exhaust fan</span>`);
+    ftxt.appendChild(chip("", ""));
+    fh.appendChild(ftxt);
+  }
+  const fw = fh.firstChild;
+  setSpin(fw, B.fan, B.fan ? " fast" : "");
+  paintRotor(fw.querySelector("svg"), B.fan, B.state !== "ONLINE");
+  const fc = fh.querySelector(".txtblk .chip");
   let ft = "Off", fk = "off";
   if (B.state !== "ONLINE") { ft = "Unknown"; fk = "fault"; }
   else if (B.fan) { ft = "Running"; fk = "on"; }
-  ftxt.appendChild(chip(ft, fk));
-  fh.appendChild(ftxt);
+  fc.textContent = ft;
+  fc.className = "chip " + fk;
 
   const A = s.aster;
   rows($("#cAster"), [
@@ -952,6 +1090,7 @@ function relayout() {
   if (hdr) document.documentElement.style.setProperty("--hdr", hdr.offsetHeight + "px");
   fitPlant();
   drawPipes();
+  PIPE_SIG = ROUTES.map(r => r.flow ? "1" : "0").join("");
 }
 new ResizeObserver(relayout).observe(document.documentElement);
 window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LAST) render(LAST); });

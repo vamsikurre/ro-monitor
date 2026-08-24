@@ -356,6 +356,8 @@ Below the plant, a four-card instrument strip: RO Room climate, Battery Room cli
 - **Every status carries a text label.** Colour is never the only channel (`plan.txt` §17).
 - **`OFFLINE` draws a hatch and no liquid**, with the readout replaced by "NO DATA" — an offline tank is not an empty tank (`plan.txt` §15).
 
+**The plant is built once and mutated in place.** Rebuilding its DOM on every poll restarted every CSS transition and dash animation, so levels and flow visibly jumped each second. A structure signature (layout mode plus each vessel/machine online-vs-dead state) decides when a rebuild is genuinely needed; otherwise the level transforms, readouts, chips and rotor colours are updated on the existing nodes. Pipes are redrawn only when the flow signature changes or on resize. Measured: one build and four pipe redraws across nine seconds of ticks, with the 0.9s level transition intact.
+
 **Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
 **Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate.
