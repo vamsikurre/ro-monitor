@@ -309,11 +309,29 @@ Structured single-line levels per `plan.txt` §26. State *transitions* are logge
 
 ## 6. Section 4 — Dashboard and cloud
 
-`firmware/esp32_hub_test/dashboard.html` (629 lines) is sound and already polls `/api/telemetry` at 1 s. Three changes, not a rewrite:
+Replaced rather than patched. The previous `firmware/esp32_hub_test/dashboard.html` was a card grid — it listed readings *about* the plant. The `dashboard.png` sketch is a **process flow**, and that is the correct organising principle: the page should be the plant.
 
-1. **Remove the Google Fonts CDN link.** It is dead on a LAN-only hub, which defeats the point of local hosting (`plan.txt` §19). Replace with a system font stack.
-2. **Serve gzipped from LittleFS**, so UI edits do not require a firmware reflash.
-3. **Render `OFFLINE` / `STALE` / `SENSOR_ERROR` as distinct text labels**, not a differently-coloured 0 % bar. Status must not depend on colour alone (`plan.txt` §17).
+New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped**, served from LittleFS.
+
+**Structure.** A single horizontal rail mirroring `dashboard.png`: Borewell → Sump → Sump Motor → RWT → [RO Skid: RWP · Dosing · HPP] → TWT. Below it a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table. Alerts appear above the rail only when active.
+
+**Encoding decisions.**
+
+- **Fluid identity by colour.** Raw water `#3E8F5F`, treated water `#2B8FD4`. Both validated: ΔE 17.8 normal vision, 17.3 deuteranopia.
+- **The additive by texture, not hue.** A third hue collided with blue under deuteranopia (ΔE 2.8), so the dosing tank uses a diagonal hatch. This is also truer — the plant has two fluids and one chemical additive.
+- **Status colours reserved** and never reused for a fluid: warn `#B08F1A`, fault `#D93E68` (ΔE 22.4 normal, 10.0 deutan). **Healthy state gets no status hue** — a running pump is shown by its flowing pipe and a text label, not a green dot. Alarm-oriented colouring: colour means "look at this".
+- **Every status carries a text label.** Colour is never the only channel (`plan.txt` §17).
+- **`OFFLINE` draws a hatch and no liquid**, with the readout replaced by "NO DATA" — an offline tank is not an empty tank (`plan.txt` §15).
+
+**Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
+
+**Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate. Responsive: the rail turns vertical below 860 px, which is truer anyway since water genuinely travels upward from sump to roof.
+
+**Demo mode.** With no hub present the page runs a simulator modelling the exact failure this project exists to fix — the borewell goes dry, the sump drains, and the sump motor keeps pulling because RWT is still low. It switches to live silently on the first successful `/api/telemetry` response.
+
+### 6.2 `/api/telemetry` contract
+
+The dashboard's demo object is the authoritative shape the hub must serve. Top-level keys: `sys` (uptime_s, rssi, fw, reset_reason), `rs485` (online, total, errors, last_poll_ms), `tanks` (sump, rwt, dosing, twt — each pct, distance_mm, state, sensor), `pumps` (borewell, sump_motor, rwp, hpp — each on, state), `aster` (twt_floty, rwt_floty, sump_floty, dos_lvl, rl1, rl2, alarm), `env` (ro_room, battery_room — t, rh, state, src, age_s, and fan on battery_room), and `nodes[]` (id, role, link, state, age_s).
 
 ### 6.1 Cloud — deferred to Phase D
 
