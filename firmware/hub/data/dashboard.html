@@ -157,6 +157,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 /* Scenery. Occupied space reads as a building; empty space reads as a
    diagram. These are wireframe only, dimmed, and never interactive. */
+.ymark{position:absolute; left:0; right:0; height:1px; pointer-events:none}
 .subpump{position:absolute; left:0; right:0; bottom:7px; display:flex; justify-content:center; z-index:1}
 .subcap{display:flex; flex-direction:column; align-items:center; gap:6px; margin-top:2px}
 
@@ -652,17 +653,17 @@ function equipUnit(draw, label, id, w, h) {
    drawn as a slim canned unit with a discharge riser and an intake
    screen, not as a surface centrifugal set. */
 function subPumpGlyph({ r, running, dead }) {
-  const VW = 36, VH = 52, W = Math.round(r * 1.45);
+  const VW = 36, VH = 44, W = Math.round(r * 1.45);
   const stroke = dead ? "var(--offline)" : "var(--line-2)";
   const col = dead ? "var(--offline)" : running ? "var(--treated)" : "var(--ink-3)";
   const svg = el("svg", { width: W, height: Math.round(W * VH / VW), viewBox: `0 0 ${VW} ${VH}`, "aria-hidden": "true" });
   const line = d => svg.appendChild(el("path", { d, fill: "none", stroke, "stroke-width": 1.2, "stroke-linecap": "round" }));
-  svg.appendChild(el("rect", { x: 8, y: 12, width: 20, height: 30, rx: 4, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
-  line("M 18 12 L 18 0");                       // discharge riser
-  line("M 8 20 H 28"); line("M 8 27 H 28");      // stage bands
-  line("M 8 47 H 28");                           // intake screen
-  line("M 11 42 L 11 47"); line("M 18 42 L 18 47"); line("M 25 42 L 25 47");
-  const hub = el("g", { transform: "translate(18 34)" });
+  svg.appendChild(el("rect", { x: 8, y: 8, width: 20, height: 26, rx: 4, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
+  line("M 18 8 L 18 0");                        // discharge riser
+  line("M 8 15 H 28"); line("M 8 21 H 28");      // stage bands
+  line("M 8 39 H 28");                           // intake screen
+  line("M 11 34 L 11 39"); line("M 18 34 L 18 39"); line("M 25 34 L 25 39");
+  const hub = el("g", { transform: "translate(18 28)" });
   const g = el("g", { class: "rotor" });
   for (let i = 0; i < 3; i++)
     g.appendChild(el("path", {
@@ -678,34 +679,39 @@ function subPumpGlyph({ r, running, dead }) {
 /* High pressure pump: a horizontal multistage barrel coupled to a
    motor. Deliberately unlike the centrifugal circles used elsewhere. */
 function hppGlyph({ r, running, dead }) {
-  const VW = 120, VH = 56, W = Math.round(r * 4.6);
+  const VW = 60, VH = 128, W = Math.round(r * 2.6);
   const stroke = dead ? "var(--offline)" : "var(--line-2)";
   const col = dead ? "var(--offline)" : running ? "var(--treated)" : "var(--ink-3)";
   const svg = el("svg", { width: W, height: Math.round(W * VH / VW), viewBox: `0 0 ${VW} ${VH}`, "aria-hidden": "true" });
-  const line = d => svg.appendChild(el("path", { d, fill: "none", stroke, "stroke-width": 1.2, "stroke-linecap": "round" }));
-  line("M 3 50 H 116");                                          // bedplate
-  svg.appendChild(el("rect", { x: 8, y: 20, width: 44, height: 26, rx: 13, fill: "var(--panel)", stroke, "stroke-width": 1.4 }));
-  [19, 27, 35, 43].forEach(x => line(`M ${x} 22 L ${x} 44`));    // stages
-  line("M 8 27 L 2 27 L 2 39 L 8 39");                           // suction flange
-  line("M 17 20 L 17 9 L 29 9");                                 // discharge
-  svg.appendChild(el("rect", { x: 55, y: 23, width: 26, height: 20, rx: 3, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
-  [60, 65, 70, 75].forEach(x => line(`M ${x} 25 L ${x} 41`));    // motor fins
-  line("M 52 29 L 55 29"); line("M 52 37 L 55 37");              // coupling guard
-  line("M 81 33 L 85 33");                                       // shaft to the fan
-  line("M 18 46 L 18 50"); line("M 44 46 L 44 50"); line("M 66 43 L 66 50");
-  svg.appendChild(el("circle", { cx: 97, cy: 33, r: 13, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
-  const hub = el("g", { transform: "translate(97 33)" });
+  const line = d => svg.appendChild(el("path", { d, fill: "none", stroke, "stroke-width": 1.3, "stroke-linecap": "round" }));
+
+  // motor on top
+  svg.appendChild(el("rect", { x: 14, y: 2, width: 32, height: 38, rx: 14, fill: "var(--panel)", stroke, "stroke-width": 1.4 }));
+  // lantern / coupling
+  line("M 24 40 L 24 52"); line("M 36 40 L 36 52"); line("M 24 46 H 36");
+  // chamber stack
+  svg.appendChild(el("rect", { x: 21, y: 52, width: 18, height: 44, rx: 2, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
+  [61, 70, 79, 88].forEach(y => line(`M 21 ${y} H 39`));
+  // base with suction and discharge on one level
+  svg.appendChild(el("rect", { x: 5, y: 96, width: 50, height: 22, rx: 3, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
+  line("M 0 107 L 5 107"); line("M 55 107 L 60 107");
+  line("M 12 118 L 12 124"); line("M 48 118 L 48 124"); line("M 5 124 H 55");
+
+  const hub = el("g", { transform: "translate(30 21)" });
   const g = el("g", { class: "rotor" });
   for (let i = 0; i < 3; i++)
     g.appendChild(el("path", {
-      d: "M 0 0 Q 4.5 -4.2 10 -1.9", fill: "none", stroke: col,
+      d: "M 0 0 Q 4.2 -3.9 9.4 -1.8", fill: "none", stroke: col,
       "stroke-width": 1.9, "stroke-linecap": "round", transform: `rotate(${i * 120})`,
     }));
-  g.appendChild(el("circle", { cx: 0, cy: 0, r: 2.6, fill: col }));
+  g.appendChild(el("circle", { cx: 0, cy: 0, r: 2.5, fill: col }));
   hub.appendChild(g);
   svg.appendChild(hub);
   return svg;
 }
+
+// where the base ports sit, as a fraction of the glyph height
+const HPP_PORT = 107 / 128;
 
 /* ── unit builders ────────────────────────────────────────── */
 function tankUnit(t, cfg) {
@@ -765,6 +771,17 @@ function layoutBox(e, host) {
 function anchorPt(id, side, host) {
   const box = document.querySelector(`[data-a="${id}"]`);
   if (!box) return null;
+  // some equipment connects away from its mid-height (a vertical pump
+  // ports at its base), so allow a per-unit connection line
+  if (side === "l" || side === "r") {
+    const ym = document.querySelector(`[data-y="${id}"]`);
+    if (ym) {
+      const bb = layoutBox(box, host), yb = layoutBox(ym, host), S2 = 2;
+      return side === "l"
+        ? { x: bb.x - S2, y: yb.y }
+        : { x: bb.x + bb.w + S2, y: yb.y };
+    }
+  }
   // horizontal runs use the anchor box (the shared centreline);
   // vertical runs use the glyph itself, or they would float off it
   const vert = side === "t" || side === "b";
@@ -972,7 +989,14 @@ function buildPlant(s) {
     cell("twt", "c7", 1).classList.add("bottom");
     ["rwp c3", "filter c4", "mf c5", "hpp c6", "memb c7"].forEach(spec => {
       const [k, col] = spec.split(" ");
-      cell(k, col, 2).classList.add("top", "line");
+      const c = cell(k, col, 2);
+      c.classList.add("top", "line");
+      if (k === "hpp") {
+        const ym = node("ymark");
+        ym.dataset.y = "hpp";
+        ym.style.top = (HPP_PORT * 100).toFixed(2) + "%";
+        c.querySelector('[data-g="hpp"]').appendChild(ym);
+      }
     });
     cell("dos", "c4 / span 2", 2).classList.add("bottom");
     add(annexBox(), "c8", 2);
