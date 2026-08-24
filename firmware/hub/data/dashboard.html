@@ -96,7 +96,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* ── the plant, in elevation (signature) ────────────────── */
 .plantwrap{padding:26px 22px 8px; overflow:hidden}
 .plant{
-  position:relative; display:grid; min-width:1240px; transform-origin:top center;
+  position:relative; display:grid; min-width:1240px; transform-origin:top left;
   grid-template-columns:[lbl] 108px [c1] 2fr [c2] .8fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 2.1fr;
   grid-template-rows:minmax(326px,auto) minmax(396px,auto) auto 0 auto;
   row-gap:32px;
@@ -1198,21 +1198,35 @@ function fitPlant() {
   const wrap = document.querySelector(".plantwrap"), pl = $("#plant");
   if (!wrap || !pl) return;
   pl.style.transform = "none";
+  pl.style.width = "";
   wrap.style.height = "auto";
-  const pw = pl.offsetWidth, ph = pl.offsetHeight;
-  if (!pw || !ph) return;
   const cs = getComputedStyle(wrap);
   const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
   const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
-  let sc = Math.min(1, (wrap.clientWidth - padL - padR) / pw);
-  if (!window.matchMedia("(max-width:900px)").matches) {
+  const availW = Math.max(1, wrap.clientWidth - padL - padR);
+  if (!pl.offsetWidth || !pl.offsetHeight) return;
+
+  let sc;
+  if (window.matchMedia("(max-width:900px)").matches) {
+    sc = Math.min(1, availW / pl.offsetWidth);
+  } else {
     // document coordinates, so scrolling cannot change the scale
     const top = pl.getBoundingClientRect().top + window.scrollY;
-    sc = Math.min(sc, (window.innerHeight - top - padB - 10) / ph);
+    const availH = Math.max(160, window.innerHeight - top - padB - 10);
+    // The fit is height-bound, so a plant laid out at the wrapper width
+    // shrinks away from both edges. Lay it out wider by the same factor
+    // and the height fit lands it at exactly the full width. Two passes,
+    // because widening can reflow a caption and change the height.
+    for (let i = 0; i < 2; i++) {
+      sc = Math.max(.45, Math.min(1, availH / pl.offsetHeight));
+      pl.style.width = Math.round(availW / sc) + "px";
+    }
+    sc = Math.max(.45, Math.min(1, availH / pl.offsetHeight));
   }
-  sc = Math.max(sc, 0.45);
-  pl.style.transform = `scale(${sc})`;
-  wrap.style.height = Math.ceil(ph * sc + padT + padB) + "px";
+  // origin is top left, so centre by hand when min-width stops it filling
+  const dx = Math.max(0, (availW - pl.offsetWidth * sc) / 2);
+  pl.style.transform = `translateX(${dx.toFixed(1)}px) scale(${sc})`;
+  wrap.style.height = Math.ceil(pl.offsetHeight * sc + padT + padB) + "px";
 }
 function relayout() {
   const hdr = document.querySelector("header");
