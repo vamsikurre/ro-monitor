@@ -165,7 +165,7 @@ h1 span{color:var(--ink-3); font-weight:400}
   align-self:end; z-index:0; display:flex; align-items:flex-end;
   pointer-events:none; opacity:.42; margin-bottom:-12px;
 }
-.scenery.cars{justify-content:space-evenly; padding:0 18px}
+.scenery.cars{justify-content:space-evenly; padding:0 18px; margin-bottom:-10px}
 .scenery.plants{justify-content:space-between; padding:0 12px}
 
 /* Two tilted PV rows on the roof, one over each storage tank, low at
@@ -520,8 +520,7 @@ function sized(vbW, vbH, paths, circles, w) {
 
 /* Pickup: short hood, raked screen, cab, then an open bed. */
 function truckGlyph(w) {
-  return sized(132, 56, [
-    "M 0 50 H 132",
+  return sized(132, 52, [
     "M 6 44 L 6 30 Q 6 26 11 25 L 40 25 L 50 11 Q 52 9 56 9 L 72 9 Q 76 9 76 13 L 76 25 L 80 25 L 80 21 L 126 21 L 126 44",
     "M 6 44 L 21 44", "M 39 44 L 95 44", "M 113 44 L 126 44",
     "M 53 24 L 59 12 L 72 12 L 72 24 Z",
@@ -533,8 +532,7 @@ function truckGlyph(w) {
 
 /* G-Wagon: upright screen, flat roof, square arches, spare on the door. */
 function gwagonGlyph(w) {
-  return sized(126, 56, [
-    "M 0 50 H 126",
+  return sized(126, 53, [
     "M 6 44 L 6 24 L 10 20 L 34 20 L 36 7 L 102 7 L 102 44",
     "M 6 44 L 19 44", "M 39 44 L 77 44", "M 97 44 L 102 44",
     "M 40 18 L 41 10 L 58 10 L 58 18 Z",
@@ -579,8 +577,7 @@ function solarRow(cls) {
 
 /* Swift: small hatchback, steep screen, short rear overhang. */
 function swiftGlyph(w) {
-  return sized(108, 56, [
-    "M 0 50 H 108",
+  return sized(108, 51, [
     "M 5 43 L 5 29 Q 6 24 12 23 L 28 23 L 40 9 Q 43 7 48 7 L 73 7 Q 79 7 83 12 L 93 23 Q 99 26 99 33 L 99 43",
     "M 5 43 L 18 43", "M 34 43 L 72 43", "M 88 43 L 99 43",
     "M 32 22 L 43 11 L 57 11 L 57 22 Z",
