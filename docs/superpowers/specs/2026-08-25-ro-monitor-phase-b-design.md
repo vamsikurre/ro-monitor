@@ -342,7 +342,9 @@ Every item on the train sits in a fixed-height anchor box so horizontal runs sha
 
 **Dosing is a tee, not an inline vessel.** Process water runs RWP → FILTER → MF → HPP directly, and dosing injects **upstream of MF**. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum. The tee sits immediately upstream of HPP, which is where antiscalant is actually injected.
 
-**Pumps and the fan do not share a glyph.** Pumps draw a centrifugal impeller — three thin curved blades in a round casing. The exhaust fan draws an axial fan — four broad blades, guard ring, square wall housing with mounting holes. Different equipment doing different jobs should not look identical.
+**The sump motor is submersible**, so it is drawn *inside* the sump rather than beside it: a slim canned unit with a discharge riser and an intake screen, submerged in the tank fill. Its discharge leaves the sump sideways before rising, which keeps the riser in its own column clear of the terrace planters. Its status chip sits under the sump caption.
+
+**Pumps and the fan do not share a glyph.** Surface pumps (RWP, borewell) draw a centrifugal impeller — three thin curved blades in a round casing. HPP draws a horizontal multistage barrel coupled to a motor with a cooling fan, since a high pressure pump is not the same machine. The exhaust fan draws an axial fan — four broad blades, guard ring, square wall housing with mounting holes. Different equipment doing different jobs should not look identical.
 
 Pipes are an SVG overlay routed orthogonally between measured element rects after layout and redrawn on resize, so the grid can reflow without pipework drifting off its vessels. Unit captions carry an opaque background to mask pipes running behind them, as on a real P&ID.
 
