@@ -1,148 +1,151 @@
 # RO-Monitor: Industrial RO Plant Remote Telemetry & Monitoring System
 
-A non-invasive, galvanically isolated telemetry and liquid level monitoring system for commercial/industrial Reverse Osmosis (RO) plants.
+A non-invasive, galvanically isolated telemetry, environmental, and multi-zone liquid level monitoring system for commercial/industrial Reverse Osmosis (RO) plants.
 
-The system interfaces with an existing **Aster NXT 11** RO controller and distributed storage tanks using an **ESP32-S Master Hub** communicating over a strictly sequenced **RS485 Daisy-Chain Bus** to **Arduino Nano** remote ultrasonic sensor nodes.
+The system interfaces with an existing **Aster NXT 11** RO controller, distributed rooftop/battery-room storage and environmental nodes using an **ESP32-S Master Hub** over an **RS485 Daisy-Chain Bus**, and connects to **Ground Floor Sump and Motor Starter Nodes** over **Local Wi-Fi (LAN)**. It features a responsive **Local Web Dashboard** and native **ESP RainMaker Cloud** integration for iOS & Android mobile telemetry and push notifications.
 
 ---
 
-## 1. System Architecture
+## 1. System Architecture Overview
 
 ```
-                                +------------------------------------------+
-                                |               230V AC Mains              |
-                                +--------------------+---------------------+
-                                                     |
-                                                     v
-                                         +-----------------------+
-                                         |  Hi-Link HLK-20M12    |
-                                         |  (12V DC / 20W Power) |
-                                         +-----------+-----------+
-                                                     |
-                                                     | 12V DC Distributed Bus
-                                                     v
+                                      +------------------------------------------+
+                                      |              230V AC Mains               |
+                                      +--------------------+---------------------+
+                                                           |
+                                                           v
+                                               +-----------------------+
+                                               |  Hi-Link HLK-20M12    |
+                                               |  (12V DC / 20W Power) |
+                                               +-----------+-----------+
+                                                           |
+                                                           | 12V DC Distributed Bus
+                                                           v
  [120Ω Term Resistor]
 +----------------------------------------------------------------------------------------------------+
-|                                         ESP32-S CENTRAL HUB                                        |
+|                                    ESP32-S CENTRAL HUB (RO ROOM)                                   |
 |  - Microcontroller: ESP32-S (38-Pin)                                                               |
 |  - RS485 Interface: XY-485 Hardware Auto-Flow Control Transceiver (UART2: GPIO16 RX / GPIO17 TX)   |
 |  - High Voltage Isolation: 2x 220V AC Optocouplers (HPP Contactor & RWP Relay Active Monitoring)   |
 |  - Low Voltage Isolation: 8-Channel PC817 Optocoupler Board (Aster Float & Relay Dry Contacts)     |
 |  - Local Environmental: GY-SHT30-D Digital Temperature & Humidity Sensor (I2C: GPIO21 / GPIO22)    |
-|  - Power: LM2596 / Mini560 12V -> 5V Buck Converter                                                |
+|  - 4-Channel Relay Board: TWT Float, RWT Float, Dosing Level Emulation                             |
+|  - Connectivity: Local Web Dashboard Server & ESP RainMaker AWS IoT Agent                          |
 +--------------------------------------------------+-------------------------------------------------+
                                                    |
-                                                   | (Internal Link)
+                                                   | Cat5e 1 (1.5m - RO Room)
                                                    v
 +--------------------------------------------------+-------------------------------------------------+
 |                                    NODE 0x01: DOSING CHEMICAL TANK                                 |
-|  - Microcontroller: Arduino Nano (ATmega328P)                                                      |
-|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor (Trig: D7, Echo: D8)                  |
-|  - RS485 Interface: XY-485 Module (SoftwareSerial: D2 RX / D3 TX)                                  |
-|  - Power: 12V -> 5V Buck Converter                                                                 |
+|  - Microcontroller: Arduino Nano (ATmega328P) | Location: RO Room                                  |
+|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor                                       |
+|  - RS485 Interface: XY-485 Module | Power: 12V -> 5V Buck Converter                                |
 +--------------------------------------------------+-------------------------------------------------+
                                                    |
-                                                   | CAT5e Cable 1 (Outbound Differential Pair)
+                                                   | Cat5e 2 (5m - Roof Top Outbound Blue Pair)
                                                    v
 +--------------------------------------------------+-------------------------------------------------+
 |                                    NODE 0x02: RAW WATER TANK (RWT)                                 |
-|  - Microcontroller: Arduino Nano (ATmega328P)                                                      |
-|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor (Trig: D7, Echo: D8)                  |
-|  - RS485 Interface: XY-485 Module                                                                  |
+|  - Microcontroller: Arduino Nano (ATmega328P) | Location: Roof Top                                 |
+|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor                                       |
 |  - Wiring Feature: Physical Return-Loopback (Outbound Blue Pair -> Return Brown Pair)              |
 +--------------------------------------------------+-------------------------------------------------+
                                                    |
-                                                   | CAT5e Cable 1 (Return Brown Pair)
+                                                   | Cat5e 2 (Return Brown Pair to RO Room Splice)
                                                    v
 +--------------------------------------------------+-------------------------------------------------+
-|                                        CENTRAL JUNCTION BOX                                        |
-|  - Pass-Through Splice: Cable 1 Return Pair -> Cable 2 Outbound Blue Pair                          |
+|                                 Cat5e 3 (10m - Roof Top Outbound Blue Pair)                         |
 +--------------------------------------------------+-------------------------------------------------+
                                                    |
-                                                   | CAT5e Cable 2 (Outbound Differential Pair)
                                                    v
 +--------------------------------------------------+-------------------------------------------------+
 |                                  NODE 0x03: TREATED WATER TANK (TWT)                               |
-|  - Microcontroller: Arduino Nano (ATmega328P)                                                      |
-|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor (Trig: D7, Echo: D8)                  |
-|  - RS485 Interface: XY-485 Module                                                                  |
+|  - Microcontroller: Arduino Nano (ATmega328P) | Location: Roof Top                                 |
+|  - Sensor: JSN-SR04T / AJ-SR04M Waterproof Ultrasonic Sensor                                       |
++--------------------------------------------------+-------------------------------------------------+
+                                                   |
+                                                   | Cat5e 4 (Battery Room Extension)
+                                                   v
++--------------------------------------------------+-------------------------------------------------+
+|                                  NODE 0x04: BATTERY ROOM CLIMATE & FAN                             |
+|  - Microcontroller: Arduino Nano (ATmega328P) | Location: Battery Room                             |
+|  - Sensor: GY-SHT30-D Digital Temperature & Humidity Sensor                                        |
+|  - Output: 1-Channel Relay Module (Exhaust Fan Control)                                            |
 |  - Bus Termination: 120Ω End-of-Bus Resistor                                                       |
++----------------------------------------------------------------------------------------------------+
+
+                                                   ▲
+                                                   │ (Wi-Fi 2.4GHz LAN)
+                                                   ▼
+======================================================================================================
+                                    GROUND FLOOR PARKING ECOSYSTEM
+======================================================================================================
++--------------------------------------------------+-------------------------------------------------+
+|                         ESP32 NODE 1: GROUND SUMP TELEMETRY (0x05)                                 |
+|  - Microcontroller: ESP32-WROOM-32 / ESP32-C3                                                      |
+|  - Sensor: JSN-SR04T Ultrasonic Sensor (3.5m Deep Sump Pit)                                        |
+|  - Power: Hi-Link HLK-20M5 (240V AC -> 5V DC 4A)                                                   |
++--------------------------------------------------+-------------------------------------------------+
+                                                   | (Wi-Fi 2.4GHz LAN)
+                                                   v
++--------------------------------------------------+-------------------------------------------------+
+|                   ESP32 NODE 2: MOTOR MONITORING & STARTER CONTROL (0x06)                          |
+|  - Microcontroller: ESP32-WROOM-32 / ESP32-C3                                                      |
+|  - Power: Hi-Link HLK-20M5 (240V AC -> 5V DC 4A)                                                   |
+|  - Inputs: 2x 220V AC Optocouplers (Sump Motor Active & Borewell Motor Active)                     |
+|  - Outputs: 4-Channel Relay Board (Sump Float & Borewell Float Starter Cutoff / Interlock)        |
 +----------------------------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 2. Existing Plant Equipment & Reverse Engineering
+## 2. Process Flow & Dashboard Architecture
 
-The monitoring system interfaces passively with the following hardware identified on the RO skid:
-
-| Equipment Component | Identified Model / Marking | Role & Specifications |
-| :--- | :--- | :--- |
-| **Main RO Controller** | **Aster NXT 11** (`ASTERO-LTE-CPU-22-VER-1.5`) | Microprocessor-based automated RO plant controller (Hongfa `HF3FF` relays, `LM324L` op-amp, `TC7660` charge pump for AC conductivity excitation, `ULN2003AN` relay driver). |
-| **HPP Motor Contactor** | **TC Contactor TCDP302** | Definite purpose contactor (240V AC 50Hz coil, 30A FLA / 150A LRA) driving the High-Pressure Pump. |
-| **Filter Valve Controller** | **Initiative Engineering** Auto Multiport Valve | Automated sand/carbon media filter backwash cycling. |
-| **Flow Measurement** | **Aster F-1200 LG** Rotameter | 200–1200 LPH (4–20 LPM) vertical flow tube. |
-| **Membrane Vessel** | **Alfa Aerosol** FRP Pressure Vessel | NSF/ANSI/CAN-61 certified RO membrane housing. |
-
----
-
-## 3. Communication Protocol Summary
-
-- **Physical Layer:** Half-duplex RS485 over CAT5e twisted pair, 9600 bps, 8-N-1.
-- **Topology:** Return-loopback strictly linear daisy-chain (eliminates star-topology reflections when tanks are situated in opposite directions from the central skid).
-- **Bus Master:** ESP32-S Hub (`0x00`) polls slaves sequentially every 1000 ms.
-- **Frame Format:**
-  `[0xAA] [0x55] [NODE_ADDR] [COMMAND] [PAYLOAD_LEN] [PAYLOAD (0..32 bytes)] [CRC16_LOW] [CRC16_HIGH]`
-- **CRC:** Standard Modbus CRC-16 polynomial (`0xA001`).
-
----
-
-## 4. Astero Documentation & Reference Findings
-
-The repository includes the official documentation PDF for the Astero controller in [`docs/ASTERO-NXTG-1_opt.pdf`](docs/ASTERO-NXTG-1_opt.pdf). 
-
-### Additional Technical Findings from Online Research:
-* **Manufacturer & Ecosystem:** The *Aster* / *Astero* product lines are manufactured and distributed in India by **Aster Technologies** ([astertechnologies.in](https://astertechnologies.in)) and **Embark Water** ([embarkwater.com](https://embarkwater.com)), and distributed via **Filtra Consultants and Engineers Ltd.** ([filtra.in](https://filtra.in)).
-* **Model Families:**
-  - **Astero NXT / Astero NXTG Series:** Next-generation RO / UF control panels featuring 16x2 backlit LCDs, multi-color status alerts, dry-run/overload motor protections, and automated flushing/backwash routines.
-  - **Astero Lite / ASTERO-LTE:** Compact plug-and-play board variants (such as the `ASTERO-LTE-CPU-22-VER-1.5` installed on this plant) designed for space-efficient integration.
-  - **Astero RM Series:** Remote-monitoring enabled variants with integrated RS-485 / GSM-GPRS telemetry ports.
-* **Terminal Signals:**
-  - Inputs: `HPS` (High Pressure Switch), `LPS` (Low Pressure Switch), `TWT FLOTY` (Treated Water Float), `RWT FLOTY` (Raw Water Float), `DOS LVL` (Dosing Level), `COND` (AC Conductivity Probe), `FLOW 1 / 2` (Pulse flow sensors).
-  - Outputs: `RL1` (High-Pressure Pump control via contactor), `RL2` (Raw Water Pump / Flush Solenoid), `ALARM` (Buzzer / Warning indicator).
-
----
-
-## 5. Repository Structure
+The system telemetry directly visualizes the plant's water balance and environmental status:
 
 ```
-ro-monitor/
-├── .gitignore                     # Git ignore rules for build, IDE, OS, and Draw.io files
-├── README.md                      # Project overview and system specification
-├── architecture.txt               # ASCII network and electrical daisy-chain diagram
-├── power_architecture.txt         # DC power distribution hierarchy
-├── plan.txt                       # Detailed engineering rollout plan
-├── wiring.drawio                  # Draw.io full electrical wiring schematic
-├── docs/                          # Detailed engineering documentation
-│   ├── ASTERO-NXTG-1_opt.pdf       # Astero NXTG-1 controller user documentation
-│   ├── HARDWARE.md                # Bill of materials, pinouts, and hardware specifications
-│   ├── POWER_BUDGET.md            # Power calculations, voltage drop, and thermal analysis
-│   ├── RO_HARDWARE_ANALYSIS.md    # Image-by-image reverse engineering analysis
-│   ├── RS485_PROTOCOL.md          # Complete binary packet spec, commands, and CRC-16
-│   └── WIRING.md                  # Comprehensive terminal-by-terminal wiring schedule
-└── images/                        # High-resolution photographic evidence and diagrams
-    ├── architecture.png           # Visual topology diagram
-    ├── hardware/                  # Module close-up photos (optos, power supplies, RS485)
-    └── IMG_*.JPG / PNG            # 19 plant inspection photographs
+[Borewell Pump] ──> [Ground Sump (3.5m)] ──(Sump Motor)──> [RWT (Roof)] ──> [RO Plant: RWP + Dosing + HPP] ──> [TWT (Roof)]
+                                                                               │
+                                                                               └── [Battery Room: SHT30 + Exhaust Fan]
 ```
+
+### Local Web Dashboard Features:
+- **Zero-Cloud LAN Access:** Hosted directly on the local network (accessible at `http://ro-hub.local` or Hub IP).
+- **Animated Liquid Graphic:** Live animated fluid levels for Sump, RWT, Dosing, and TWT tanks.
+- **Dynamic Motor Indicators:** Real-time running/idle status for Borewell Pump, Sump Motor, Raw Water Pump (RWP), and High Pressure Pump (HPP).
+- **Climate & Ventilation Cards:** RO Room & Battery Room Temperature/Humidity gauges with Exhaust Fan auto/manual controls.
+
+### ESP RainMaker Mobile Cloud Integration:
+- **Native iOS & Android App:** Remote monitoring from anywhere in the world.
+- **Push Notification Alerts:**
+  - `CRITICAL:` Ground Sump Low (< 15%) / Dry Run Risk.
+  - `WARNING:` Tank Overflow Risk (Sump/RWT/TWT > 95%).
+  - `ALERT:` High Battery Room Temperature (> 38°C) $\to$ Automated Exhaust Fan Trigger.
+  - `FAULT:` RO Controller Alarm Relay Activated.
 
 ---
 
-## 6. Detailed Documentation Index
+## 3. Node Addressing & Telemetry Matrix
+
+| Node ID | Subsystem | Transport | Hardware Platform | Primary Sensors & Actuators |
+| :---: | :--- | :--- | :--- | :--- |
+| `0x00` | **RO Room (Central Hub)** | Core Master | ESP32-S (38-Pin) | SHT30 (RO Room), 2x AC Optos, 8x DC Optos, 4-Ch Relay Board |
+| `0x01` | **RO Room (Dosing)** | RS485 Bus | Arduino Nano | JSN-SR04T (Dosing Tank Level) |
+| `0x02` | **Roof Top (RWT)** | RS485 Bus | Arduino Nano | JSN-SR04T (Raw Water Tank Level) + Return Loopback |
+| `0x03` | **Roof Top (TWT)** | RS485 Bus | Arduino Nano | JSN-SR04T (Treated Water Tank Level) |
+| `0x04` | **Battery Room** | RS485 Bus | Arduino Nano | GY-SHT30-D (Battery Room Temp/RH) + 1-Ch Exhaust Fan Relay + 120Ω Term |
+| `0x05` | **Ground Floor (Sump)** | Wi-Fi LAN | ESP32 | JSN-SR04T (3.5m Sump Level Sensor) |
+| `0x06` | **Ground Floor (Motors)**| Wi-Fi LAN | ESP32 | 2x AC Optos (Sump/Borewell Motors), 4-Ch Relay Board |
+
+---
+
+## 4. Detailed Documentation Index
 
 For in-depth technical documentation, refer to the guides in the `docs/` folder:
 - **[Hardware Specifications & Pin Allocations](docs/HARDWARE.md)**
 - **[Terminal-by-Terminal Wiring Guide](docs/WIRING.md)**
-- **[RS485 Master-Slave Protocol Specification](docs/RS485_PROTOCOL.md)**
+- **[RS485 & Wi-Fi Master-Slave Protocol Specification](docs/RS485_PROTOCOL.md)**
 - **[Power Budget & Voltage Drop Calculations](docs/POWER_BUDGET.md)**
+- **[Local Web Dashboard & ESP RainMaker Integration Guide](docs/DASHBOARD_AND_RAINMAKER.md)**
 - **[Skid Hardware Reverse Engineering Analysis](docs/RO_HARDWARE_ANALYSIS.md)**
+

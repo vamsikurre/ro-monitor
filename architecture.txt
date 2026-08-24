@@ -1,57 +1,105 @@
 ===============================================================================
-                     RS485 RETURN-LOOPBACK DAISY-CHAIN TOPOLOGY
+               RO-MONITOR: COMPLETE MULTI-ZONE SYSTEM ARCHITECTURE
 ===============================================================================
 
-Physical Layout: RWT and TWT are in opposite directions from the Central Skid.
-Electrical Line: 100% Continuous Sequential Daisy-Chain (No Star Taps)
+-------------------------------------------------------------------------------
+1. TERRACE & ROOF TOP SUBSYSTEM (RS485 DAISY-CHAIN BUS + 12V DC DISTRIBUTION)
+-------------------------------------------------------------------------------
+
+Physical Layout:
+- Central Skid & Dosing Tank in RO Room.
+- Raw Water Tank (RWT) and Treated Water Tank (TWT) on Roof Top in opposite directions.
+- Battery Room with Exhaust Fan & Climate monitoring on extended Cat5e run.
+
+Electrical Topology: 100% Strictly Linear Daisy-Chain (Outbound -> Loopback -> Return)
 
  [120Ω TERM RESISTOR]
-┌─────────────────────┐
-│   ESP32-S HUB       │
-│ (Bus Master, 0x00)  │
-│   XY-485 Master     │
-└──────────┬──────────┘
-           │
-           │ (Internal bus link)
-           ▼
-┌─────────────────────┐
-│ DOSING TANK NODE    │
-│ (Slave Node 0x01)   │
-│ Arduino Nano + JSN  │
-│   XY-485 Module     │
-└──────────┬──────────┘
-           │
-           │ CAT5e Cable 1 (Outbound Pair: Blue / White-Blue)
-           ▼
-┌─────────────────────┐
-│  RAW WATER TANK     │
-│ (Slave Node 0x02)   │
-│ Arduino Nano + JSN  │
-│   XY-485 Module     │
-└──────────┬──────────┘
-           │
-           │ (Physical Loopback at RWT Terminal Block)
-           │
-           │ CAT5e Cable 1 (Return Pair: Brown / White-Brown)
-           ▼
-┌─────────────────────┐
-│ CENTRAL JUNCTION BOX│ (Direct pass-through splice: Return Pair -> Cable 2 Outbound)
-└──────────┬──────────┘
-           │
-           │ CAT5e Cable 2 (Outbound Pair: Blue / White-Blue)
-           ▼
-┌─────────────────────┐
-│ TREATED WATER TANK  │
-│ (Slave Node 0x03)   │
-│ Arduino Nano + JSN  │
-│   XY-485 Module     │
-│ [120Ω TERM RESISTOR]│
-└─────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                      ESP32-S HUB                        │  (Bus Master, 0x00 - RO Room)
+│  - XY-485 Auto-Flow Control Transceiver                 │
+│  - Astero NXT 11 AC Isolators (HPP & RWP AC Monitoring) │
+│  - Astero NXT 11 DC Isolators (TWT, RL1, RL2 Contacts)  │
+│  - 4-Channel Relay Board (TWT Floty, RWT Floty, DOS LVL)│
+│  - Local Enclosure Climate: GY-SHT30-D (I2C)            │
+│  - Local Web Dashboard Server & ESP RainMaker Cloud     │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             │ Cat5e 1 (1.5 meters) - RO Room Link
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│               NODE 0x01: DOSING TANK NODE               │  (Slave Node 0x01 - RO Room)
+│  - Arduino Nano + XY-485 Module                         │
+│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
+│  - Onboard 12V -> 5V DC Mini Buck Converter             │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             │ Cat5e 2 (5 meters): Outbound Pair (Blue / White-Blue)
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│              NODE 0x02: RAW WATER TANK (RWT)            │  (Slave Node 0x02 - Roof Top)
+│  - Arduino Nano + XY-485 Module                         │
+│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
+│  - Physical Return Loopback: Outbound Blue -> Return Brn│
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             │ Cat5e 2: Return Pair (Brown / White-Brown)
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                  CENTRAL JUNCTION BOX                   │  (RO Room Junction)
+│  - Pass-Through Splice: Cat5e 2 Return -> Cat5e 3 Out   │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             │ Cat5e 3 (10 meters): Outbound Pair (Blue / White-Blue)
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│            NODE 0x03: TREATED WATER TANK (TWT)          │  (Slave Node 0x03 - Roof Top)
+│  - Arduino Nano + XY-485 Module                         │
+│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             │ Cat5e 4: Extension Outbound Pair
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│             NODE 0x04: BATTERY ROOM NODE                │  (Slave Node 0x04 - Battery Room)
+│  - Arduino Nano + XY-485 Module                         │
+│  - GY-SHT30-D Digital Temp & Humidity Sensor (I2C)      │
+│  - 1-Channel Relay Module (Exhaust Fan Control)         │
+│  - [120Ω END-OF-BUS TERMINATION RESISTOR]               │
+└─────────────────────────────────────────────────────────┘
+
+
+-------------------------------------------------------------------------------
+2. GROUND FLOOR PARKING SUBSYSTEM (WIRELESS WI-FI LAN TO ESP32 HUB)
+-------------------------------------------------------------------------------
+
+Communication: Direct Wi-Fi LAN / mDNS (ro-hub.local) / HTTP REST JSON Push / UDP
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 ESP32 NODE 1: SUMP LEVEL MEASUREMENT                        │
+│  - Location: Ground Floor Parking (Sump Manhole)                            │
+│  - Power: Hi-Link HLK-20M5 (240V AC -> 5V DC 4A)                            │
+│  - Microcontroller: ESP32-WROOM-32 / ESP32-C3                               │
+│  - Sensor: JSN-SR04T Waterproof Ultrasonic Sensor (3.5m Deep Sump)          │
+│  - Role: Telemetry push of Sump Distance (mm), Level (%), and Status        │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       │ (Local Wi-Fi Network - Same LAN)
+                                       ▼
+                             [ ESP32 CENTRAL HUB ]
+                                       ▲
+                                       │ (Local Wi-Fi Network - Same LAN)
+                                       │
+┌──────────────────────────────────────┴──────────────────────────────────────┐
+│            ESP32 NODE 2: MOTOR MONITORING & INTERLOCK CONTROL               │
+│  - Location: Ground Floor Motor Starter Panel                               │
+│  - Power: Hi-Link HLK-20M5 (240V AC -> 5V DC 4A)                            │
+│  - Microcontroller: ESP32-WROOM-32 / ESP32-C3                               │
+│  - AC Optocoupler 1: Sump Motor Active Monitoring (240V AC Coil)            │
+│  - AC Optocoupler 2: Borewell Motor Active Monitoring (240V AC Coil)        │
+│  - 4-Channel Relay Module: Dry Contact Emulation                            │
+│      * Relay 1: Sump Low-Level Float Cutoff (Sump Motor Protection)         │
+│      * Relay 2: Sump High-Level Float Cutoff (Borewell Motor Protection)    │
+│      * Relays 3 & 4: Auxiliary / Manual Starter Overrides                   │
+└─────────────────────────────────────────────────────────────────────────────┘
 
 ===============================================================================
-                             ELECTRICAL SIGNAL PATH
-===============================================================================
-
-  Hub (Start, 120Ω) ──> Dosing ──> [Cable 1 Out] ──> RWT Node
-                                                       │ (Loopback)
-  TWT Node (End, 120Ω) <── [Cable 2 Out] <── [Cable 1 Return] ◄─┘

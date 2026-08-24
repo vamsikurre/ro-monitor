@@ -1,128 +1,153 @@
 # Hardware Specifications & Pin Allocations
 
-**Document Version:** 1.0  
-**Date:** 2026-08-19  
-**System Architecture:** ESP32 HUB (Master) + 3x Arduino Nano Remote Tank Nodes (Slaves)
+**Document Version:** 2.0  
+**Date:** 2026-08-24  
+**System Architecture:** ESP32 HUB (Master) + 4x RS485 Arduino Nano Nodes + 2x Ground Floor Wi-Fi ESP32 Nodes
 
 ---
 
-## 1. System Topology Overview (Return-Loopback Daisy-Chain Bus)
+## 1. System Topology Overview
 
 ```
  [120Ω Term Resistor]
 ┌────────────────────┐
-│    ESP32-S HUB     │ (Bus Master, 0x00)
+│  ESP32-S HUB (0x00)│ (RO Room Bus Master)
 │   XY-485 Master    │
 └─────────┬──────────┘
-          │ (Local link)
+          │ (Local link - 1.5m Cat5e 1)
           ▼
 ┌────────────────────┐
-│    DOSING NODE     │ (Slave Node 0x01)
+│ DOSING NODE (0x01) │ (RO Room - Dosing Chemical Tank)
 │    XY-485 Auto     │
 └─────────┬──────────┘
           │
-          │ CAT5e Cable 1: Outbound Pair (Pins 4 & 5: Blue / White-Blue)
+          │ Cat5e 2: Outbound Pair (Pins 4 & 5: Blue / White-Blue - 5m)
           ▼
 ┌────────────────────┐
-│      RWT NODE      │ (Slave Node 0x02, Raw Water Tank)
+│  RWT NODE (0x02)   │ (Roof Top - Raw Water Tank)
 │    XY-485 Auto     │
 └─────────┬──────────┘
           │
           │ (Loopback Jumper at RWT: Blue -> Brown, White-Blue -> White-Brown)
           │
-          │ CAT5e Cable 1: Return Pair (Pins 7 & 8: Brown / White-Brown)
+          │ Cat5e 2: Return Pair (Pins 7 & 8: Brown / White-Brown)
           ▼
 ┌────────────────────┐
-│CENTRAL JUNCTION BOX│ (Pass-through Splice: Return Pair -> Cable 2 Outbound Pair)
+│CENTRAL JUNCTION BOX│ (RO Room Pass-through Splice: Return Pair -> Cat5e 3 Outbound Pair)
 └─────────┬──────────┘
           │
-          │ CAT5e Cable 2: Outbound Pair (Pins 4 & 5: Blue / White-Blue)
+          │ Cat5e 3: Outbound Pair (Pins 4 & 5: Blue / White-Blue - 10m)
           ▼
 ┌────────────────────┐
-│      TWT NODE      │ (Slave Node 0x03, Treated Water Tank - End of Bus)
+│  TWT NODE (0x03)   │ (Roof Top - Treated Water Tank)
+│    XY-485 Auto     │
+└─────────┬──────────┘
+          │
+          │ Cat5e 4: Extension Outbound Pair
+          ▼
+┌────────────────────┐
+│BATTERY ROOM (0x04) │ (Battery Room - SHT30 Climate & Exhaust Fan)
 │    XY-485 Auto     │
 │ [120Ω Term Resistor│
 └────────────────────┘
+
+========================================================================================
+GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
+========================================================================================
+┌───────────────────────────────┐        ┌─────────────────────────────────────────┐
+│     ESP32 NODE 1 (0x05)       │        │           ESP32 NODE 2 (0x06)           │
+│  - 3.5m Deep Sump Level       │        │  - Sump & Borewell 240V AC Monitoring   │
+│  - JSN-SR04T Sensor           │        │  - 4-Ch Relay Motor Starter Interlock   │
+│  - Hi-Link HLK-20M5 (5V DC)   │        │  - Hi-Link HLK-20M5 (5V DC)             │
+└───────────────────────────────┘        └─────────────────────────────────────────┘
 ```
 
-> **Strict Daisy-Chain Guarantee:** By looping the RS485 differential pair through the Brown pair of Cable 1, the electrical signal flows through every single node in a 100% linear sequence without branching or stubs. Only two 120Ω termination resistors are used: one at the ESP32 Hub (Start) and one at the TWT Node (End).
-
 ---
 
-## 2. Verified Purchased Bill of Materials (BOM)
+## 2. Complete Bill of Materials (BOM)
 
-| Item Description | Model / SKU | Qty Purchased | Primary Role |
+| Item Description | Model / SKU | Qty | Location / Role |
 | :--- | :--- | :---: | :--- |
-| **Main Power Supply** | Hi-Link `HLK-20M12` (12V / 20W / 1.6A) | 1 | Master 12V DC power distribution |
+| **Main RO Bus Power Supply** | Hi-Link `HLK-20M12` (12V / 20W / 1.6A) | 1 | RO Room - Master 12V DC RS485 bus power |
+| **Ground Floor Power Supplies**| Hi-Link `HLK-20M5` (5V / 20W / 4.0A) | 2 | Ground Floor - Node 1 & Node 2 dedicated 5V power |
 | **Auxiliary Supply** | Hi-Link `HLK-10M05` (5V / 10W / 2.0A) | 1 | Spare / Local 5V high-current logic rail |
-| **RS485 Transceiver** | `XY-485` (TTL to RS485 Auto-Flow Control) | Multi | Hardware auto TX/RX direction switching (3.3V/5V compatible) |
-| **220V AC Opto Isolator**| 1-Channel 220V AC Optocoupler Isolation Module | 4 | Galvanic isolation for 240V AC HPP / RWP status |
-| **DC Dry-Contact Opto** | 8-Channel PC817 Optocoupler Isolation Board | 1 | Galvanic isolation for Aster controller dry switches |
-| **Ultrasonic Sensors** | Waterproof Ultrasonic Obstacle Sensor (JSN-SR04T) | 4 | Non-contact liquid level sensing (Dosing, RWT, TWT, +1 spare) |
-| **Environmental Sensor**| GY-SHT30-D Digital Temperature & Humidity | 1 | Ambient enclosure / pump-room monitoring |
+| **RS485 Transceiver** | `XY-485` (Auto-Flow Control) | 5 | Hardware auto TX/RX direction switching (1x Hub, 4x Nano) |
+| **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 4 | 2x RO Room (HPP/RWP) + 2x Ground Floor (Sump/Borewell) |
+| **DC Dry-Contact Opto** | 8-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation |
+| **Relay Modules** | 4-Channel 5V Relay Board | 2 | 1x RO Room (Aster Float Emulation) + 1x Ground Floor (Starter Control) |
+| **Relay Module (Single)** | 1-Channel 5V Relay Board | 1 | Battery Room (Exhaust Fan Switching) |
+| **Ultrasonic Sensors** | Waterproof Ultrasonic (JSN-SR04T) | 4 | Dosing (`0x01`), RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`) |
+| **Environmental Sensors** | GY-SHT30-D Digital Temp & Humidity | 2 | 1x RO Room (Hub I2C) + 1x Battery Room (Node 4 I2C) |
+| **Microcontrollers** | ESP32-S / ESP32-WROOM-32 | 3 | 1x Central Hub + 2x Ground Floor Nodes |
+| **Microcontrollers** | Arduino Nano (ATmega328P) | 4 | 4x RS485 Slave Nodes |
 
 ---
 
-## 3. ESP32-S HUB Pin Allocations (38-Pin Module)
+## 3. Pin Allocations by Subsystem
 
-Since the purchased `XY-485` transceiver features **hardware automatic flow control**, manual `DE/~RE` direction pin toggling is eliminated, saving GPIOs and simplifying firmware timing.
-
-| ESP32 GPIO | Pin Function | Connected Hardware / Circuit | Direction | Electrical Interface / Notes |
+### 3.1. ESP32-S Central Hub Pin Allocations (RO Room)
+| ESP32 GPIO | Pin Function | Connected Hardware / Circuit | Direction | Interface Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **GPIO 16** | `RS485_RX` | XY-485 Module `RXD` | Input | 3.3V UART2 RX |
 | **GPIO 17** | `RS485_TX` | XY-485 Module `TXD` | Output | 3.3V UART2 TX |
-| **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` | Bidirectional | I2C SDA (with 4.7kΩ pull-up to 3.3V) |
-| **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` | Output | I2C SCL (Standard 100kHz) |
-| **GPIO 34** | `IN_HPP_AC` | 220V AC Optocoupler Module 1 `OUT` | Input (GPI) | Active LOW when 240V HPP is energized |
-| **GPIO 35** | `IN_RWP_AC` | 220V AC Optocoupler Module 2 `OUT` | Input (GPI) | Active LOW when 240V RWP is energized |
-| **GPIO 32** | `IN_TWT_FLOT` | 8-Ch PC817 Board Ch 1 `OUT` | Input | Treated Water Float Switch Monitor |
-| **GPIO 33** | `IN_RWT_FLOT` | 8-Ch PC817 Board Ch 2 `OUT` | Input | Raw Water Float Switch Monitor |
-| **GPIO 25** | `IN_DOS_LVL` | 8-Ch PC817 Board Ch 3 `OUT` | Input | Dosing Tank Low Level Switch Monitor |
+| **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` (RO Room) | Bidirectional | I2C SDA (4.7kΩ pull-up to 3.3V) |
+| **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` (RO Room) | Output | I2C SCL (100kHz standard) |
+| **GPIO 34** | `IN_HPP_AC` | 220V AC Optocoupler Module 1 `OUT` | Input | Active LOW when HPP 240V contactor active |
+| **GPIO 35** | `IN_RWP_AC` | 220V AC Optocoupler Module 2 `OUT` | Input | Active LOW when RWP 240V active |
+| **GPIO 32** | `IN_TWT_FLOT` | 8-Ch PC817 Board Ch 1 `OUT` | Input | Aster TWT Float Contact Monitor |
+| **GPIO 33** | `IN_RWT_FLOT` | 8-Ch PC817 Board Ch 2 `OUT` | Input | Aster RWT Float Contact Monitor |
+| **GPIO 25** | `IN_DOS_LVL` | 8-Ch PC817 Board Ch 3 `OUT` | Input | Aster Dosing Level Contact Monitor |
 | **GPIO 26** | `IN_RL1_STAT` | 8-Ch PC817 Board Ch 4 `OUT` | Input | Aster RL1 Relay Contact Monitor |
 | **GPIO 27** | `IN_RL2_STAT` | 8-Ch PC817 Board Ch 5 `OUT` | Input | Aster RL2 Relay Contact Monitor |
-| **GPIO 2** | `LED_STATUS` | System Health / Heartbeat LED | Output | Active HIGH (Built-in onboard LED) |
-| **GPIO 0** | `BTN_BOOT` | Factory Reset / AP Mode Button | Input | Active LOW (Pull-up) |
+| **GPIO 18** | `OUT_RLY_TWT` | 4-Ch Relay Module IN1 | Output | TWT Float Switch Emulation |
+| **GPIO 19** | `OUT_RLY_RWT` | 4-Ch Relay Module IN2 | Output | RWT Float Switch Emulation |
+| **GPIO 23** | `OUT_RLY_DOS` | 4-Ch Relay Module IN3 | Output | Dosing Level Switch Emulation |
+| **GPIO 2** | `LED_STATUS` | System Heartbeat LED | Output | Active HIGH onboard LED |
 
 ---
 
-## 4. Arduino Nano Tank Node Pin Allocations
-
-| Nano Pin | Pin Function | Connected Hardware / Circuit | Direction | Electrical Interface / Notes |
+### 3.2. Arduino Nano Tank Nodes Pin Allocations (Nodes 0x01, 0x02, 0x03)
+| Nano Pin | Pin Function | Connected Hardware | Direction | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **D2** | `RS485_RX` | XY-485 Module `RXD` | Input | SoftwareSerial / AltSoftSerial RX |
-| **D3** | `RS485_TX` | XY-485 Module `TXD` | Output | SoftwareSerial / AltSoftSerial TX |
-| **D7** | `US_TRIG` | JSN-SR04T Sensor `TRIG` | Output | 10µs trigger pulse (5V logic) |
-| **D8** | `US_ECHO` | JSN-SR04T Sensor `ECHO` | Input | Pulse width proportional to distance |
-| **A0** | `ADDR_SEL0` | Hardware Node Address Bit 0 | Input | DIP Switch or solder jumper (Pull-up) |
-| **A1** | `ADDR_SEL1` | Hardware Node Address Bit 1 | Input | DIP Switch or solder jumper (Pull-up) |
-| **D13** | `LED_STATUS`| Status / RS485 Activity LED | Output | Nano onboard LED (Blinks on poll response) |
+| **D2** | `RS485_RX` | XY-485 Module `RXD` | Input | SoftwareSerial RX |
+| **D3** | `RS485_TX` | XY-485 Module `TXD` | Output | SoftwareSerial TX |
+| **D7** | `US_TRIG` | JSN-SR04T Sensor `TRIG` | Output | 10µs trigger pulse |
+| **D8** | `US_ECHO` | JSN-SR04T Sensor `ECHO` | Input | Echo pulse width |
+| **A0** | `ADDR_SEL0` | Hardware Node Address Bit 0 | Input | Pull-up jumper |
+| **A1** | `ADDR_SEL1` | Hardware Node Address Bit 1 | Input | Pull-up jumper |
+| **D13** | `LED_STATUS` | Status / RS485 Activity | Output | Blinks on successful poll |
 
 ---
 
-## 4. Peripheral Components Specification
-
-### 4.1. RS485 Transceivers
-- **Transceiver IC:** Maxim `MAX485ESA` or `MAX13487EESA` (Half-Duplex RS485).
-- **Termination:** 120Ω resistor at the extreme ends of the bus (ESP32 Hub and furthest Tank Node).
-- **Biasing:** 4.7kΩ pull-up on RS485 A line to +5V / 3.3V, 4.7kΩ pull-down on RS485 B line to GND to ensure stable idle state.
-
-### 4.2. Ultrasonic Sensors
-- **Model:** JSN-SR04T 2.0 / 3.0 or AJ-SR04M waterproof transceiver probe.
-- **Operating Voltage:** 5V DC (supplied from local node buck converter).
-- **Blind Zone (Dead Band):** 20 cm (firmware must flag readings `< 20 cm` as overflow / sensor saturation).
-- **Maximum Range:** 450 cm (4.5 meters).
-- **Resolution:** 1 mm (hardware timing precision ~3mm).
-
-### 4.3. SHT30 Environmental Sensor
-- **Interface:** Standard I2C (Address `0x44` default or `0x45`).
-- **Operating Voltage:** 3.3V DC.
-- **Accuracy:** ±2% RH, ±0.2°C.
+### 3.3. Arduino Nano Battery Room Node (Node 0x04)
+| Nano Pin | Pin Function | Connected Hardware | Direction | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **D2** | `RS485_RX` | XY-485 Module `RXD` | Input | SoftwareSerial RX |
+| **D3** | `RS485_TX` | XY-485 Module `TXD` | Output | SoftwareSerial TX |
+| **A4** | `I2C_SDA` | GY-SHT30-D `SDA` | Bidirectional | Hardware I2C SDA |
+| **A5** | `I2C_SCL` | GY-SHT30-D `SCL` | Output | Hardware I2C SCL |
+| **D9** | `OUT_FAN_RLY` | 1-Channel Relay Board `IN` | Output | Active LOW Exhaust Fan control |
+| **D13** | `LED_STATUS` | Activity LED | Output | Heartbeat indicator |
 
 ---
 
-## 5. Power Architecture
+### 3.4. Ground Floor ESP32 Node 1: Sump Telemetry (0x05)
+| ESP32 GPIO | Pin Function | Connected Hardware | Direction | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **GPIO 5** | `US_TRIG` | JSN-SR04T Sensor `TRIG` | Output | 10µs ultrasonic trigger |
+| **GPIO 18** | `US_ECHO` | JSN-SR04T Sensor `ECHO` | Input | 5V $\to$ 3.3V resistor voltage divider (1kΩ/2kΩ) |
+| **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
 
-1. **Mains Supply:** 230V AC (50Hz) connected via input protection fuse (`BLX-A` / 1A slow-blow) to **Hi-Link HLK-20M12** (12V DC, 20W, 1.67A).
-2. **HUB Local Step-Down:** High-efficiency DC-DC Buck converter (e.g. MP1584EN / LM2596) stepping down 12V DC to 5.0V DC for ESP32 and peripheral sensors.
-3. **CAT5e Power Distribution:** Clean 12V DC is routed through dedicated CAT5e twisted pairs to each remote tank node, avoiding high line-drop current at 5V.
-4. **Remote Node Step-Down:** Each tank node incorporates an onboard mini buck converter (12V -> 5V) powering the Arduino Nano and JSN-SR04T sensor.
+---
+
+### 3.5. Ground Floor ESP32 Node 2: Motor Control & Interlocks (0x06)
+| ESP32 GPIO | Pin Function | Connected Hardware | Direction | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **GPIO 34** | `IN_SUMP_AC` | 220V AC Optocoupler 1 `OUT` | Input | Sump Motor 240V AC Active Sense |
+| **GPIO 35** | `IN_BORE_AC` | 220V AC Optocoupler 2 `OUT` | Input | Borewell Motor 240V AC Active Sense |
+| **GPIO 25** | `OUT_SUMP_FLOT` | 4-Ch Relay Module `IN1` | Output | Dry contact to Sump Motor Starter |
+| **GPIO 26** | `OUT_BORE_FLOT` | 4-Ch Relay Module `IN2` | Output | Dry contact to Borewell Starter (Overflow Cutoff) |
+| **GPIO 27** | `OUT_AUX_RLY1` | 4-Ch Relay Module `IN3` | Output | Auxiliary remote override |
+| **GPIO 14** | `OUT_AUX_RLY2` | 4-Ch Relay Module `IN4` | Output | Auxiliary remote override |
+| **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
+

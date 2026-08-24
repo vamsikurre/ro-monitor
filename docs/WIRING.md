@@ -229,17 +229,85 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
 
 ---
 
-## 9. RS485 Daisy-Chain Topology & Bus Termination
+## 9. Battery Room Node (0x04: SHT30 & Exhaust Fan)
 
 ```
- +----------------+         +----------------+         +----------------+         +----------------+
- | ESP32 HUB      |         | DOSING NODE    |         | RWT NODE       |         | TWT NODE       |
- | Master (0x00)  +---------+ Slave (0x01)   +---------+ Slave (0x02)   +---------+ Slave (0x03)   |
- | [120R Enabled] |         | (No Resistor)  |         | (No Resistor)  |         | [120R Enabled] |
- +----------------+         +----------------+         +----------------+         +----------------+
+                                  12V DC CAT5e Power Bus
+                                            |
+                                            v
+                             +------------------------------+
+                             | LM2596 / Mini560 Buck Module |
+                             | Input: 12V DC | Output: 5.0V |
+                             +--------------+---------------+
+                                            |
+                                            +-- +5V DC ------+
+                                            +-- GND ---------+----------+
+                                                             |          |
+ +-----------------------------------------------------------v----------v-+
+ |                            ARDUINO NANO (ATmega328P)                   |
+ |  - 5V Pin  <-- +5V Buck Output                                         |
+ |  - GND Pin <-- Common Ground                                           |
+ +------+------------+-------------+-------------+-------------+----------+
+        |            |             |             |             |
+      Pin D2       Pin D3        Pin A4        Pin A5        Pin D9
+     (Soft RX)   (Soft TX)      (I2C SDA)     (I2C SCL)     (Relay IN)
+        |            |             |             |             |
+ +------v------------v------+ +----v-------------v----+ +------v----------+
+ |    XY-485 MODULE         | |   GY-SHT30-D SENSOR   | | 1-CH RELAY BOARD|
+ | RXD --> D2               | | SDA --> A4            | | IN1 --> D9      |
+ | TXD --> D3               | | SCL --> A5            | | VCC --> 5V      |
+ | [120Ω Term Resistor on]  | | VCC --> 5V            | | GND --> GND     |
+ | A+ & B-                  | | GND --> GND           | | COM/NO -> Fan AC|
+ +--------------------------+ +-----------------------+ +-----------------+
+```
+
+---
+
+## 10. Ground Floor Wi-Fi Nodes Wiring (Parking)
+
+### 10.1. Ground Floor ESP32 Node 1: Sump Ultrasonic Level (0x05)
+* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
+* **ESP32 5V / VIN:** `+5V DC` from HLK-20M5
+* **ESP32 GND:** `GND` from HLK-20M5
+* **JSN-SR04T Sensor:**
+  * `VCC` $\to$ `5V DC`
+  * `GND` $\to$ `GND`
+  * `TRIG` $\to$ `ESP32 GPIO 5`
+  * `ECHO` $\to$ `1kΩ resistor` $\to$ `ESP32 GPIO 18` *(and 2kΩ from GPIO 18 to GND for 3.3V voltage divider)*
+
+### 10.2. Ground Floor ESP32 Node 2: Motor AC Sensing & Float Relays (0x06)
+* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
+* **220V AC Optocoupler 1 (Sump Motor Monitor):**
+  * `AC L / N` $\to$ Connected across Sump Motor Starter Contactor 240V Coil
+  * `DC VCC` $\to$ `3.3V` from ESP32
+  * `DC GND` $\to$ `GND`
+  * `DC OUT` $\to$ `ESP32 GPIO 34`
+* **220V AC Optocoupler 2 (Borewell Motor Monitor):**
+  * `AC L / N` $\to$ Connected across Borewell Motor Starter Contactor 240V Coil
+  * `DC VCC` $\to$ `3.3V` from ESP32
+  * `DC GND` $\to$ `GND`
+  * `DC OUT` $\to$ `ESP32 GPIO 35`
+* **4-Channel Relay Board (Starter Interlocks):**
+  * `VCC` $\to$ `5V DC` from HLK-20M5
+  * `GND` $\to$ `GND`
+  * `IN1` (Sump Low Float Cutoff) $\to$ `ESP32 GPIO 25`
+  * `IN2` (Borewell High Float Cutoff) $\to$ `ESP32 GPIO 26`
+  * `IN3` (Aux Manual Override 1) $\to$ `ESP32 GPIO 27`
+  * `IN4` (Aux Manual Override 2) $\to$ `ESP32 GPIO 14`
+
+---
+
+## 11. Complete RS485 Daisy-Chain Topology & Bus Termination
+
+```
+ +----------------+     +----------------+     +----------------+     +----------------+     +----------------+
+ | ESP32 HUB      |     | DOSING NODE    |     | RWT NODE       |     | TWT NODE       |     | BATTERY ROOM   |
+ | Master (0x00)  +-----+ Slave (0x01)   +-----+ Slave (0x02)   +-----+ Slave (0x03)   +-----+ Slave (0x04)   |
+ | [120Ω Enabled] |     | (No Resistor)  |     | (No Resistor)  |     | (No Resistor)  |     | [120Ω Enabled] |
+ +----------------+     +----------------+     +----------------+     +----------------+     +----------------+
 ```
 
 * **Bus Topology:** Strict linear daisy chain (no star/branch topologies).
 * **Termination:** Exactly **two 120 ohm resistors** on the entire physical bus:
-  1. One at the **ESP32 Central Hub** across `A+` and `B-`.
-  2. One at the physical end of the bus (**TWT Tank Node 0x03**) across `A+` and `B-`.
+  1. One at the **ESP32 Central Hub** (RO Room) across `A+` and `B-`.
+  2. One at the physical end of the bus (**Battery Room Node 0x04**) across `A+` and `B-`.

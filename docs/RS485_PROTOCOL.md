@@ -42,18 +42,20 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 
 ## 3. Node Addressing Scheme
 
-| Node ID | Assigned Tank / Role | Microcontroller | Primary Sensor |
-| :---: | :--- | :--- | :--- |
-| `0x00` | **ESP32 HUB (Master)** | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs |
-| `0x01` | **Dosing Chemical Tank** | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
-| `0x02` | **Raw Water Tank (RWT)** | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
-| `0x03` | **Treated Water Tank (TWT)** | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
-| `0x04`–`0xFE` | *Reserved for Expansion* | Arduino / ESP | Auxiliary flow, pH, or EC sensors |
-| `0xFF` | **Broadcast Address** | All Slaves | Global synchronization / Reset |
+| Node ID | Assigned Tank / Role | Subsystem / Transport | Microcontroller | Primary Sensors / Actuators |
+| :---: | :--- | :--- | :--- | :--- |
+| `0x00` | **ESP32 HUB (Master)** | RO Room Core | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs, 4-Ch Relays |
+| `0x01` | **Dosing Chemical Tank** | RO Room RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
+| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) + Loopback |
+| `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
+| `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Nano | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
+| `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi | ESP32 | Waterproof Ultrasonic (JSN-SR04T - 3.5m Sump) |
+| `0x06` | **Ground Motors & Interlock** | Ground Floor Wi-Fi | ESP32 | 2x 220V AC Optos (Sump/Borewell) + 4-Ch Relays |
+| `0xFF` | **Broadcast Address** | Global Sync | All Slaves | Global synchronization / Bus Reset |
 
 ---
 
-## 4. Command Specifications
+## 4. Command Specifications (RS485 Binary Bus)
 
 ### 4.1. `CMD_PING` (`0x01`)
 Used by the Master to verify slave liveness and measure round-trip latency.
@@ -61,7 +63,7 @@ Used by the Master to verify slave liveness and measure round-trip latency.
 - **Response Payload:** `uint8_t status_flags`, `uint16_t firmware_version`.
 
 ### 4.2. `CMD_READ_LEVEL` (`0x02`)
-Requests processed, filtered water level and telemetry from a tank node.
+Requests processed, filtered water level and telemetry from tank nodes (`0x01`, `0x02`, `0x03`).
 - **Request Payload:** None ($N=0$).
 - **Response Payload (10 Bytes):**
   - `uint16_t distance_mm`: Median-filtered distance from sensor transducer to liquid surface in millimeters.
@@ -72,33 +74,56 @@ Requests processed, filtered water level and telemetry from a tank node.
   - `uint8_t reserved`: Reserved byte.
   - `uint16_t node_uptime_s`: Slave uptime in seconds.
 
-### 4.3. `CMD_READ_RAW_SENSORS` (`0x03`)
-Requests raw diagnostic echo timing and temperature (if available).
+### 4.3. `CMD_READ_CLIMATE` (`0x06`) - Battery Room Node (0x04)
+Requests temperature, humidity, and exhaust fan status from Node `0x04`.
 - **Request Payload:** None ($N=0$).
 - **Response Payload (6 Bytes):**
-  - `uint32_t echo_time_us`: Raw ultrasonic round-trip time in microseconds.
-  - `int16_t internal_temp_deci_c`: Node internal temperature in tenths of °C.
+  - `int16_t temp_deci_c`: Temperature in tenths of °C (e.g. $325 = 32.5^\circ\text{C}$).
+  - `uint16_t humidity_deci_pct`: Relative humidity in tenths of % (e.g. $654 = 65.4\%$).
+  - `uint8_t fan_relay_state`: `0 = OFF`, `1 = ON`.
+  - `uint8_t fault_code`: `0 = OK`, `1 = SHT30 Error`.
 
-### 4.4. `CMD_GET_CONFIG` (`0x04`)
-Reads tank geometry configuration stored in the slave's EEPROM.
-- **Request Payload:** None ($N=0$).
-- **Response Payload (6 Bytes):**
-  - `uint16_t tank_height_mm`: Total tank height in mm.
-  - `uint16_t sensor_offset_mm`: Transducer offset above maximum water mark in mm.
-  - `uint16_t blind_zone_mm`: Sensor blind zone in mm (typically 200 mm).
-
-### 4.5. `CMD_SET_CONFIG` (`0x05`)
-Updates tank geometry configuration in the slave's EEPROM.
-- **Request Payload (6 Bytes):**
-  - `uint16_t tank_height_mm`
-  - `uint16_t sensor_offset_mm`
-  - `uint16_t blind_zone_mm`
-- **Response Payload (1 Byte):**
-  - `uint8_t status` (`0x00 = SUCCESS`, `0x01 = REJECTED`).
+### 4.4. `CMD_SET_FAN_RELAY` (`0x07`) - Battery Room Node (0x04)
+Commands the battery room exhaust fan state.
+- **Request Payload (1 Byte):** `uint8_t desired_state` (`0 = Turn OFF`, `1 = Turn ON`).
+- **Response Payload (1 Byte):** `uint8_t current_state` (`0 = OFF`, `1 = ON`).
 
 ---
 
-## 5. CRC-16 Calculation Algorithm (Modbus Standard)
+## 5. Wi-Fi JSON Protocol Specification (Ground Floor Nodes)
+
+Ground Floor ESP32 nodes push telemetry to the Terrace ESP32 Hub via HTTP POST to `http://ro-hub.local/api/sump` and `http://ro-hub.local/api/motors`:
+
+### 5.1. Ground Sump Node 1 (0x05) Payload:
+```json
+{
+  "node_id": 5,
+  "distance_mm": 1750,
+  "water_depth_mm": 1750,
+  "level_percent": 50,
+  "signal_quality": 95,
+  "status": "OK",
+  "rssi": -64,
+  "uptime_s": 3840
+}
+```
+
+### 5.2. Ground Motor Node 2 (0x06) Payload:
+```json
+{
+  "node_id": 6,
+  "sump_motor_active": false,
+  "borewell_motor_active": true,
+  "sump_float_cutoff": false,
+  "borewell_float_cutoff": false,
+  "rssi": -68,
+  "uptime_s": 3840
+}
+```
+
+---
+
+## 6. CRC-16 Calculation Algorithm (Modbus Standard)
 
 Both ESP32 and Arduino Nano use the identical CRC-16 polynomial ($X^{16} + X^{15} + X^2 + 1$, represented by `0xA001` reversed):
 
@@ -122,11 +147,8 @@ uint16_t calculate_crc16(const uint8_t *buffer, size_t length) {
 
 ---
 
-## 6. Timeout, Retry, and Error Recovery Strategy
+## 7. Timeout, Retry, and Error Recovery Strategy
 
 1. **Slave Response Timeout:** Master sets a timer for **100 ms** upon finishing packet transmission. If no complete packet is received within 100 ms, the attempt is marked as `TIMEOUT`.
 2. **Retry Logic:** Master retries up to **2 consecutive times** (3 total attempts) before declaring the node `OFFLINE`.
-3. **State Transition:**
-   - *Online State:* 1 successful response restores `ONLINE` status immediately.
-   - *Offline State:* Firmware logs an alert: `[WARN] RS485 Node X OFFLINE` and continues polling the next node in the cycle without stalling the main loop.
-   - *Corrupted Packet:* If CRC16 check fails, packet is discarded and treated as a transmission error.
+3. **Wi-Fi Heartbeat Expiry:** If no HTTP/UDP packet is received from Ground Floor nodes for **10 seconds**, status is set to `OFFLINE` and emergency pump interlocks engage.
