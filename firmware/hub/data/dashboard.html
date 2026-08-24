@@ -98,7 +98,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 .plant{
   position:relative; display:grid; min-width:1240px; transform-origin:top center;
   grid-template-columns:[lbl] 108px [c1] 2fr [c2] .8fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 2.1fr;
-  grid-template-rows:minmax(306px,auto) minmax(366px,auto) auto 0 auto;
+  grid-template-rows:minmax(326px,auto) minmax(396px,auto) auto 0 auto;
   row-gap:32px;
 }
 .plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
@@ -144,6 +144,7 @@ h1 span{color:var(--ink-3); font-weight:400}
     transparent 0 3px, color-mix(in srgb,var(--line-2) 50%,transparent) 3px 4px);
 }
 .slab.grade{border-top-width:2px; margin-bottom:-19px}
+.slab.roof{margin-left:-14px}
 
 /* earth below grade */
 .earth{
@@ -168,7 +169,7 @@ h1 span{color:var(--ink-3); font-weight:400}
    The panel stretches with its columns while its vertical geometry is
    fixed, so the posts stay put and the gap holds at any width. */
 .solar{grid-row:1; align-self:stretch; position:relative; z-index:0; opacity:.85}
-.solar.rowA{margin-left:-58px; margin-right:9px}
+.solar.rowA{margin-left:-46px; margin-right:9px}
 .solar.rowB{margin-left:9px}
 .solar .post{
   position:absolute; bottom:0; width:7px;
@@ -785,10 +786,10 @@ function buildPlant(s) {
   const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
 
   const build = {
-    rwt:    () => tankUnit(T.rwt,    { w: 104, h: 126, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
-    twt:    () => tankUnit(T.twt,    { w: 112, h: 136, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
-    dos:    () => tankUnit(T.dosing, { w: 72,  h: 84,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
-    sump:   () => tankUnit(T.sump,   { w: 108, h: 124, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
+    rwt:    () => tankUnit(T.rwt,    { w: 118, h: 142, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
+    twt:    () => tankUnit(T.twt,    { w: 126, h: 154, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
+    dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
+    sump:   () => tankUnit(T.sump,   { w: 122, h: 140, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
     rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25),
     hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 25),
     smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 26),
@@ -897,7 +898,7 @@ function buildPlant(s) {
     add(roomBox(), "c3 / span 5", 2);
 
     // slabs: roof of the RO room, terrace floor, then grade
-    add(node("slab"), "1 / -1", 1);
+    add(node("slab roof"), "c3 / -1", 1);
     add(node("slab"), "1 / -1", 2);
     const grade = node("slab grade");
     add(grade, "1 / -1", 3);
