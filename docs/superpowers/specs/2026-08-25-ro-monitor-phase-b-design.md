@@ -328,10 +328,34 @@ ESP RainMaker as specified in `DASHBOARD_AND_RAINMAKER.md` §3 brings AWS IoT pr
 Specified here for continuity; detailed design belongs to its own document.
 
 - **Hardware layer.** New low float → NC contact → in series with the RWT float → sump starter coil. No firmware, no network. The layer that holds when everything else is off.
-- **Node 0x05 (sump ultrasonic).** **Bench-test the JSN-SR04T down the actual manhole before building any enclosure.** 3.5 m against a 4.5 m specification, in a narrow shaft that will produce wall echoes. This is the single most likely component in the project to simply not work. Fallback: submersible pressure transducer (~₹1500).
+- **Node 0x05 (sump level).** See §7.1 — sensor choice is unresolved and is the largest open procurement question in Phase C.
 - **Node 0x06 (starter panel).** 2 × AC opto sensing sump and borewell motor state, plus the ESP32 relay in series as a second cutoff.
 - **Dry-borewell detection.** Borewell energised for N minutes with sump level not rising means the borewell itself is dry. Alert and optionally stop it. This is the upstream condition that begins the whole failure chain, and it only becomes observable once node 0x05 exists.
 - **Fail-safe direction.** ESP32 relay de-energised = closed = current behaviour. WiFi loss, hub crash or a pulled plug degrades to the hardware float.
+
+### 7.1 Sump level sensor — unresolved
+
+**This sensor buys better data, not better safety.** Dry-run protection is the float in series with the starter coil (§1.1); it functions regardless of what measures the sump, or whether anything does. Evaluate the sensor purely as "is accurate sump telemetry worth the money", not as pump protection.
+
+**Step 1 — test what is already owned.** `docs/HARDWARE.md` §2 lists four JSN-SR04T units, one earmarked for the sump. **Lower it down the actual manhole and take readings at two or three different water levels before ordering anything.** One hour, no cost.
+
+The concern is real but unproven: 3.5 m against a 4.5 m specification, in a narrow shaft that produces wall echoes, in an atmosphere that fogs transducer faces. This remains the single most likely component in the project to simply not work — but "likely to fail" is not "known to fail".
+
+**Step 2 — if it fails, the fallback is a submersible 4-20 mA pressure transducer.**
+
+Reference part evaluated: DFRobot `KIT0139` — 0-5 m, 4-20 mA, 0.5 % accuracy (25 mm over range), 316L stainless, IP68, 12-36 V, 5 m cable. **₹6,071 inc. GST.**
+
+> Corrects an earlier estimate of ~₹1500 in this document, which was wrong by roughly 4×.
+
+Three procurement constraints to verify **before** ordering:
+
+1. **Cable length.** 5 m of cable against a 3.5 m sump leaves 1.5 m to reach the node enclosure. Measure the actual run first. This cable generally **cannot be spliced** — see (2).
+2. **Vent tube.** 4-20 mA level transducers reference atmosphere through a vent running inside the cable. Splicing breaks it. The dry end must terminate somewhere genuinely dry; sealing the vent inside a damp junction box is the standard cause of unexplained ~100 mm drift.
+3. **Supply voltage.** 12-36 V. Node 0x05 is currently specced with an HLK-20M5 (5 V). Switching to this sensor means a 12 V supply plus a buck for the ESP32 — a BOM change, not a drop-in.
+
+**Signal conditioning.** The DFRobot kit includes a current-to-voltage converter board. Feed it to an **ADS1115** (16-bit I2C ADC, ~₹250) rather than the ESP32's internal ADC, which is nonlinear enough to discard the 0.5 % accuracy being paid for.
+
+**Trade-off summary.** Ultrasonic: ~₹500, already owned, may not work in this environment, no immersion fouling. Pressure transducer: ~₹6,300 all-in including ADS1115 and PSU change, 25 mm accuracy, immune to wall echoes and fogging, but sits permanently in the water and will need periodic diaphragm cleaning and eventual attention if the sump silts up.
 
 ---
 
@@ -371,6 +395,7 @@ None of these block the start of implementation.
 2. **Tank dimensions.** `empty_distance_mm` / `full_distance_mm` per tank, measured on site. Configuration, not code — the system runs with placeholder values.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
+5. **Sump sensor choice (§7.1).** Settled by lowering the JSN-SR04T already owned down the actual manhole. Decide before ordering the ₹6,071 transducer, not after. Phase C only.
 
 ---
 
