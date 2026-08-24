@@ -73,11 +73,13 @@ h1 span{color:var(--ink-3); font-weight:400}
 .plant{
   position:relative; display:grid; min-width:1080px;
   grid-template-columns:[lbl] 122px [c1] .92fr [c2] .58fr [c3] 1fr [c4] .95fr [c5] 1fr [c6] .95fr;
-  grid-template-rows:auto auto auto 0 auto;
+  grid-template-rows:auto minmax(248px,auto) auto 0 auto;
   row-gap:62px;
 }
 .plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
 .cell{display:flex; justify-content:center; align-items:center; position:relative; z-index:2}
+.cell.top{align-items:flex-start}
+.cell.bottom{align-items:flex-end}
 
 /* elevation band label — encodes real building height, not decoration */
 .tier{grid-column:lbl; display:flex; flex-direction:column; gap:3px; justify-content:center; align-items:flex-start; position:relative; z-index:2}
@@ -98,6 +100,8 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 .flowing{animation:dash 1.15s linear infinite}
 @keyframes dash{to{stroke-dashoffset:-20}}
+.flowing.thin{animation:dash-thin 1.6s linear infinite}
+@keyframes dash-thin{to{stroke-dashoffset:-12}}
 
 /* ── units ──────────────────────────────────────────────── */
 .unit{display:flex; flex-direction:column; align-items:center; gap:8px}
@@ -410,17 +414,29 @@ function drawPipes() {
   svg.setAttribute("height", h.height);
   svg.setAttribute("viewBox", `0 0 ${h.width} ${h.height}`);
   svg.textContent = "";
+  // injection point: midpoint of the RWP -> HPP run
+  const rr = anchorPt("rwp", "r", h), hl = anchorPt("hpp", "l", h);
+  const tee = (rr && hl) ? { x: (rr.x + hl.x) / 2, y: rr.y } : null;
+
   ROUTES.forEach(rt => {
-    const a = anchorPt(rt.from, rt.fs, h), b = anchorPt(rt.to, rt.ts, h);
+    const a = anchorPt(rt.from, rt.fs, h);
+    const b = rt.toTee ? tee : anchorPt(rt.to, rt.ts, h);
     if (!a || !b) return;
-    const common = { d: routeD(a, rt.fs, b, rt.ts), fill: "none", "stroke-linejoin": "round", "stroke-linecap": "butt" };
-    svg.appendChild(el("path", { ...common, stroke: "var(--line-2)", "stroke-width": 11 }));
-    svg.appendChild(el("path", { ...common, stroke: "#0C1119", "stroke-width": 8.4 }));
+    const bs = rt.toTee ? "b" : rt.ts;
+    const W = rt.thin ? [7, 5, 2.8, "5 7"] : [11, 8.4, 4.6, "9 11"];
+    const common = { d: routeD(a, rt.fs, b, bs), fill: "none", "stroke-linejoin": "round", "stroke-linecap": "butt" };
+    svg.appendChild(el("path", { ...common, stroke: "var(--line-2)", "stroke-width": W[0] }));
+    svg.appendChild(el("path", { ...common, stroke: "#0C1119", "stroke-width": W[1] }));
     if (rt.flow) svg.appendChild(el("path", {
-      ...common, stroke: `var(--${rt.fluid})`, "stroke-width": 4.6,
-      "stroke-dasharray": "9 11", class: "flowing"
+      ...common, stroke: `var(--${rt.fluid})`, "stroke-width": W[2],
+      "stroke-dasharray": W[3], class: "flowing" + (rt.thin ? " thin" : "")
     }));
   });
+
+  if (tee) {
+    svg.appendChild(el("circle", { cx: tee.x, cy: tee.y, r: 5.4, fill: "var(--line-2)" }));
+    svg.appendChild(el("circle", { cx: tee.x, cy: tee.y, r: 3, fill: "var(--additive)" }));
+  }
 }
 
 /* ── the plant, in elevation ────────────────────────────── */
@@ -450,9 +466,9 @@ function drawPlant(s) {
   cell(tankUnit(T.twt, { w: 136, h: 168, shape: "cyl", fluid: "treated", label: "Treated Water", id: "twt" }), "c5", 1);
 
   // terrace — inside the RO room
-  cell(machineUnit(P.rwp, "RWP", "rwp", 29), "c3", 2);
-  cell(tankUnit(T.dosing, { w: 84, h: 100, shape: "cyl", fluid: "additive", label: "Dosing", id: "dos" }), "c4", 2);
-  cell(machineUnit(P.hpp, "HPP", "hpp", 29), "c5", 2);
+  cell(machineUnit(P.rwp, "RWP", "rwp", 29), "c3", 2).classList.add("top");
+  cell(tankUnit(T.dosing, { w: 82, h: 96, shape: "cyl", fluid: "additive", label: "Dosing", id: "dos" }), "c4", 2).classList.add("bottom");
+  cell(machineUnit(P.hpp, "HPP", "hpp", 29), "c5", 2).classList.add("top");
 
   // terrace — beside the RO room
   const B = s.env.battery_room;
@@ -483,8 +499,8 @@ function drawPlant(s) {
     { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     flow: live("sump_motor") },
     { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     flow: live("sump_motor") },
     { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
-    { from: "rwp",    fs: "r", to: "dos",    ts: "l", fluid: "raw",     flow: live("rwp") },
-    { from: "dos",    fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
+    { from: "rwp",    fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
+    { from: "dos",    fs: "t", toTee: true,            fluid: "additive", flow: live("rwp"), thin: true },
     { from: "hpp",    fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
   ];
   requestAnimationFrame(drawPipes);

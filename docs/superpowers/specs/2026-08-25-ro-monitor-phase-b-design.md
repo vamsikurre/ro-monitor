@@ -313,7 +313,22 @@ Replaced rather than patched. The previous `firmware/esp32_hub_test/dashboard.ht
 
 New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped**, served from LittleFS.
 
-**Structure.** A single horizontal rail mirroring `dashboard.png`: Borewell → Sump → Sump Motor → RWT → [RO Skid: RWP · Dosing · HPP] → TWT. Below it a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table. Alerts appear above the rail only when active.
+**Structure — a true elevation, not a flat flow.** The plant is drawn at real building height, because the lift is the failure mode:
+
+| Band | Contents |
+| :--- | :--- |
+| Roof of RO room | RWT, TWT |
+| Terrace | RO room (RWP · Dosing · HPP), Battery Room beside it |
+| Ground floor / parking | Sump, Sump Motor |
+| Below grade | Borewell |
+
+A dashed grade line separates what is underground. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
+
+**Dosing is a tee, not an inline vessel.** Process water runs RWP → HPP directly. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum.
+
+Pipes are an SVG overlay routed orthogonally between measured element rects after layout and redrawn on resize, so the grid can reflow without pipework drifting off its vessels. Unit captions carry an opaque background to mask pipes running behind them, as on a real P&ID.
+
+Below the plant, a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table. Alerts appear above the plant only when active.
 
 **Encoding decisions.**
 
@@ -325,7 +340,9 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 
 **Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
-**Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate. Responsive: the rail turns vertical below 860 px, which is truer anyway since water genuinely travels upward from sump to roof.
+**Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate. Narrow screens scroll the elevation sideways rather than flattening it: collapsing the tiers would discard the one thing the drawing exists to show.
+
+**Untrusted input.** Telemetry strings (`role`, `src`, `fw`, `reset_reason`, `sensor`) originate at RS485 and Wi-Fi nodes — a trust boundary. Plain-text nodes are built with `textContent`; authored markup escapes every interpolation through `esc()`. Nothing from the wire reaches `innerHTML` unescaped.
 
 **Demo mode.** With no hub present the page runs a simulator modelling the exact failure this project exists to fix — the borewell goes dry, the sump drains, and the sump motor keeps pulling because RWT is still low. It switches to live silently on the first successful `/api/telemetry` response.
 
