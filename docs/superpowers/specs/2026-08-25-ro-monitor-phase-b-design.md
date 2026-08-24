@@ -318,13 +318,25 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 | Band | Contents |
 | :--- | :--- |
 | Roof of RO room | RWT, TWT |
-| Terrace | RO room (RWP · Dosing · HPP), Battery Room beside it |
+| Terrace | RO room (the treatment train), Battery Room beside it |
 | Ground floor / parking | Sump, Sump Motor |
 | Below grade | Borewell |
 
 A dashed grade line separates what is underground. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
 
-**Dosing is a tee, not an inline vessel.** Process water runs RWP → HPP directly. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum.
+**The treatment train follows the Aster mimic panel.** A photograph of the controller's own process display fixes the order:
+
+```
+RWT → RWP → FILTER → MF → [LPS] → HPP → [HPS] → RO membrane → [RSV/drain] → TWT
+```
+
+The dashboard draws RWP, FILTER, MF, HPP, the RO membrane (a horizontal pressure vessel), and TWT. FILTER, MF and the membrane are **passive equipment**: dimmer outline, no status chip, because the hub does not instrument them — the page must not imply knowledge it does not have. LPS, HPS and the RSV reject valve are on the Aster mimic but are not drawn; they are Aster-internal signals the hub does not currently tap.
+
+Every item on the train shares a fixed-height anchor box, so the horizontal runs sit on one centreline instead of staircasing between differently-sized vessels.
+
+**Dosing is a tee, not an inline vessel.** Process water runs MF → HPP directly. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum. The tee sits immediately upstream of HPP, which is where antiscalant is actually injected.
+
+**Pumps and the fan do not share a glyph.** Pumps draw a centrifugal impeller — three thin curved blades in a round casing. The exhaust fan draws an axial fan — four broad blades, guard ring, square wall housing with mounting holes. Different equipment doing different jobs should not look identical.
 
 Pipes are an SVG overlay routed orthogonally between measured element rects after layout and redrawn on resize, so the grid can reflow without pipework drifting off its vessels. Unit captions carry an opaque background to mask pipes running behind them, as on a real P&ID.
 
@@ -340,7 +352,9 @@ Below the plant, a four-card instrument strip: RO Room climate, Battery Room cli
 
 **Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
-**Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate. Narrow screens scroll the elevation sideways rather than flattening it: collapsing the tiers would discard the one thing the drawing exists to show.
+**Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate.
+
+**Narrow screens linearise rather than scroll.** Below 900 px the plant re-lays out as a single column in process order — borewell at the top, TWT at the bottom, dosing on a side branch teeing into the vertical main run. Elevation moves off the band labels and onto each unit, which gains a caption naming where it physically sits (`Below ground`, `Ground floor · parking`, `Terrace · RO room`, `Roof of RO room`). Both layouts share one set of unit builders and one router; only the grid placement and the pipe entry/exit sides differ.
 
 **Untrusted input.** Telemetry strings (`role`, `src`, `fw`, `reset_reason`, `sensor`) originate at RS485 and Wi-Fi nodes — a trust boundary. Plain-text nodes are built with `textContent`; authored markup escapes every interpolation through `esc()`. Nothing from the wire reaches `innerHTML` unescaped.
 

@@ -71,14 +71,17 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* ── the plant, in elevation (signature) ────────────────── */
 .plantwrap{padding:22px 22px 6px; overflow-x:auto}
 .plant{
-  position:relative; display:grid; min-width:1080px;
-  grid-template-columns:[lbl] 122px [c1] .92fr [c2] .58fr [c3] 1fr [c4] .95fr [c5] 1fr [c6] .95fr;
-  grid-template-rows:auto minmax(248px,auto) auto 0 auto;
+  position:relative; display:grid; min-width:1380px;
+  grid-template-columns:[lbl] 116px [c1] .82fr [c2] .5fr [c3] .8fr [c4] .5fr [c5] .42fr [c6] .8fr [c7] 1fr [c8] .85fr;
+  grid-template-rows:auto minmax(366px,auto) auto 0 auto;
   row-gap:62px;
 }
 .plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
 .cell{display:flex; justify-content:center; align-items:center; position:relative; z-index:2}
 .cell.top{align-items:flex-start}
+.cell.line .unit > [data-a]{
+  height:136px; display:flex; align-items:center; justify-content:center;
+}
 .cell.bottom{align-items:flex-end}
 
 /* elevation band label — encodes real building height, not decoration */
@@ -104,7 +107,8 @@ h1 span{color:var(--ink-3); font-weight:400}
 @keyframes dash-thin{to{stroke-dashoffset:-12}}
 
 /* ── units ──────────────────────────────────────────────── */
-.unit{display:flex; flex-direction:column; align-items:center; gap:8px}
+.unit{display:flex; flex-direction:column; align-items:center; gap:8px; min-width:0}
+.unit > *{max-width:100%}
 .unit .name{font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; text-align:center;
   background:var(--ground-c); padding:1px 8px; border-radius:2px}
 .unit .sub{font-size:11px; color:var(--ink-2); font-family:var(--mono); text-align:center;
@@ -157,6 +161,23 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
   .hstats{margin-left:0; width:100%; gap:4px 15px}
   .hstat .readout{font-size:12px}
   header{gap:7px 15px; padding-top:13px; padding-bottom:13px}
+  .plantwrap{overflow-x:visible}
+}
+/* Linear stack: one unit per row in process order, dosing on a side
+   branch. Elevation moves off the band labels and onto each unit. */
+.plant.narrow{
+  min-width:0; row-gap:40px;
+  grid-template-columns:[main] minmax(0,1.15fr) [branch] minmax(0,1fr);
+  grid-template-rows:none;
+}
+.plant.narrow .tier,.plant.narrow .grade{display:none}
+.plant.narrow .cell{align-items:center}
+.plant.narrow .room{margin:-16px -8px}
+.plant.narrow .annex{margin:0}
+.unit.passive .name{color:var(--ink-2)}
+.unit .loc{
+  font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
+  background:var(--ground-c); padding:1px 7px; border-radius:2px;
 }
 
 :focus-visible{outline:2px solid var(--treated); outline-offset:2px}
@@ -337,6 +358,79 @@ function machine({ r, running, dead }) {
   return svg;
 }
 
+/* ── exhaust fan ──────────────────────────────────────────
+   Deliberately unlike machine(): an axial fan in a square wall housing,
+   four broad filled blades. A pump impeller and a fan must not share a
+   glyph — they are different equipment doing different jobs.  */
+function fan({ r, running, dead }) {
+  const s = r * 2, m = 0.7;
+  const col = dead ? "var(--offline)" : running ? "var(--treated)" : "var(--ink-3)";
+  const svg = el("svg", { width: s, height: s, viewBox: `0 0 ${s} ${s}`, "aria-hidden": "true" });
+  svg.appendChild(el("rect", {
+    x: m, y: m, width: s - 2 * m, height: s - 2 * m, rx: 4,
+    fill: "var(--panel)", stroke: dead ? "var(--offline)" : "var(--line-2)", "stroke-width": 1.4
+  }));
+  [[.17, .17], [.83, .17], [.17, .83], [.83, .83]].forEach(([fx, fy]) =>
+    svg.appendChild(el("circle", { cx: s * fx, cy: s * fy, r: 1.5, fill: "var(--line-2)" })));
+  svg.appendChild(el("circle", { cx: r, cy: r, r: r * .74, fill: "none", stroke: "var(--line-2)", "stroke-width": 1, opacity: .55 }));
+
+  const hub = el("g", { transform: `translate(${r} ${r})` });
+  const g = el("g", { class: "rotor" });
+  const R = r * .64;
+  for (let i = 0; i < 4; i++)
+    g.appendChild(el("path", {
+      d: `M 0 0 C ${R * .30} ${-R * .44}, ${R * .86} ${-R * .40}, ${R} ${-R * .05}
+          C ${R * .72} ${R * .22}, ${R * .26} ${R * .17}, 0 0 Z`,
+      fill: col, opacity: .82, transform: `rotate(${i * 90})`
+    }));
+  g.appendChild(el("circle", { cx: 0, cy: 0, r: r * .15, fill: "var(--panel)", stroke: col, "stroke-width": 1.6 }));
+  hub.appendChild(g);
+  svg.appendChild(hub);
+  return svg;
+}
+
+/* ── passive process equipment ────────────────────────────
+   Shapes follow the Aster NXT mimic panel. These carry no telemetry,
+   so they are drawn dimmer and without a status chip — the dashboard
+   should not imply it knows something it does not measure.   */
+function equipFilter(w, h) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  const bh = h * .15, cy = h - bh, bw = w * .96;
+  svg.appendChild(el("path", {
+    d: `M ${w / 2 - bw * .2} ${cy - 1} L ${w / 2 - bw / 2} ${h - 1} L ${w / 2 + bw / 2} ${h - 1} L ${w / 2 + bw * .2} ${cy - 1} Z`,
+    fill: "none", stroke: "var(--line-2)", "stroke-width": 1.3
+  }));
+  svg.appendChild(el("rect", {
+    x: 1, y: 1, width: w - 2, height: cy - 2, rx: w / 2 - 1,
+    fill: "var(--panel)", stroke: "var(--line-2)", "stroke-width": 1.4
+  }));
+  return svg;
+}
+function equipMF(w, h) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  const cap = h * .13;
+  svg.appendChild(el("rect", { x: w * .24, y: cap, width: w * .52, height: h - cap - 1, rx: w * .26, fill: "var(--panel)", stroke: "var(--line-2)", "stroke-width": 1.3 }));
+  svg.appendChild(el("rect", { x: w * .14, y: 1, width: w * .72, height: cap + 4, rx: 2, fill: "var(--panel)", stroke: "var(--line-2)", "stroke-width": 1.3 }));
+  return svg;
+}
+function equipMembrane(w, h) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  svg.appendChild(el("rect", { x: 1, y: 1, width: w - 2, height: h - 2, rx: h / 2 - 1, fill: "var(--panel)", stroke: "var(--line-2)", "stroke-width": 1.4 }));
+  [.17, .83].forEach(f => svg.appendChild(el("line", { x1: w * f, y1: 4, x2: w * f, y2: h - 4, stroke: "var(--line-2)", "stroke-width": 1.1, opacity: .75 })));
+  for (let i = 1; i < 5; i++)
+    svg.appendChild(el("line", { x1: w * (.17 + i * .132), y1: 7, x2: w * (.17 + i * .132), y2: h - 7, stroke: "var(--line)", "stroke-width": 1, opacity: .6 }));
+  return svg;
+}
+function equipUnit(draw, label, id, w, h) {
+  const u = node("unit passive");
+  const box = node("vessel");
+  box.dataset.a = id;
+  box.appendChild(draw(w, h));
+  u.appendChild(box);
+  u.appendChild(txt("name", label));
+  return u;
+}
+
 /* ── unit builders ────────────────────────────────────────── */
 function tankUnit(t, cfg) {
   const u = node("unit");
@@ -405,7 +499,7 @@ function routeD(a, as, b, bs) {
   if (va) return `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
   return `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
 }
-let ROUTES = [];
+let ROUTES = [], TEE_AXIS = "h";
 function drawPipes() {
   const host = $("#plant"), svg = $("#pipes");
   if (!host || !svg) return;
@@ -414,15 +508,16 @@ function drawPipes() {
   svg.setAttribute("height", h.height);
   svg.setAttribute("viewBox", `0 0 ${h.width} ${h.height}`);
   svg.textContent = "";
-  // injection point: midpoint of the RWP -> HPP run
-  const rr = anchorPt("rwp", "r", h), hl = anchorPt("hpp", "l", h);
-  const tee = (rr && hl) ? { x: (rr.x + hl.x) / 2, y: rr.y } : null;
+  // injection point: midpoint of the RWP -> HPP run, whichever way it runs
+  const horiz = TEE_AXIS === "h";
+  const rr = anchorPt("mf", horiz ? "r" : "b", h), hl = anchorPt("hpp", horiz ? "l" : "t", h);
+  const tee = (rr && hl) ? { x: (rr.x + hl.x) / 2, y: (rr.y + hl.y) / 2 } : null;
 
   ROUTES.forEach(rt => {
     const a = anchorPt(rt.from, rt.fs, h);
     const b = rt.toTee ? tee : anchorPt(rt.to, rt.ts, h);
     if (!a || !b) return;
-    const bs = rt.toTee ? "b" : rt.ts;
+    const bs = rt.toTee ? (rt.teeSide || "b") : rt.ts;
     const W = rt.thin ? [7, 5, 2.8, "5 7"] : [11, 8.4, 4.6, "9 11"];
     const common = { d: routeD(a, rt.fs, b, bs), fill: "none", "stroke-linejoin": "round", "stroke-linecap": "butt" };
     svg.appendChild(el("path", { ...common, stroke: "var(--line-2)", "stroke-width": W[0] }));
@@ -439,70 +534,131 @@ function drawPipes() {
   }
 }
 
-/* ── the plant, in elevation ────────────────────────────── */
+/* -- the plant --------------------------------------------
+   Wide: a true elevation, tiers at real building height.
+   Narrow: the same plant linearised into process order, one unit per
+   row, each captioned with where it physically lives.        */
+const LOC = {
+  bore: "Below ground", sump: "Ground floor \u00b7 parking", smotor: "Ground floor \u00b7 parking",
+  rwt: "Roof of RO room", twt: "Roof of RO room",
+  rwp: "Terrace \u00b7 RO room", dos: "Terrace \u00b7 RO room", hpp: "Terrace \u00b7 RO room",
+  filter: "Terrace \u00b7 RO room", mf: "Terrace \u00b7 RO room", memb: "Terrace \u00b7 RO room",
+};
+
 function drawPlant(s) {
   const host = $("#plant");
   [...host.children].forEach(c => { if (c.tagName.toLowerCase() !== "svg") c.remove(); });
-  const T = s.tanks, P = s.pumps;
+  const narrow = window.matchMedia("(max-width:900px)").matches;
+  host.classList.toggle("narrow", narrow);
+
+  const T = s.tanks, P = s.pumps, B = s.env.battery_room;
   const live = k => P[k].on && P[k].state === "ONLINE";
   const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
-  const cell = (child, col, row) => { const c = node("cell"); c.appendChild(child); return add(c, col, row); };
 
-  // elevation bands, high to low
-  [["Roof top", "above RO room", 1], ["Terrace", "RO room · battery room", 2],
-   ["Ground floor", "parking", 3], ["Below ground", "borewell", 5]
-  ].forEach(([a, b, r]) => add(node("tier", `<b>${esc(a)}</b><span>${esc(b)}</span>`), "lbl", r));
+  const build = {
+    rwt:    () => tankUnit(T.rwt,    { w: 122, h: 152, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
+    twt:    () => tankUnit(T.twt,    { w: 136, h: 168, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
+    dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
+    sump:   () => tankUnit(T.sump,   { w: 126, h: 148, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
+    rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 29),
+    hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 29),
+    smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 30),
+    bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 30),
+    filter: () => equipUnit(equipFilter, "Filter", "filter", 54, 118),
+    mf:     () => equipUnit(equipMF, "MF", "mf", 40, 76),
+    memb:   () => equipUnit(equipMembrane, "RO Membrane", "memb", 132, 48),
+  };
+  const cell = (k, col, row) => {
+    const u = build[k]();
+    if (narrow) u.appendChild(txt("loc", LOC[k]));
+    const c = node("cell");
+    c.appendChild(u);
+    return add(c, col, row);
+  };
 
-  const room = node("room");
-  room.appendChild(txt("tag legend", "RO Room"));
-  add(room, "c3 / span 3", 2);
+  const roomBox = () => { const r = node("room"); r.appendChild(txt("tag legend", "RO Room")); return r; };
+  const annexBox = () => {
+    const a = node("annex");
+    a.appendChild(txt("tag legend", "Battery Room"));
+    const ab = node("unit");
+    const fu = node("unit" + (B.fan ? " spin fast" : ""));
+    fu.appendChild(fan({ r: 27, running: B.fan, dead: B.state !== "ONLINE" }));
+    ab.appendChild(fu);
+    ab.appendChild(txt("name", "Exhaust Fan"));
+    ab.appendChild(txt("sub", B.state === "ONLINE" ? `${B.t.toFixed(1)} \u00b0C \u00b7 ${B.rh.toFixed(0)} %` : "\u2014"));
+    let bt = "Off", bk = "off";
+    if (B.state !== "ONLINE") { bt = "Offline"; bk = "fault"; }
+    else if (B.fan) { bt = "Running"; bk = "on"; }
+    ab.appendChild(chip(bt, bk));
+    a.appendChild(ab);
+    return a;
+  };
 
-  const grade = node("grade");
-  grade.appendChild(txt("legend", "Ground level"));
-  add(grade, "1 / -1", 4);
+  if (narrow) {
+    // process order, top to bottom: follow the water
+    cell("bore", "main", 1);
+    cell("sump", "main", 2);
+    cell("smotor", "main", 3);
+    cell("rwt", "main", 4);
+    add(roomBox(), "1 / -1", "5 / span 6");
+    cell("rwp", "main", 5);
+    cell("filter", "main", 6);
+    cell("mf", "main", 7);
+    cell("dos", "branch", 8);
+    cell("hpp", "main", 9);
+    cell("memb", "main", 10);
+    cell("twt", "main", 11);
+    add(annexBox(), "1 / -1", 12);
 
-  // roof of the RO room — both storage tanks sit up here
-  cell(tankUnit(T.rwt, { w: 122, h: 152, shape: "cyl", fluid: "raw", label: "Raw Water", id: "rwt" }), "c3", 1);
-  cell(tankUnit(T.twt, { w: 136, h: 168, shape: "cyl", fluid: "treated", label: "Treated Water", id: "twt" }), "c5", 1);
+    TEE_AXIS = "v";
+    ROUTES = [
+      { from: "bore",   fs: "b", to: "sump",   ts: "t", fluid: "raw",     flow: live("borewell") },
+      { from: "sump",   fs: "b", to: "smotor", ts: "t", fluid: "raw",     flow: live("sump_motor") },
+      { from: "smotor", fs: "b", to: "rwt",    ts: "t", fluid: "raw",     flow: live("sump_motor") },
+      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "rwp",    fs: "b", to: "filter", ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", flow: live("rwp"), thin: true },
+      { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     flow: live("hpp") },
+      { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", flow: live("hpp") },
+    ];
+  } else {
+    [["Roof top", "above RO room", 1], ["Terrace", "RO room \u00b7 battery room", 2],
+     ["Ground floor", "parking", 3], ["Below ground", "borewell", 5]
+    ].forEach(([a, b, r]) => add(node("tier", `<b>${esc(a)}</b><span>${esc(b)}</span>`), "lbl", r));
 
-  // terrace — inside the RO room
-  cell(machineUnit(P.rwp, "RWP", "rwp", 29), "c3", 2).classList.add("top");
-  cell(tankUnit(T.dosing, { w: 82, h: 96, shape: "cyl", fluid: "additive", label: "Dosing", id: "dos" }), "c4", 2).classList.add("bottom");
-  cell(machineUnit(P.hpp, "HPP", "hpp", 29), "c5", 2).classList.add("top");
+    add(roomBox(), "c3 / span 5", 2);
+    const grade = node("grade");
+    grade.appendChild(txt("legend", "Ground level"));
+    add(grade, "1 / -1", 4);
 
-  // terrace — beside the RO room
-  const B = s.env.battery_room;
-  const annex = node("annex");
-  annex.appendChild(txt("tag legend", "Battery Room"));
-  const ab = node("unit");
-  const fanU = node("unit" + (B.fan ? " spin fast" : ""));
-  fanU.appendChild(machine({ r: 27, running: B.fan, dead: B.state !== "ONLINE" }));
-  ab.appendChild(fanU);
-  ab.appendChild(txt("name", "Exhaust Fan"));
-  ab.appendChild(txt("sub", B.state === "ONLINE" ? `${B.t.toFixed(1)} °C · ${B.rh.toFixed(0)} %` : "—"));
-  let bt = "Off", bk = "off";
-  if (B.state !== "ONLINE") { bt = "Offline"; bk = "fault"; }
-  else if (B.fan) { bt = "Running"; bk = "on"; }
-  ab.appendChild(chip(bt, bk));
-  annex.appendChild(ab);
-  add(annex, "c6", 2);
+    cell("rwt", "c3", 1);
+    cell("twt", "c7", 1);
+    ["rwp c3", "filter c4", "mf c5", "hpp c6", "memb c7"].forEach(spec => {
+      const [k, col] = spec.split(" ");
+      cell(k, col, 2).classList.add("top", "line");
+    });
+    cell("dos", "c5 / span 2", 2).classList.add("bottom");
+    add(annexBox(), "c8", 2);
+    cell("sump", "c1", 3);
+    cell("smotor", "c2", 3);
+    cell("bore", "c1", 5);
 
-  // ground floor
-  cell(tankUnit(T.sump, { w: 126, h: 148, shape: "box", fluid: "raw", label: "Sump", id: "sump" }), "c1", 3);
-  cell(machineUnit(P.sump_motor, "Sump Motor", "smotor", 30), "c2", 3);
-
-  // below grade
-  cell(machineUnit(P.borewell, "Borewell Pump", "bore", 30), "c1", 5);
-
-  ROUTES = [
-    { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     flow: live("borewell") },
-    { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     flow: live("sump_motor") },
-    { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     flow: live("sump_motor") },
-    { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
-    { from: "rwp",    fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
-    { from: "dos",    fs: "t", toTee: true,            fluid: "additive", flow: live("rwp"), thin: true },
-    { from: "hpp",    fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
-  ];
+    TEE_AXIS = "h";
+    ROUTES = [
+      { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     flow: live("borewell") },
+      { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     flow: live("sump_motor") },
+      { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     flow: live("sump_motor") },
+      { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+      { from: "rwp",    fs: "r", to: "filter", ts: "l", fluid: "raw",     flow: live("rwp") },
+      { from: "filter", fs: "r", to: "mf",     ts: "l", fluid: "raw",     flow: live("rwp") },
+      { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
+      { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", flow: live("rwp"), thin: true },
+      { from: "hpp",    fs: "r", to: "memb",   ts: "l", fluid: "raw",     flow: live("hpp") },
+      { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
+    ];
+  }
   requestAnimationFrame(drawPipes);
 }
 
@@ -558,6 +714,7 @@ function drawAlerts(s) {
 }
 
 function render(s) {
+  LAST = s;
   drawAlerts(s);
   drawPlant(s);
   climate($("#cRoom"), s.env.ro_room);
@@ -566,7 +723,7 @@ function render(s) {
   const B = s.env.battery_room, fh = $("#cBattFan");
   fh.textContent = "";
   const fw = node("unit" + (B.fan ? " spin fast" : ""));
-  fw.appendChild(machine({ r: 21, running: B.fan, dead: B.state !== "ONLINE" }));
+  fw.appendChild(fan({ r: 21, running: B.fan, dead: B.state !== "ONLINE" }));
   fh.appendChild(fw);
   const ftxt = node("txtblk", `<span class="legend">Exhaust fan</span>`);
   let ft = "Off", fk = "off";
@@ -601,7 +758,9 @@ function render(s) {
   $("#fErr").textContent = s.rs485.errors;
   $("#fPoll").textContent = s.rs485.last_poll_ms + " ms";
 }
+let LAST = null;
 new ResizeObserver(drawPipes).observe(document.documentElement);
+window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LAST) render(LAST); });
 
 /* ── demo simulator ───────────────────────────────────────────
    Runs until /api/telemetry answers. Models the failure this project
