@@ -317,10 +317,12 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 
 | Band | Contents |
 | :--- | :--- |
-| Roof of RO room | RWT, TWT |
+| Roof of RO room | Solar array, RWT, TWT |
 | Terrace | RO room (the treatment train), Battery Room beside it |
 | Ground floor / parking | Sump, Sump Motor |
 | Below grade | Borewell |
+
+**Two tilted PV rows sit above the roof**, one over each storage tank, low at the left and high at the right with a small gap between the rows, on steel posts landing on the roof slab. The panel stretches horizontally only, so the tilt geometry, post heights and the inter-row gap hold at any window width. The array is labelled once in the level column, not captioned per row.
 
 **Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — a large and a small potted plant on the terrace, and a pickup, a boxy SUV and a hatchback on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
 
@@ -346,7 +348,7 @@ Pipes are an SVG overlay routed orthogonally between measured element rects afte
 
 Below the plant, a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table.
 
-**Alerts float; they never resize the plant.** They are translucent with a blur and carry a hatched leading edge in the same language as the structural slabs, so they read as part of the drawing rather than as chrome sitting on it. They are fixed-position over the top of the plant, each with a dismiss control. A constant top inset is reserved in the plant wrapper so one or two alerts clear the roof tanks — constant, so the fitted scale does not change as alerts come and go. That was the defect: in normal flow, every appearing or clearing alert changed the available height and rescaled the whole drawing. A dismissed alert stays dismissed only while its condition holds; once the condition clears the key is dropped, so a recurrence shows again.
+**Alerts float; they never resize the plant.** They are translucent with a blur and carry a hatched leading edge in the same language as the structural slabs, so they read as part of the drawing rather than as chrome sitting on it. They stack fixed at the **bottom right**, over the earth hatch, each with a dismiss control. In normal flow every appearing or clearing alert changed the available height and rescaled the whole drawing — that was the original defect. Top-of-screen floating then failed both ways: reserving space for them left a dead band above the solar array, and removing the reserve let them bury it. Bottom right needs no reserve and covers nothing. A dismissed alert stays dismissed only while its condition holds; once the condition clears the key is dropped, so a recurrence shows again.
 
 **Encoding decisions.**
 
