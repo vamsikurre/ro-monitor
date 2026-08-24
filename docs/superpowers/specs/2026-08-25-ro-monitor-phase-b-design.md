@@ -322,7 +322,7 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 | Ground floor / parking | Sump, Sump Motor |
 | Below grade | Borewell |
 
-A dashed grade line separates what is underground. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
+**Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — planters on the terrace, cars on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
 
 **The treatment train follows the Aster mimic panel.** A photograph of the controller's own process display fixes the order:
 
@@ -344,7 +344,9 @@ Every item on the train sits in a fixed-height anchor box so horizontal runs sha
 
 Pipes are an SVG overlay routed orthogonally between measured element rects after layout and redrawn on resize, so the grid can reflow without pipework drifting off its vessels. Unit captions carry an opaque background to mask pipes running behind them, as on a real P&ID.
 
-Below the plant, a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table. Alerts appear above the plant only when active.
+Below the plant, a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table.
+
+**Alerts float; they never resize the plant.** They are fixed-position over the top of the plant, each with a dismiss control. A constant top inset is reserved in the plant wrapper so one or two alerts clear the roof tanks — constant, so the fitted scale does not change as alerts come and go. That was the defect: in normal flow, every appearing or clearing alert changed the available height and rescaled the whole drawing. A dismissed alert stays dismissed only while its condition holds; once the condition clears the key is dropped, so a recurrence shows again.
 
 **Encoding decisions.**
 

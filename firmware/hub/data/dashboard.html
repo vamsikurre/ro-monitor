@@ -59,8 +59,23 @@ h1 span{color:var(--ink-3); font-weight:400}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* ── alerts ─────────────────────────────────────────────── */
-#alerts:not(:empty){padding:12px 22px 0; display:flex; flex-direction:column; gap:7px}
-.alert{display:flex; gap:12px; align-items:baseline; padding:9px 13px; border-radius:var(--r); border:1px solid; font-size:13px; background:var(--panel)}
+/* Fixed, so an alert appearing or clearing never resizes the plant. */
+#alerts{
+  position:fixed; left:0; right:0; top:var(--hdr,58px); z-index:25;
+  padding:12px 22px 0; display:flex; flex-direction:column; gap:7px;
+  pointer-events:none;
+}
+.alert{
+  display:flex; gap:12px; align-items:baseline; padding:9px 13px 9px 13px;
+  border-radius:var(--r); border:1px solid; font-size:13px; background:var(--panel);
+  box-shadow:0 10px 28px rgba(0,0,0,.5); pointer-events:auto;
+}
+.alert .x{
+  flex:none; margin-left:4px; width:20px; height:20px; line-height:1; cursor:pointer;
+  background:transparent; border:1px solid var(--line); border-radius:3px;
+  color:var(--ink-3); font:14px/1 var(--ui); align-self:center; padding:0;
+}
+.alert .x:hover{color:var(--ink); border-color:var(--line-2)}
 .alert b{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; flex:none}
 .alert.warn{border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
 .alert.warn b{color:var(--warn)}
@@ -69,7 +84,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 .alert .where{color:var(--ink-2); margin-left:auto; font-size:12px; flex:none}
 
 /* ── the plant, in elevation (signature) ────────────────── */
-.plantwrap{padding:22px 22px 6px; overflow:hidden}
+.plantwrap{padding:94px 22px 8px; overflow:hidden}
 .plant{
   position:relative; display:grid; min-width:1240px; transform-origin:top center;
   grid-template-columns:[lbl] 108px [c1] 1.55fr [c2] 1fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 1.75fr;
@@ -92,7 +107,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 .tier span{font-size:10.5px; color:var(--ink-3)}
 
 /* the RO room, with both roof tanks resting on it */
-.room{grid-row:2; border:1px solid var(--line-2); border-radius:var(--r); margin:-18px -12px; position:relative; z-index:1}
+.room{grid-row:2; border:1px solid var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px -12px -21px; position:relative; z-index:1}
 .room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
 .room > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
@@ -103,12 +118,42 @@ h1 span{color:var(--ink-3); font-weight:400}
 .roomenv .vals u{text-decoration:none; font-size:11px; color:var(--ink-2); font-weight:600; margin-left:2px}
 
 /* battery room — beside the RO room on the terrace, not in the water path */
-.annex{grid-row:2; border:1px dashed var(--line-2); border-radius:var(--r); margin:-18px 0; position:relative; z-index:1; display:flex; align-items:center; justify-content:center}
+.annex{grid-row:2; border:1px dashed var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px 0 -21px; position:relative; z-index:1; display:flex; align-items:center; justify-content:center}
 .annex > .tag{position:absolute; top:-8px; left:13px; background:var(--ground-c); padding:0 8px}
 
-/* grade line — what is underground and what is not */
-.grade{grid-column:1 / -1; grid-row:4; position:relative; z-index:2; border-top:1px dashed color-mix(in srgb,var(--line-2) 90%,transparent)}
-.grade > span{position:absolute; top:-7px; right:0; background:var(--ground-c); padding:0 9px}
+/* Structural slabs, hatched the way concrete reads in a section. Each
+   sits in the gap below its level, so the equipment stands on a floor. */
+.slab{
+  grid-column:1 / -1; align-self:end; height:9px; margin-bottom:-21px; z-index:0;
+  border-top:1px solid var(--line-2); border-bottom:1px solid var(--line);
+  background:repeating-linear-gradient(45deg,
+    transparent 0 3px, color-mix(in srgb,var(--line-2) 50%,transparent) 3px 4px);
+}
+.slab.grade{border-top-width:2px; margin-bottom:-19px}
+
+/* earth below grade */
+.earth{
+  grid-column:1 / -1; grid-row:5; align-self:stretch; position:relative; z-index:0;
+  margin:-16px -14px -14px -14px;
+  background:repeating-linear-gradient(45deg,
+    transparent 0 7px, color-mix(in srgb,var(--line) 85%,transparent) 7px 8px);
+}
+.earth > .legend{position:absolute; top:-7px; right:16px; background:var(--ground-c); padding:0 9px}
+
+/* Scenery. Occupied space reads as a building; empty space reads as a
+   diagram. These are wireframe only, dimmed, and never interactive. */
+.scenery{
+  align-self:end; z-index:0; display:flex; align-items:flex-end;
+  pointer-events:none; opacity:.42; margin-bottom:-12px;
+}
+.scenery.cars{justify-content:space-evenly; padding:0 24px}
+.scenery.plants{justify-content:flex-start; gap:20px; padding-left:22px}
+
+/* level marker, as on an architectural elevation */
+.tier b::before{
+  content:""; display:inline-block; width:7px; height:7px; margin-right:8px;
+  border:1px solid var(--line-2); transform:rotate(45deg); vertical-align:middle;
+}
 
 .flowing{animation:dash 1.15s linear infinite}
 @keyframes dash{to{stroke-dashoffset:-20}}
@@ -166,7 +211,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 /* Narrow screens keep the elevation and scroll sideways. Flattening it
    would throw away the one thing the drawing exists to show. */
 @media (max-width:900px){
-  header,.grid,#alerts:not(:empty),footer,.plantwrap{padding-left:16px; padding-right:16px}
+  header,.grid,#alerts,footer,.plantwrap{padding-left:16px; padding-right:16px}
   .hstats{margin-left:0; width:100%; gap:4px 15px}
   .hstat .readout{font-size:12px}
   header{gap:7px 15px; padding-top:13px; padding-bottom:13px}
@@ -398,6 +443,48 @@ function fan({ r, running, dead }) {
   g.appendChild(el("circle", { cx: 0, cy: 0, r: r * .15, fill: "var(--panel)", stroke: col, "stroke-width": 1.6 }));
   hub.appendChild(g);
   svg.appendChild(hub);
+  return svg;
+}
+
+/* ── scenery: wireframe cars and planters ─────────────────── */
+function svgLine(w, h, paths, circles) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  paths.forEach(d => svg.appendChild(el("path", {
+    d, fill: "none", stroke: "var(--line-2)", "stroke-width": 1.2,
+    "stroke-linecap": "round", "stroke-linejoin": "round"
+  })));
+  (circles || []).forEach(c => svg.appendChild(el("circle", {
+    cx: c[0], cy: c[1], r: c[2], fill: "none", stroke: "var(--line-2)", "stroke-width": 1.2
+  })));
+  return svg;
+}
+
+function carGlyph(w) {
+  const h = Math.round(w * 0.42);
+  const svg = svgLine(80, 34, [
+    "M 0 30 H 80",
+    "M 6 29 L 6 20 Q 6 17 10 16 L 22 16 L 30 8 Q 32 6 36 6 L 52 6 Q 56 6 58 8 L 64 16 L 72 18 Q 76 19 76 23 L 76 29",
+    "M 31 15 L 36 9 L 44 9 L 44 15 Z",
+    "M 47 15 L 47 9 L 51 9 L 55 15 Z",
+  ], [[22, 29, 5], [60, 29, 5]]);
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  return svg;
+}
+
+function plantGlyph(scale) {
+  const w = Math.round(44 * scale), h = Math.round(58 * scale);
+  const svg = svgLine(44, 58, [
+    "M 14 57 L 12 42 L 32 42 L 30 57 Z",   // pot
+    "M 10 42 H 34",                         // rim
+    "M 22 42 C 22 32, 22 22, 22 8",         // centre leaf
+    "M 22 44 C 17 34, 13 26, 14 15",
+    "M 22 44 C 27 34, 31 26, 30 15",
+    "M 22 46 C 14 40, 8 34, 6 26",
+    "M 22 46 C 30 40, 36 34, 38 26",
+  ]);
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
   return svg;
 }
 
@@ -673,9 +760,15 @@ function drawPlant(s) {
     ].forEach(([a, b, r]) => add(node("tier", `<b>${esc(a)}</b><span>${esc(b)}</span>`), "lbl", r));
 
     add(roomBox(), "c3 / span 5", 2);
-    const grade = node("grade");
-    grade.appendChild(txt("legend", "Ground level"));
-    add(grade, "1 / -1", 4);
+
+    // slabs: roof of the RO room, terrace floor, then grade
+    add(node("slab"), "c3 / -1", 1);
+    add(node("slab"), "c3 / -1", 2);
+    const grade = node("slab grade");
+    add(grade, "c1 / -1", 3);
+    const earth = node("earth");
+    earth.appendChild(txt("legend", "Ground level"));
+    add(earth, "c1 / -1", 5);
 
     cell("rwt", "c3", 1);
     cell("twt", "c7", 1);
@@ -687,6 +780,15 @@ function drawPlant(s) {
     add(annexBox(), "c8", 2);
     cell("sump", "c1", 3).classList.add("top", "line");
     cell("smotor", "c2", 3).classList.add("top", "line");
+
+    // the terrace has planters; the ground floor is parking
+    const plants = node("scenery plants");
+    [1.45, 1.0, 1.25, .85].forEach(k => plants.appendChild(plantGlyph(k)));
+    add(plants, "c1 / span 2", 2);
+
+    const cars = node("scenery cars");
+    [88, 80, 88, 80].forEach(w => cars.appendChild(carGlyph(w)));
+    add(cars, "c3 / -1", 3);
     cell("bore", "c1", 5);
 
     TEE_AXIS = "h";
@@ -734,27 +836,46 @@ function rows(host, list) {
   });
 }
 
+/* Dismissed alerts stay dismissed only while the condition holds; once it
+   clears, the key is dropped so a recurrence shows again. */
+const DISMISSED = new Set();
+
 function drawAlerts(s) {
   const out = [], T = s.tanks;
+  const add = (kind, title, body, where) => out.push({ kind, title, body, where });
+
   if (T.sump.state === "ONLINE" && T.sump.pct < 15)
-    out.push(["fault", "Dry run risk", "Sump below 15 percent. Sump motor should be held off until it recovers.", "Sump"]);
+    add("fault", "Dry run risk", "Sump below 15 percent. Sump motor should be held off until it recovers.", "Sump");
   [["sump", "Sump"], ["rwt", "Raw Water"], ["twt", "Treated Water"]].forEach(([k, n]) => {
-    if (T[k].state === "ONLINE" && T[k].pct > 95) out.push(["warn", "Overflow risk", `${n} above 95 percent.`, n]);
+    if (T[k].state === "ONLINE" && T[k].pct > 95) add("warn", "Overflow risk", `${n} above 95 percent.`, n);
   });
   if (T.dosing.state === "ONLINE" && T.dosing.pct < 20)
-    out.push(["warn", "Chemical low", "Dosing tank below 20 percent. Replenish anti-scalant.", "Dosing"]);
+    add("warn", "Chemical low", "Dosing tank below 20 percent. Replenish anti-scalant.", "Dosing");
   if (s.aster.alarm)
-    out.push(["fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room"]);
+    add("fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room");
   if (s.env.battery_room.state === "ONLINE" && s.env.battery_room.t > 38)
-    out.push(["warn", "Battery room hot", `Room at ${s.env.battery_room.t.toFixed(1)} °C. Exhaust fan ${s.env.battery_room.fan ? "running" : "is off"}.`, "Battery Room"]);
+    add("warn", "Battery room hot", `Room at ${s.env.battery_room.t.toFixed(1)} °C. Exhaust fan ${s.env.battery_room.fan ? "running" : "is off"}.`, "Battery Room");
   s.nodes.filter(n => n.state === "OFFLINE").forEach(n =>
-    out.push(["warn", "Node offline", `The ${n.role} node has not answered for ${ago(n.age_s)}.`, n.id]));
+    add("warn", "Node offline", `The ${n.role} node has not answered for ${ago(n.age_s)}.`, n.id));
+
+  out.forEach(a => { a.key = a.kind + "|" + a.title + "|" + a.where; });
+  const live = new Set(out.map(a => a.key));
+  [...DISMISSED].forEach(k => { if (!live.has(k)) DISMISSED.delete(k); });
 
   const host = $("#alerts");
   host.textContent = "";
-  out.forEach(([kind, title, body, where]) =>
-    host.appendChild(node("alert " + kind,
-      `<b>${esc(title)}</b><span>${esc(body)}</span><span class="where">${esc(where)}</span>`)));
+  out.filter(a => !DISMISSED.has(a.key)).forEach(a => {
+    const row = node("alert " + a.kind,
+      `<b>${esc(a.title)}</b><span>${esc(a.body)}</span><span class="where">${esc(a.where)}</span>`);
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "x";
+    x.textContent = "\u00d7";
+    x.setAttribute("aria-label", "Dismiss alert: " + a.title);
+    x.addEventListener("click", () => { DISMISSED.add(a.key); drawAlerts(s); });
+    row.appendChild(x);
+    host.appendChild(row);
+  });
 }
 
 function render(s) {
@@ -813,17 +934,25 @@ function fitPlant() {
   wrap.style.height = "auto";
   const pw = pl.offsetWidth, ph = pl.offsetHeight;
   if (!pw || !ph) return;
-  const padX = 44, padY = 28;
-  let sc = Math.min(1, (wrap.clientWidth - padX) / pw);
+  const cs = getComputedStyle(wrap);
+  const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+  const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
+  let sc = Math.min(1, (wrap.clientWidth - padL - padR) / pw);
   if (!window.matchMedia("(max-width:900px)").matches) {
-    const top = wrap.getBoundingClientRect().top + window.scrollY;
-    sc = Math.min(sc, (window.innerHeight - top - padY) / ph);
+    // document coordinates, so scrolling cannot change the scale
+    const top = pl.getBoundingClientRect().top + window.scrollY;
+    sc = Math.min(sc, (window.innerHeight - top - padB - 10) / ph);
   }
   sc = Math.max(sc, 0.45);
   pl.style.transform = `scale(${sc})`;
-  wrap.style.height = Math.ceil(ph * sc + padY) + "px";
+  wrap.style.height = Math.ceil(ph * sc + padT + padB) + "px";
 }
-function relayout() { fitPlant(); drawPipes(); }
+function relayout() {
+  const hdr = document.querySelector("header");
+  if (hdr) document.documentElement.style.setProperty("--hdr", hdr.offsetHeight + "px");
+  fitPlant();
+  drawPipes();
+}
 new ResizeObserver(relayout).observe(document.documentElement);
 window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LAST) render(LAST); });
 
