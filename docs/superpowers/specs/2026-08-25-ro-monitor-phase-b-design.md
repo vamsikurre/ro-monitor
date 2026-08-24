@@ -322,7 +322,7 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 | Ground floor / parking | Sump, Sump Motor |
 | Below grade | Borewell |
 
-**Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — a tree and a potted plant on the terrace, a pickup and a boxy SUV on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
+**Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — a large and a small potted plant on the terrace, and a pickup, a boxy SUV and a hatchback on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
 
 **The treatment train follows the Aster mimic panel.** A photograph of the controller's own process display fixes the order:
 
@@ -336,7 +336,7 @@ FILTER is drawn as the large pressure vessel it is, against MF as a small cartri
 
 Every item on the train sits in a fixed-height anchor box so horizontal runs share one centreline instead of staircasing between differently-sized vessels. Column widths are set to *item width + a constant*, which spaces the train evenly rather than leaving the wide membrane stranded. Pipes anchor to the box for horizontal runs (the centreline) but to the **glyph itself** for vertical runs — anchoring vertically to the box would leave risers floating well above and below the equipment.
 
-**RO room air** — temperature and humidity from the hub SHT30 — reads in the top-right corner of the room, inside the room outline where it belongs.
+**Room air** — temperature and humidity — reads in the bottom-right corner of each room: the hub SHT30 inside the RO room, node 0x04 inside the battery room. Bottom-right keeps it clear of the membrane-to-TWT riser.
 
 **Dosing is a tee, not an inline vessel.** Process water runs RWP → FILTER → MF → HPP directly, and dosing injects **upstream of MF**. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum. The tee sits immediately upstream of HPP, which is where antiscalant is actually injected.
 
@@ -346,7 +346,7 @@ Pipes are an SVG overlay routed orthogonally between measured element rects afte
 
 Below the plant, a four-card instrument strip: RO Room climate, Battery Room climate + exhaust fan, Aster isolated contacts, and the node table.
 
-**Alerts float; they never resize the plant.** They are fixed-position over the top of the plant, each with a dismiss control. A constant top inset is reserved in the plant wrapper so one or two alerts clear the roof tanks — constant, so the fitted scale does not change as alerts come and go. That was the defect: in normal flow, every appearing or clearing alert changed the available height and rescaled the whole drawing. A dismissed alert stays dismissed only while its condition holds; once the condition clears the key is dropped, so a recurrence shows again.
+**Alerts float; they never resize the plant.** They are translucent with a blur and carry a hatched leading edge in the same language as the structural slabs, so they read as part of the drawing rather than as chrome sitting on it. They are fixed-position over the top of the plant, each with a dismiss control. A constant top inset is reserved in the plant wrapper so one or two alerts clear the roof tanks — constant, so the fitted scale does not change as alerts come and go. That was the defect: in normal flow, every appearing or clearing alert changed the available height and rescaled the whole drawing. A dismissed alert stays dismissed only while its condition holds; once the condition clears the key is dropped, so a recurrence shows again.
 
 **Encoding decisions.**
 
@@ -358,7 +358,7 @@ Below the plant, a four-card instrument strip: RO Room climate, Battery Room cli
 
 **The plant is built once and mutated in place.** Rebuilding its DOM on every poll restarted every CSS transition and dash animation, so levels and flow visibly jumped each second. A structure signature (layout mode plus each vessel/machine online-vs-dead state) decides when a rebuild is genuinely needed; otherwise the level transforms, readouts, chips and rotor colours are updated on the existing nodes. Pipes are redrawn only when the flow signature changes or on resize. Measured: one build and four pipe redraws across nine seconds of ticks, with the 0.9s level transition intact.
 
-**Motion.** Two sine layers bob **vertically** in opposite phase across each liquid surface. They originally drifted horizontally, but the dominant layer read as a left-to-right sweep — and on the hatched dosing tank it slid the whole pattern like a progress bar. Vertical motion keeps the surface alive with no directional read. levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
+**Motion.** Two sine layers bob **vertically** in opposite phase across each liquid surface. They originally drifted horizontally, but the dominant layer read as a left-to-right sweep — and on the hatched dosing tank it slid the whole pattern like a progress bar. Vertical motion keeps the surface alive with no directional read. Amplitude was then raised and a lit crest line added on top of the fill, because the first pass was too subtle to notice — the closing edges of the crest path fall outside the vessel clip, so only the surface line shows. levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
 **Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate.
 

@@ -67,19 +67,29 @@ h1 span{color:var(--ink-3); font-weight:400}
 }
 .alert{
   display:flex; gap:12px; align-items:baseline; padding:9px 13px 9px 13px;
-  border-radius:var(--r); border:1px solid; font-size:13px; background:var(--panel);
-  box-shadow:0 10px 28px rgba(0,0,0,.5); pointer-events:auto;
+  border-radius:2px; border:1px solid var(--line-2); font-size:13px;
+  background:color-mix(in srgb,var(--ground-c) 58%,transparent);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  pointer-events:auto; position:relative; padding-left:22px;
 }
+/* hatched leading edge, same language as the structural slabs */
+.alert::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:10px;
+  border-right:1px solid var(--line-2);
+  background:repeating-linear-gradient(45deg,transparent 0 3px,var(--line-2) 3px 4px);
+}
+.alert.warn::before{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--warn) 3px 4px)}
+.alert.fault::before{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--fault) 3px 4px)}
 .alert .x{
   flex:none; margin-left:4px; width:20px; height:20px; line-height:1; cursor:pointer;
-  background:transparent; border:1px solid var(--line); border-radius:3px;
+  background:transparent; border:1px solid var(--line-2); border-radius:0;
   color:var(--ink-3); font:14px/1 var(--ui); align-self:center; padding:0;
 }
 .alert .x:hover{color:var(--ink); border-color:var(--line-2)}
 .alert b{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; flex:none}
-.alert.warn{border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
+.alert.warn{border-color:color-mix(in srgb,var(--warn) 42%,var(--line-2))}
 .alert.warn b{color:var(--warn)}
-.alert.fault{border-color:color-mix(in srgb,var(--fault) 55%,transparent)}
+.alert.fault{border-color:color-mix(in srgb,var(--fault) 42%,var(--line-2))}
 .alert.fault b{color:var(--fault)}
 .alert .where{color:var(--ink-2); margin-left:auto; font-size:12px; flex:none}
 
@@ -87,7 +97,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 .plantwrap{padding:94px 22px 8px; overflow:hidden}
 .plant{
   position:relative; display:grid; min-width:1240px; transform-origin:top center;
-  grid-template-columns:[lbl] 108px [c1] 1.55fr [c2] 1fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 1.75fr;
+  grid-template-columns:[lbl] 108px [c1] 2fr [c2] .8fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 2.1fr;
   grid-template-rows:auto minmax(366px,auto) auto 0 auto;
   row-gap:32px;
 }
@@ -109,10 +119,12 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* the RO room, with both roof tanks resting on it */
 .room{grid-row:2; border:1px solid var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px -12px -21px; position:relative; z-index:1}
 .room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
-.room > .roomenv{
+.room > .roomenv,.annex > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
   background:var(--ground-c); padding:4px 9px; border-radius:3px;
 }
+.annex > .roomenv{gap:9px; right:10px}
+.annex .vals{font-size:16px}
 .roomenv > .legend{align-self:center}
 .roomenv .vals{font-family:var(--mono); font-weight:700; font-size:18px; color:var(--ink); letter-spacing:-.02em}
 .roomenv .vals u{text-decoration:none; font-size:11px; color:var(--ink-2); font-weight:600; margin-left:2px}
@@ -147,7 +159,7 @@ h1 span{color:var(--ink-3); font-weight:400}
   pointer-events:none; opacity:.42; margin-bottom:-12px;
 }
 .scenery.cars{justify-content:space-evenly; padding:0 30px}
-.scenery.plants{justify-content:space-between; padding:0 16px}
+.scenery.plants{justify-content:space-between; padding:0 12px}
 
 /* level marker, as on an architectural elevation */
 .tier b::before{
@@ -330,7 +342,7 @@ const dur = s => {
    different speeds. OFFLINE draws hatch and no liquid — an offline tank
    is not an empty tank (plan.txt §15).                       */
 function vessel({ w, h, shape, fluid, pct, state, id }) {
-  const AMP = 2.6, LEN = 26, pad = 2;
+  const AMP = 4.6, LEN = 26, pad = 2;
   const iw = w - pad * 2, ih = h - pad * 2, ry = shape === "cyl" ? Math.min(13, iw * 0.17) : 0;
   const silhouette = shape === "cyl"
     ? `M ${pad} ${pad + ry} A ${iw / 2} ${ry} 0 0 1 ${pad + iw} ${pad + ry}
@@ -377,9 +389,15 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
     for (let x = 0; x < w * 2 + LEN; x += LEN)
       d += ` q ${LEN / 4} ${-AMP} ${LEN / 2} 0 q ${LEN / 4} ${AMP} ${LEN / 2} 0`;
     d += ` L ${w * 2 + LEN} ${h + AMP} L 0 ${h + AMP} Z`;
-    [[.34, 7.5, 0], [1, 5.5, -LEN / 2]].forEach(([op, sec, off], i) => {
+    [[.45, 3.4, 0], [1, 2.5, -LEN / 2]].forEach(([op, sec, off], i) => {
       const drift = el("g", { opacity: op });
       drift.appendChild(el("path", { d, fill: fillRef, transform: `translate(${off} 0)` }));
+      // a lit crest makes the undulation readable; the closing edges of the
+      // same path fall outside the clip, so only the surface line shows
+      drift.appendChild(el("path", {
+        d, fill: "none", stroke: "rgba(255,255,255,.42)", "stroke-width": 1.7,
+        transform: `translate(${off} 0)`,
+      }));
       drift.style.animation = `wave${i} ${sec}s ease-in-out infinite`;
       level.appendChild(drift);
     });
@@ -392,8 +410,9 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
   return svg;
 }
 const kf = document.createElement("style");
-kf.textContent = `@keyframes wave0{0%,100%{transform:translateY(0)}50%{transform:translateY(1.9px)}}` +
-  `@keyframes wave1{0%,100%{transform:translateY(1.5px)}50%{transform:translateY(0)}}`;
+kf.textContent =
+  `@keyframes wave0{0%,100%{transform:translateY(0)}50%{transform:translateY(5.2px)}}` +
+  `@keyframes wave1{0%,100%{transform:translateY(4.2px)}50%{transform:translateY(-.6px)}}`;
 document.head.appendChild(kf);
 
 /* ── machine ──────────────────────────────────────────────
@@ -500,21 +519,20 @@ function gwagonGlyph(w) {
       [111, 26, 10], [111, 26, 4]], w);
 }
 
-/* A tree, drawn as a lobed canopy over a forked trunk. */
-function treeGlyph(w) {
-  return sized(120, 152, [
-    "M 46 150 L 76 150",
-    "M 55 150 C 55 122, 51 104, 53 88",
-    "M 68 150 C 68 122, 72 104, 70 88",
-    "M 58 108 L 39 88",
-    "M 65 101 L 84 84",
-    "M 61 90 C 41 92, 27 79, 31 63 C 21 52, 28 33, 43 30 C 47 13, 70 9, 79 23 " +
-    "C 95 21, 105 36, 98 50 C 108 63, 99 81, 83 82 C 77 91, 67 93, 61 90 Z",
-    "M 44 50 C 53 43, 67 43, 76 50",
-  ], null, w);
+/* Swift: small hatchback, steep screen, short rear overhang. */
+function swiftGlyph(w) {
+  return sized(108, 56, [
+    "M 0 50 H 108",
+    "M 5 43 L 5 29 Q 6 24 12 23 L 28 23 L 40 9 Q 43 7 48 7 L 73 7 Q 79 7 83 12 L 93 23 Q 99 26 99 33 L 99 43",
+    "M 5 43 L 18 43", "M 34 43 L 72 43", "M 88 43 L 99 43",
+    "M 32 22 L 43 11 L 57 11 L 57 22 Z",
+    "M 61 11 L 73 11 L 81 22 L 61 22 Z",
+    "M 59 11 L 59 22",
+    "M 99 30 L 105 30",
+  ], [[26, 43, 8], [80, 43, 8], [26, 43, 3], [80, 43, 3]], w);
 }
 
-/* A smaller potted plant, for scale against the tree. */
+/* A potted plant. Used twice at different sizes for scale. */
 function shrubGlyph(w) {
   return sized(44, 60, [
     "M 14 59 L 12 44 L 32 44 L 30 59 Z",
@@ -760,14 +778,26 @@ function buildPlant(s) {
     fu.appendChild(fan({ r: 24, running: B.fan, dead: B.state !== "ONLINE" }));
     ab.appendChild(fu);
     ab.appendChild(txt("name", "Exhaust Fan"));
-    const asub = txt("sub", "");
-    asub.dataset.annex = "1";
-    ab.appendChild(asub);
+
     let bt = "Off", bk = "off";
     if (B.state !== "ONLINE") { bt = "Offline"; bk = "fault"; }
     else if (B.fan) { bt = "Running"; bk = "on"; }
     ab.appendChild(chip(bt, bk));
     a.appendChild(ab);
+
+    const benv = node("roomenv");
+    benv.appendChild(txt("legend", "Room air"));
+    if (B.state === "ONLINE") {
+      const bvt = node("vals", `${B.t.toFixed(1)}<u>\u00b0C</u>`);
+      const bvh = node("vals", `${B.rh.toFixed(0)}<u>%</u>`);
+      bvt.dataset.env = "bt";
+      bvh.dataset.env = "brh";
+      benv.appendChild(bvt);
+      benv.appendChild(bvh);
+    } else {
+      benv.appendChild(chip("Sensor offline", "fault"));
+    }
+    a.appendChild(benv);
     return a;
   };
 
@@ -812,10 +842,10 @@ function buildPlant(s) {
     add(node("slab"), "1 / -1", 1);
     add(node("slab"), "1 / -1", 2);
     const grade = node("slab grade");
-    add(grade, "c1 / -1", 3);
+    add(grade, "1 / -1", 3);
     const earth = node("earth");
     earth.appendChild(txt("legend", "Ground level"));
-    add(earth, "c1 / -1", 5);
+    add(earth, "1 / -1", 5);
 
     cell("rwt", "c3", 1);
     cell("twt", "c7", 1);
@@ -830,13 +860,14 @@ function buildPlant(s) {
 
     // the terrace has planters; the ground floor is parking
     const plants = node("scenery plants");
-    plants.appendChild(treeGlyph(214));
-    plants.appendChild(shrubGlyph(92));
-    add(plants, "c1 / span 2", 2);
+    plants.appendChild(shrubGlyph(132));
+    plants.appendChild(shrubGlyph(62));
+    add(plants, "c1", 2);
 
     const cars = node("scenery cars");
-    cars.appendChild(truckGlyph(430));
-    cars.appendChild(gwagonGlyph(392));
+    cars.appendChild(truckGlyph(300));
+    cars.appendChild(gwagonGlyph(272));
+    cars.appendChild(swiftGlyph(238));
     add(cars, "c3 / -1", 3);
     cell("bore", "c1", 5);
 
@@ -941,8 +972,9 @@ function updatePlant(s) {
   if (vh && e.state === "ONLINE") vh.innerHTML = `${e.rh.toFixed(0)}<u>%</u>`;
 
   const B = s.env.battery_room;
-  const asub = document.querySelector("[data-annex]");
-  if (asub) asub.textContent = B.state === "ONLINE" ? `${B.t.toFixed(1)} \u00b0C \u00b7 ${B.rh.toFixed(0)} %` : "\u2014";
+  const bvt = document.querySelector('[data-env="bt"]'), bvh = document.querySelector('[data-env="brh"]');
+  if (bvt && B.state === "ONLINE") bvt.innerHTML = `${B.t.toFixed(1)}<u>\u00b0C</u>`;
+  if (bvh && B.state === "ONLINE") bvh.innerHTML = `${B.rh.toFixed(0)}<u>%</u>`;
   const annex = document.querySelector(".annex");
   if (annex) {
     const fw = annex.querySelector(".unit .unit");
