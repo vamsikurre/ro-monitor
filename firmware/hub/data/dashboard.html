@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-demo="true">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -7,20 +7,24 @@
 <title>RO Plant · Live</title>
 <style>
 /* ─────────────────────────────────────────────────────────────
-   RO-MONITOR PLANT DASHBOARD
+   RO-MONITOR — PLANT ELEVATION DASHBOARD
    Self-contained. No external requests — the hub is LAN-only.
    Palette validated against dataviz six-checks (dark, surface #18202C).
+
+   Drawn as a true elevation, because the lift is the point: this plant
+   fails by pumping dry from the lowest vessel to the highest.
+     Roof of RO room ...... RWT, TWT
+     Terrace .............. RO room (RWP, Dosing, HPP) + Battery Room
+     Ground / parking ..... Sump, Sump Motor
+     Below grade .......... Borewell
    ───────────────────────────────────────────────────────────── */
 :root{
-  /* surfaces */
-  --ground:#10161F; --panel:#18202C; --panel-2:#1D2734; --line:#2A3646; --line-2:#3E4E63;
-  /* ink */
+  --ground-c:#10161F; --panel:#18202C; --line:#2A3646; --line-2:#3E4E63;
   --ink:#E6ECF3; --ink-2:#9AA7B8; --ink-3:#6B7787;
-  /* fluids — categorical, validated ΔE 17.8 normal / 17.3 deutan */
+  /* fluids — categorical, ΔE 17.8 normal / 17.3 deutan */
   --raw:#3E8F5F; --treated:#2B8FD4; --additive:#9A7B3C;
-  /* status — reserved, never reused for a fluid. ΔE 22.4 normal / 10.0 deutan */
+  /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
   --warn:#B08F1A; --fault:#D93E68; --offline:#6B7787;
-  /* type */
   --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,"Liberation Mono",monospace;
   --r:3px;
@@ -28,31 +32,23 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{
-  background:var(--ground); color:var(--ink); font-family:var(--ui);
-  font-size:15px; line-height:1.45; padding:0 0 40px;
-  font-variant-numeric:tabular-nums;
+  background:var(--ground-c); color:var(--ink); font-family:var(--ui);
+  font-size:15px; line-height:1.45; padding:0 0 40px; font-variant-numeric:tabular-nums;
 }
-
-/* engraved panel legend — the recurring label treatment */
-.legend{
-  font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
-  color:var(--ink-3); white-space:nowrap;
-}
+.legend{font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); white-space:nowrap}
 .readout{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600}
 
 /* ── header ─────────────────────────────────────────────── */
 header{
   display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 22px;
   padding:16px 22px; border-bottom:1px solid var(--line); background:var(--panel);
-  position:sticky; top:0; z-index:20;
+  position:sticky; top:0; z-index:30;
 }
 h1{font-size:15px; font-weight:600; letter-spacing:.08em; text-transform:uppercase}
 h1 span{color:var(--ink-3); font-weight:400}
 .hstats{display:flex; flex-wrap:wrap; gap:6px 20px; margin-left:auto; align-items:baseline}
 .hstat{display:flex; gap:7px; align-items:baseline}
 .hstat .readout{font-size:13px; color:var(--ink)}
-
-/* live/demo pill */
 .mode{
   font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   border:1px solid var(--line); border-radius:100px; padding:3px 10px; color:var(--ink-2);
@@ -64,10 +60,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 /* ── alerts ─────────────────────────────────────────────── */
 #alerts:not(:empty){padding:12px 22px 0; display:flex; flex-direction:column; gap:7px}
-.alert{
-  display:flex; gap:12px; align-items:baseline; padding:9px 13px; border-radius:var(--r);
-  border:1px solid; font-size:13px; background:var(--panel);
-}
+.alert{display:flex; gap:12px; align-items:baseline; padding:9px 13px; border-radius:var(--r); border:1px solid; font-size:13px; background:var(--panel)}
 .alert b{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; flex:none}
 .alert.warn{border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
 .alert.warn b{color:var(--warn)}
@@ -75,124 +68,101 @@ h1 span{color:var(--ink-3); font-weight:400}
 .alert.fault b{color:var(--fault)}
 .alert .where{color:var(--ink-2); margin-left:auto; font-size:12px; flex:none}
 
-/* ── the plant rail (signature) ─────────────────────────── */
-.railwrap{padding:20px 22px 4px; overflow-x:auto; overflow-y:hidden}
-.rail{display:flex; align-items:center; min-width:min-content; gap:0}
-
-/* pipe */
-.pipe{
-  flex:0 0 54px; align-self:center; height:13px; position:relative; min-width:54px;
+/* ── the plant, in elevation (signature) ────────────────── */
+.plantwrap{padding:22px 22px 6px; overflow-x:auto}
+.plant{
+  position:relative; display:grid; min-width:1080px;
+  grid-template-columns:[lbl] 122px [c1] .92fr [c2] .58fr [c3] 1fr [c4] .95fr [c5] 1fr [c6] .95fr;
+  grid-template-rows:auto auto auto 0 auto;
+  row-gap:62px;
 }
-.pipe::before{ /* bore walls */
-  content:""; position:absolute; inset:0;
-  border-top:1px solid var(--line-2); border-bottom:1px solid var(--line-2);
-  background:rgba(0,0,0,.25);
-}
-.pipe::after{ /* product in the bore */
-  content:""; position:absolute; left:0; right:0; top:50%; height:5px; transform:translateY(-50%);
-  background:repeating-linear-gradient(90deg,currentColor 0 9px,transparent 9px 19px);
-  opacity:0; transition:opacity .35s;
-}
-.pipe.flow::after{opacity:.95; animation:drift 1.05s linear infinite}
-.pipe.raw{color:var(--raw)} .pipe.treated{color:var(--treated)} .pipe.additive{color:var(--additive)}
-@keyframes drift{to{background-position-x:19px}}
+.plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
+.cell{display:flex; justify-content:center; align-items:center; position:relative; z-index:2}
 
-/* stack (a vessel or a machine + its caption) */
-.unit{display:flex; flex-direction:column; align-items:center; gap:8px; flex:none}
-.unit .name{font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; text-align:center}
-.unit .sub{font-size:11px; color:var(--ink-2); font-family:var(--mono); text-align:center}
+/* elevation band label — encodes real building height, not decoration */
+.tier{grid-column:lbl; display:flex; flex-direction:column; gap:3px; justify-content:center; align-items:flex-start; position:relative; z-index:2}
+.tier b{font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2)}
+.tier span{font-size:10.5px; color:var(--ink-3)}
 
-/* vessel readout overlay */
+/* the RO room, with both roof tanks resting on it */
+.room{grid-row:2; border:1px solid var(--line-2); border-radius:var(--r); margin:-18px -12px; position:relative; z-index:1}
+.room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
+
+/* battery room — beside the RO room on the terrace, not in the water path */
+.annex{grid-row:2; border:1px dashed var(--line-2); border-radius:var(--r); margin:-18px 0; position:relative; z-index:1; display:flex; align-items:center; justify-content:center}
+.annex > .tag{position:absolute; top:-8px; left:13px; background:var(--ground-c); padding:0 8px}
+
+/* grade line — what is underground and what is not */
+.grade{grid-column:1 / -1; grid-row:4; position:relative; z-index:2; border-top:1px dashed color-mix(in srgb,var(--line-2) 90%,transparent)}
+.grade > span{position:absolute; top:-7px; right:0; background:var(--ground-c); padding:0 9px}
+
+.flowing{animation:dash 1.15s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-20}}
+
+/* ── units ──────────────────────────────────────────────── */
+.unit{display:flex; flex-direction:column; align-items:center; gap:8px}
+.unit .name{font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; text-align:center;
+  background:var(--ground-c); padding:1px 8px; border-radius:2px}
+.unit .sub{font-size:11px; color:var(--ink-2); font-family:var(--mono); text-align:center;
+  background:var(--ground-c); padding:1px 8px; border-radius:2px}
 .vessel{position:relative}
 .vessel .pct{
-  position:absolute; left:0; right:0; top:15%;
-  text-align:center; font-family:var(--mono); font-weight:700; font-size:22px;
-  letter-spacing:-.02em; text-shadow:0 1px 6px rgba(0,0,0,.75); pointer-events:none;
+  position:absolute; left:0; right:0; top:15%; text-align:center;
+  font-family:var(--mono); font-weight:700; font-size:22px; letter-spacing:-.02em;
+  text-shadow:0 1px 6px rgba(0,0,0,.8); pointer-events:none;
 }
 .vessel .pct small{display:block; font-size:10px; font-weight:600; letter-spacing:.1em; opacity:.72; margin-top:1px}
-
-/* status chip — text always present, colour is secondary */
+.vessel .nodata{font-size:12px; letter-spacing:.1em; color:var(--ink-3)}
 .chip{
   font-family:var(--mono); font-size:9.5px; letter-spacing:.11em; text-transform:uppercase;
   padding:2px 7px; border-radius:100px; border:1px solid var(--line); color:var(--ink-2);
-  display:inline-block; white-space:nowrap;
+  display:inline-block; white-space:nowrap; background:var(--ground-c);
 }
 .chip.on{color:var(--ink); border-color:color-mix(in srgb,var(--treated) 60%,transparent)}
 .chip.warn{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
 .chip.fault{color:var(--fault); border-color:color-mix(in srgb,var(--fault) 55%,transparent)}
 .chip.off{color:var(--ink-3)}
-
-/* machine (pump / motor / fan) */
 .rotor{transform-origin:0 0}
 .spin .rotor{animation:spin 2.6s linear infinite}
 .fast .rotor{animation-duration:1.5s}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* skid enclosure */
-.skid{
-  border:1px dashed var(--line-2); border-radius:var(--r); padding:15px 17px 13px;
-  display:flex; align-items:center; gap:0; position:relative; flex:none; margin:12px 0;
-}
-.skid > .tag{
-  position:absolute; top:-8px; left:13px; background:var(--ground); padding:0 7px;
-}
-
 /* ── instrument strip ───────────────────────────────────── */
-.grid{
-  display:grid; gap:14px; padding:18px 22px 0;
-  grid-template-columns:repeat(auto-fit,minmax(268px,1fr));
-}
+.grid{display:grid; gap:14px; padding:20px 22px 0; grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
 .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px 15px}
 .card > .legend{display:block; margin-bottom:12px; padding-bottom:9px; border-bottom:1px solid var(--line)}
-
-/* climate */
 .climate{display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap}
 .big{font-family:var(--mono); font-weight:700; font-size:31px; letter-spacing:-.025em; line-height:1}
 .big u{text-decoration:none; font-size:15px; color:var(--ink-2); font-weight:600; margin-left:2px}
 .metric{display:flex; flex-direction:column; gap:5px}
 .fanrow{display:flex; align-items:center; gap:13px; margin-top:14px; padding-top:13px; border-top:1px solid var(--line)}
-.fanrow .txt{display:flex; flex-direction:column; gap:6px; align-items:flex-start}
+.fanrow .txtblk{display:flex; flex-direction:column; gap:6px; align-items:flex-start}
 .srcline{flex-basis:100%; display:flex; align-items:center; gap:11px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line)}
-
-/* contact + node rows */
 .rows{display:flex; flex-direction:column}
 .row{display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
 .row:last-child{border-bottom:0}
 .row .k{font-size:12px; letter-spacing:.05em; color:var(--ink-2); font-family:var(--mono)}
 .row .v{margin-left:auto; display:flex; align-items:center; gap:9px}
 .row .n{font-family:var(--mono); font-size:12px; color:var(--ink-2)}
-
 footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; flex-wrap:wrap; gap:6px 20px}
 
-/* ── responsive: the flow turns vertical, which is truer anyway —
-      water genuinely travels upward from sump to roof ────── */
-@media (max-width:860px){
-  .railwrap{overflow-x:visible; padding:16px 16px 4px}
-  .rail{flex-direction:column; align-items:center}
-  .pipe{flex:none; width:13px; min-width:0; height:36px; align-self:center}
-  .pipe::before{inset:0; border:0; border-left:1px solid var(--line-2); border-right:1px solid var(--line-2)}
-  .pipe::after{left:50%; right:auto; top:0; bottom:0; width:5px; height:auto; transform:translateX(-50%);
-    background:repeating-linear-gradient(180deg,currentColor 0 9px,transparent 9px 19px)}
-  .pipe.flow::after{animation:driftv 1.05s linear infinite}
-  @keyframes driftv{to{background-position-y:19px}}
-  .skid{flex-direction:column}
-  header,.grid,#alerts:not(:empty),footer{padding-left:16px; padding-right:16px}
+/* Narrow screens keep the elevation and scroll sideways. Flattening it
+   would throw away the one thing the drawing exists to show. */
+@media (max-width:900px){
+  header,.grid,#alerts:not(:empty),footer,.plantwrap{padding-left:16px; padding-right:16px}
   .hstats{margin-left:0; width:100%; gap:4px 15px}
   .hstat .readout{font-size:12px}
   header{gap:7px 15px; padding-top:13px; padding-bottom:13px}
 }
 
-/* ── quality floor ──────────────────────────────────────── */
 :focus-visible{outline:2px solid var(--treated); outline-offset:2px}
-@media (prefers-reduced-motion:reduce){
-  *,*::before,*::after{animation:none!important; transition:none!important}
-}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important; transition:none!important}}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>RO Plant <span>/ Terrace &amp; Ground</span></h1>
+  <h1>RO Plant <span>/ Elevation</span></h1>
   <span class="mode" id="mode">Demo data</span>
   <div class="hstats">
     <div class="hstat"><span class="legend">Bus</span><span class="readout" id="hBus">–</span></div>
@@ -204,8 +174,8 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 
 <div id="alerts"></div>
 
-<div class="railwrap">
-  <div class="rail" id="rail"></div>
+<div class="plantwrap">
+  <div class="plant" id="plant"><svg class="pipes" id="pipes" aria-hidden="true"></svg></div>
 </div>
 
 <div class="grid">
@@ -213,18 +183,15 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <span class="legend">RO Room · Hub 0x00</span>
     <div class="climate" id="cRoom"></div>
   </div>
-
   <div class="card">
     <span class="legend">Battery Room · Node 0x04</span>
     <div class="climate" id="cBatt"></div>
     <div class="fanrow" id="cBattFan"></div>
   </div>
-
   <div class="card">
     <span class="legend">Aster NXT 11 · Isolated contacts</span>
     <div class="rows" id="cAster"></div>
   </div>
-
   <div class="card">
     <span class="legend">Nodes</span>
     <div class="rows" id="cNodes"></div>
@@ -249,15 +216,40 @@ const el = (t, a = {}, kids = []) => {
   return n;
 };
 
+/* Telemetry strings originate at RS485 and Wi-Fi nodes — a trust
+   boundary. Plain text goes through txt(); authored markup escapes
+   every interpolation with esc(). Nothing from the wire reaches
+   innerHTML unescaped. */
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = v => String(v).replace(/[&<>"']/g, c => ESCAPES[c]);
+const txt = (cls, s) => {
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = s == null ? "" : String(s);
+  return d;
+};
+const node = (cls, html) => {
+  const d = document.createElement("div");
+  d.className = cls;
+  if (html != null) { d.innerHTML = html; }
+  return d;
+};
+const chip = (text, kind) => txt("chip " + (kind || ""), text);
+const ago = s => s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
+const dur = s => {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
 /* ── vessel ───────────────────────────────────────────────
-   A real container with a living surface. Two sine layers at
-   different speeds so the liquid never looks like a solid block.
-   Offline draws a hatch and NO liquid — an offline tank is not
-   an empty tank (plan.txt §15).                             */
+   A real container with a living surface: two sine layers drifting at
+   different speeds. OFFLINE draws hatch and no liquid — an offline tank
+   is not an empty tank (plan.txt §15).                       */
 function vessel({ w, h, shape, fluid, pct, state, id }) {
   const AMP = 2.6, LEN = 26, pad = 2;
   const iw = w - pad * 2, ih = h - pad * 2, ry = shape === "cyl" ? Math.min(13, iw * 0.17) : 0;
-
   const silhouette = shape === "cyl"
     ? `M ${pad} ${pad + ry} A ${iw / 2} ${ry} 0 0 1 ${pad + iw} ${pad + ry}
        L ${pad + iw} ${pad + ih - ry} A ${iw / 2} ${ry} 0 0 1 ${pad} ${pad + ih - ry} Z`
@@ -271,7 +263,6 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
   const defs = el("defs");
   defs.appendChild(el("clipPath", { id: cid }, [el("path", { d: silhouette })]));
 
-  // hatch for the offline case — texture, not colour alone
   const hatch = el("pattern", { id: "hatch-" + id, width: 7, height: 7, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" });
   hatch.appendChild(el("rect", { width: 7, height: 7, fill: "transparent" }));
   hatch.appendChild(el("line", { x1: 0, y1: 0, x2: 0, y2: 7, stroke: "var(--offline)", "stroke-width": 1.6, opacity: .45 }));
@@ -287,29 +278,24 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
     fillRef = `url(#ah-${id})`;
   }
   svg.appendChild(defs);
-
   svg.appendChild(el("path", { d: silhouette, fill: "var(--panel)" }));
 
   const body = el("g", { "clip-path": `url(#${cid})` });
-  const dead = state === "OFFLINE" || state === "SENSOR_ERROR";
-
-  if (dead) {
+  if (state === "OFFLINE" || state === "SENSOR_ERROR") {
     body.appendChild(el("rect", { x: 0, y: 0, width: w, height: h, fill: `url(#hatch-${id})` }));
   } else {
     const level = el("g");
     const top = pad + ih - (ih * Math.max(0, Math.min(100, pct)) / 100);
     level.setAttribute("transform", `translate(0 ${top - AMP})`);
     level.style.transition = "transform .9s cubic-bezier(.4,0,.2,1)";
-
     let d = `M 0 ${AMP}`;
     for (let x = 0; x < w * 2 + LEN; x += LEN)
       d += ` q ${LEN / 4} ${-AMP} ${LEN / 2} 0 q ${LEN / 4} ${AMP} ${LEN / 2} 0`;
     d += ` L ${w * 2 + LEN} ${h + AMP} L 0 ${h + AMP} Z`;
-
-    [[.34, 8.5, 0], [1, 5.5, -LEN / 2]].forEach(([op, dur, off], i) => {
+    [[.34, 8.5, 0], [1, 5.5, -LEN / 2]].forEach(([op, sec, off], i) => {
       const drift = el("g", { opacity: op });
       drift.appendChild(el("path", { d, fill: fillRef, transform: `translate(${off} 0)` }));
-      drift.style.animation = `wave${i} ${dur}s linear infinite`;
+      drift.style.animation = `wave${i} ${sec}s linear infinite`;
       level.appendChild(drift);
     });
     body.appendChild(level);
@@ -320,20 +306,20 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
     svg.appendChild(el("ellipse", { cx: w / 2, cy: pad + ry, rx: iw / 2, ry, fill: "none", stroke: "var(--line-2)", "stroke-width": 1.5 }));
   return svg;
 }
-
-/* one keyframe pair, injected once — the two wave layers drift
-   by exactly one wavelength so the loop is seamless */
 const kf = document.createElement("style");
 kf.textContent = `@keyframes wave0{to{transform:translateX(-26px)}}@keyframes wave1{to{transform:translateX(26px)}}`;
 document.head.appendChild(kf);
 
-/* ── machine (pump / motor / fan) ─────────────────────────── */
+/* ── machine ──────────────────────────────────────────────
+   Static outer group centres it; the inner group rotates about its own
+   origin. A CSS transform replaces the SVG transform attribute outright,
+   so the two must never live on the same element.             */
 function machine({ r, running, dead }) {
   const s = r * 2;
   const svg = el("svg", { width: s, height: s, viewBox: `0 0 ${s} ${s}`, "aria-hidden": "true" });
-  svg.appendChild(el("circle", { cx: r, cy: r, r: r - 1.2, fill: "var(--panel)", stroke: dead ? "var(--offline)" : "var(--line)", "stroke-width": 1.4 }));
-  const hub = el("g", { transform: `translate(${r} ${r})` });   // static centring
-  const g = el("g", { class: "rotor" });                        // rotation only
+  svg.appendChild(el("circle", { cx: r, cy: r, r: r - 1.2, fill: "var(--panel)", stroke: dead ? "var(--offline)" : "var(--line-2)", "stroke-width": 1.4 }));
+  const hub = el("g", { transform: `translate(${r} ${r})` });
+  const g = el("g", { class: "rotor" });
   const col = dead ? "var(--offline)" : running ? "var(--treated)" : "var(--ink-3)";
   for (let i = 0; i < 3; i++)
     g.appendChild(el("path", {
@@ -347,119 +333,191 @@ function machine({ r, running, dead }) {
   return svg;
 }
 
-/* ── small builders ───────────────────────────────────────── */
-const node = (cls, html) => {
-  const d = document.createElement("div");
-  d.className = cls;
-  if (html != null) { d.innerHTML = html; }
-  return d;
-};
-function chip(text, kind) { const s = node("chip " + (kind || ""), text); return s; }
-
-function pipe(fluid, flowing) {
-  const p = node("pipe " + fluid + (flowing ? " flow" : ""));
-  p.setAttribute("role", "presentation");
-  return p;
-}
-
+/* ── unit builders ────────────────────────────────────────── */
 function tankUnit(t, cfg) {
   const u = node("unit");
   const v = node("vessel");
-  v.appendChild(vessel({ ...cfg, pct: t.pct, state: t.state, fluid: cfg.fluid, id: cfg.id }));
+  v.dataset.a = cfg.id;
+  v.appendChild(vessel({ ...cfg, pct: t.pct, state: t.state }));
   const dead = t.state === "OFFLINE" || t.state === "SENSOR_ERROR";
-  v.appendChild(node("pct", dead
-    ? `<span style="font-size:12px;letter-spacing:.1em;color:var(--ink-3)">NO&nbsp;DATA</span>`
-    : `${t.pct.toFixed(0)}<small>% full</small>`));
+  if (dead) {
+    const p = node("pct");
+    p.appendChild(txt("nodata", "NO DATA"));
+    v.appendChild(p);
+  } else {
+    v.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
+  }
   u.appendChild(v);
-  u.appendChild(node("name", cfg.label));
-  u.appendChild(node("sub", dead ? "—" : `${t.distance_mm} mm`));
-  u.appendChild(chip(
-    t.state === "ONLINE" ? (t.sensor === "OK" ? "Reading" : t.sensor) : t.state,
-    t.state === "ONLINE" ? (t.sensor === "OK" ? "on" : "warn") : t.state === "STALE" ? "warn" : "fault"
-  ));
+  u.appendChild(txt("name", cfg.label));
+  u.appendChild(txt("sub", dead ? "—" : `${t.distance_mm} mm`));
+  let label = t.state, kind = "fault";
+  if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : "warn"; }
+  else if (t.state === "STALE") { kind = "warn"; }
+  u.appendChild(chip(label, kind));
   return u;
 }
 
-function machineUnit(m, label, r = 34) {
+function machineUnit(m, label, id, r) {
   const u = node("unit");
   const dead = m.state && m.state !== "ONLINE";
   const w = node("unit" + (m.on && !dead ? " spin" : ""));
+  w.dataset.a = id;
   w.appendChild(machine({ r, running: m.on, dead }));
   u.appendChild(w);
-  u.appendChild(node("name", label));
-  u.appendChild(chip(dead ? "Offline" : m.on ? "Running" : "Idle", dead ? "fault" : m.on ? "on" : "off"));
+  u.appendChild(txt("name", label));
+  let s = "Idle", kind = "off";
+  if (dead) { s = "Offline"; kind = "fault"; }
+  else if (m.on) { s = "Running"; kind = "on"; }
+  u.appendChild(chip(s, kind));
   return u;
 }
 
-/* ── the plant ────────────────────────────────────────────── */
-function drawRail(s) {
-  const rail = $("#rail"); rail.textContent = "";
+/* ── orthogonal pipe routing over measured anchors ──────────
+   Pipes are drawn after layout from real element rects, so the elevation
+   grid can reflow without the pipework drifting off its vessels.  */
+function anchorPt(id, side, hostRect) {
+  const e = document.querySelector(`[data-a="${id}"]`);
+  if (!e) return null;
+  const b = e.getBoundingClientRect();
+  const x = b.left - hostRect.left, y = b.top - hostRect.top, S = 11;
+  if (side === "t") return { x: x + b.width / 2, y: y - S };
+  if (side === "b") return { x: x + b.width / 2, y: y + b.height + S };
+  if (side === "l") return { x: x - S, y: y + b.height / 2 };
+  return { x: x + b.width + S, y: y + b.height / 2 };
+}
+function routeD(a, as, b, bs) {
+  const va = as === "t" || as === "b", vb = bs === "t" || bs === "b";
+  if (va && vb) {
+    if (Math.abs(a.x - b.x) < 2) return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+    // elbow near the destination, so risers stay in their own column
+    const my = b.y + (a.y > b.y ? 30 : -30);
+    return `M ${a.x} ${a.y} L ${a.x} ${my} L ${b.x} ${my} L ${b.x} ${b.y}`;
+  }
+  if (!va && !vb) {
+    if (Math.abs(a.y - b.y) < 2) return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+    const mx = (a.x + b.x) / 2;
+    return `M ${a.x} ${a.y} L ${mx} ${a.y} L ${mx} ${b.y} L ${b.x} ${b.y}`;
+  }
+  if (va) return `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
+  return `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
+}
+let ROUTES = [];
+function drawPipes() {
+  const host = $("#plant"), svg = $("#pipes");
+  if (!host || !svg) return;
+  const h = host.getBoundingClientRect();
+  svg.setAttribute("width", h.width);
+  svg.setAttribute("height", h.height);
+  svg.setAttribute("viewBox", `0 0 ${h.width} ${h.height}`);
+  svg.textContent = "";
+  ROUTES.forEach(rt => {
+    const a = anchorPt(rt.from, rt.fs, h), b = anchorPt(rt.to, rt.ts, h);
+    if (!a || !b) return;
+    const common = { d: routeD(a, rt.fs, b, rt.ts), fill: "none", "stroke-linejoin": "round", "stroke-linecap": "butt" };
+    svg.appendChild(el("path", { ...common, stroke: "var(--line-2)", "stroke-width": 11 }));
+    svg.appendChild(el("path", { ...common, stroke: "#0C1119", "stroke-width": 8.4 }));
+    if (rt.flow) svg.appendChild(el("path", {
+      ...common, stroke: `var(--${rt.fluid})`, "stroke-width": 4.6,
+      "stroke-dasharray": "9 11", class: "flowing"
+    }));
+  });
+}
+
+/* ── the plant, in elevation ────────────────────────────── */
+function drawPlant(s) {
+  const host = $("#plant");
+  [...host.children].forEach(c => { if (c.tagName.toLowerCase() !== "svg") c.remove(); });
   const T = s.tanks, P = s.pumps;
   const live = k => P[k].on && P[k].state === "ONLINE";
+  const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
+  const cell = (child, col, row) => { const c = node("cell"); c.appendChild(child); return add(c, col, row); };
 
-  rail.appendChild(machineUnit(P.borewell, "Borewell Pump", 33));
-  rail.appendChild(pipe("raw", live("borewell")));
-  rail.appendChild(tankUnit(T.sump, { w: 132, h: 170, shape: "box", fluid: "raw", label: "Sump", id: "sump" }));
-  rail.appendChild(pipe("raw", live("sump_motor")));
-  rail.appendChild(machineUnit(P.sump_motor, "Sump Motor", 33));
-  rail.appendChild(pipe("raw", live("sump_motor")));
-  rail.appendChild(tankUnit(T.rwt, { w: 124, h: 162, shape: "cyl", fluid: "raw", label: "Raw Water", id: "rwt" }));
-  rail.appendChild(pipe("raw", live("rwp")));
+  // elevation bands, high to low
+  [["Roof top", "above RO room", 1], ["Terrace", "RO room · battery room", 2],
+   ["Ground floor", "parking", 3], ["Below ground", "borewell", 5]
+  ].forEach(([a, b, r]) => add(node("tier", `<b>${esc(a)}</b><span>${esc(b)}</span>`), "lbl", r));
 
-  /* RO skid — the dashed enclosure from your diagram */
-  const skid = node("skid");
-  skid.appendChild(node("tag legend", "RO Skid"));
-  skid.appendChild(machineUnit(P.rwp, "RWP", 30));
-  skid.appendChild(pipe("raw", live("rwp")));
+  const room = node("room");
+  room.appendChild(txt("tag legend", "RO Room"));
+  add(room, "c3 / span 3", 2);
 
-  skid.appendChild(tankUnit(T.dosing, { w: 88, h: 104, shape: "cyl", fluid: "additive", label: "Dosing", id: "dos" }));
+  const grade = node("grade");
+  grade.appendChild(txt("legend", "Ground level"));
+  add(grade, "1 / -1", 4);
 
-  skid.appendChild(pipe("raw", live("hpp")));
-  skid.appendChild(machineUnit(P.hpp, "HPP", 30));
-  rail.appendChild(skid);
+  // roof of the RO room — both storage tanks sit up here
+  cell(tankUnit(T.rwt, { w: 122, h: 152, shape: "cyl", fluid: "raw", label: "Raw Water", id: "rwt" }), "c3", 1);
+  cell(tankUnit(T.twt, { w: 136, h: 168, shape: "cyl", fluid: "treated", label: "Treated Water", id: "twt" }), "c5", 1);
 
-  rail.appendChild(pipe("treated", live("hpp")));
-  rail.appendChild(tankUnit(T.twt, { w: 148, h: 186, shape: "cyl", fluid: "treated", label: "Treated Water", id: "twt" }));
+  // terrace — inside the RO room
+  cell(machineUnit(P.rwp, "RWP", "rwp", 29), "c3", 2);
+  cell(tankUnit(T.dosing, { w: 84, h: 100, shape: "cyl", fluid: "additive", label: "Dosing", id: "dos" }), "c4", 2);
+  cell(machineUnit(P.hpp, "HPP", "hpp", 29), "c5", 2);
+
+  // terrace — beside the RO room
+  const B = s.env.battery_room;
+  const annex = node("annex");
+  annex.appendChild(txt("tag legend", "Battery Room"));
+  const ab = node("unit");
+  const fanU = node("unit" + (B.fan ? " spin fast" : ""));
+  fanU.appendChild(machine({ r: 27, running: B.fan, dead: B.state !== "ONLINE" }));
+  ab.appendChild(fanU);
+  ab.appendChild(txt("name", "Exhaust Fan"));
+  ab.appendChild(txt("sub", B.state === "ONLINE" ? `${B.t.toFixed(1)} °C · ${B.rh.toFixed(0)} %` : "—"));
+  let bt = "Off", bk = "off";
+  if (B.state !== "ONLINE") { bt = "Offline"; bk = "fault"; }
+  else if (B.fan) { bt = "Running"; bk = "on"; }
+  ab.appendChild(chip(bt, bk));
+  annex.appendChild(ab);
+  add(annex, "c6", 2);
+
+  // ground floor
+  cell(tankUnit(T.sump, { w: 126, h: 148, shape: "box", fluid: "raw", label: "Sump", id: "sump" }), "c1", 3);
+  cell(machineUnit(P.sump_motor, "Sump Motor", "smotor", 30), "c2", 3);
+
+  // below grade
+  cell(machineUnit(P.borewell, "Borewell Pump", "bore", 30), "c1", 5);
+
+  ROUTES = [
+    { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     flow: live("borewell") },
+    { from: "sump",   fs: "r", to: "smotor", ts: "l", fluid: "raw",     flow: live("sump_motor") },
+    { from: "smotor", fs: "t", to: "rwt",    ts: "l", fluid: "raw",     flow: live("sump_motor") },
+    { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+    { from: "rwp",    fs: "r", to: "dos",    ts: "l", fluid: "raw",     flow: live("rwp") },
+    { from: "dos",    fs: "r", to: "hpp",    ts: "l", fluid: "raw",     flow: live("rwp") },
+    { from: "hpp",    fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
+  ];
+  requestAnimationFrame(drawPipes);
 }
 
 /* ── panels ───────────────────────────────────────────────── */
-function climate(host, c, extra) {
+function climate(host, c) {
   host.textContent = "";
   if (c.state !== "ONLINE") {
-    host.appendChild(node("metric", `<span class="legend">Sensor</span>`));
-    host.querySelector(".metric").appendChild(chip(c.state, "fault"));
+    const m = node("metric", `<span class="legend">Sensor</span>`);
+    m.appendChild(chip(c.state, "fault"));
+    host.appendChild(m);
     return;
   }
-  host.appendChild(node("metric",
-    `<span class="legend">Temperature</span><span class="big">${c.t.toFixed(1)}<u>°C</u></span>`));
-  host.appendChild(node("metric",
-    `<span class="legend">Humidity</span><span class="big">${c.rh.toFixed(0)}<u>%</u></span>`));
-  if (extra) host.appendChild(extra);
-  const foot = node("srcline", `<span class="legend">${c.src}</span>`);
+  host.appendChild(node("metric", `<span class="legend">Temperature</span><span class="big">${c.t.toFixed(1)}<u>°C</u></span>`));
+  host.appendChild(node("metric", `<span class="legend">Humidity</span><span class="big">${c.rh.toFixed(0)}<u>%</u></span>`));
+  const foot = node("srcline", `<span class="legend">${esc(c.src)}</span>`);
   foot.appendChild(chip(c.age_s <= 10 ? "Fresh" : "Stale " + ago(c.age_s), c.age_s <= 10 ? "on" : "warn"));
   host.appendChild(foot);
 }
-
 function rows(host, list) {
   host.textContent = "";
-  list.forEach(([k, chipText, kind, note]) => {
+  list.forEach(([k, label, kind, note]) => {
     const r = node("row");
-    r.appendChild(node("k", k));
+    r.appendChild(txt("k", k));
     const v = node("v");
-    if (note) v.appendChild(node("n", note));
-    v.appendChild(chip(chipText, kind));
+    if (note) v.appendChild(txt("n", note));
+    v.appendChild(chip(label, kind));
     r.appendChild(v);
     host.appendChild(r);
   });
 }
 
-const ago = s => s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
-const dur = s => {
-  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
-};
-
-/* ── alerts ───────────────────────────────────────────────── */
 function drawAlerts(s) {
   const out = [], T = s.tanks;
   if (T.sump.state === "ONLINE" && T.sump.pct < 15)
@@ -469,24 +527,23 @@ function drawAlerts(s) {
   });
   if (T.dosing.state === "ONLINE" && T.dosing.pct < 20)
     out.push(["warn", "Chemical low", "Dosing tank below 20 percent. Replenish anti-scalant.", "Dosing"]);
-  if (s.aster.alarm) out.push(["fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Skid"]);
+  if (s.aster.alarm)
+    out.push(["fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room"]);
   if (s.env.battery_room.state === "ONLINE" && s.env.battery_room.t > 38)
     out.push(["warn", "Battery room hot", `Room at ${s.env.battery_room.t.toFixed(1)} °C. Exhaust fan ${s.env.battery_room.fan ? "running" : "is off"}.`, "Battery Room"]);
   s.nodes.filter(n => n.state === "OFFLINE").forEach(n =>
     out.push(["warn", "Node offline", `The ${n.role} node has not answered for ${ago(n.age_s)}.`, n.id]));
 
-  const host = $("#alerts"); host.textContent = "";
-  out.forEach(([kind, title, body, where]) => {
-    const a = node("alert " + kind, `<b>${title}</b><span>${body}</span><span class="where">${where}</span>`);
-    host.appendChild(a);
-  });
+  const host = $("#alerts");
+  host.textContent = "";
+  out.forEach(([kind, title, body, where]) =>
+    host.appendChild(node("alert " + kind,
+      `<b>${esc(title)}</b><span>${esc(body)}</span><span class="where">${esc(where)}</span>`)));
 }
 
-/* ── render ───────────────────────────────────────────────── */
 function render(s) {
   drawAlerts(s);
-  drawRail(s);
-
+  drawPlant(s);
   climate($("#cRoom"), s.env.ro_room);
   climate($("#cBatt"), s.env.battery_room);
 
@@ -495,9 +552,11 @@ function render(s) {
   const fw = node("unit" + (B.fan ? " spin fast" : ""));
   fw.appendChild(machine({ r: 21, running: B.fan, dead: B.state !== "ONLINE" }));
   fh.appendChild(fw);
-  const ftxt = node("txt", `<span class="legend">Exhaust fan</span>`);
-  ftxt.appendChild(chip(B.state !== "ONLINE" ? "Unknown" : B.fan ? "Running" : "Off",
-                        B.state !== "ONLINE" ? "fault" : B.fan ? "on" : "off"));
+  const ftxt = node("txtblk", `<span class="legend">Exhaust fan</span>`);
+  let ft = "Off", fk = "off";
+  if (B.state !== "ONLINE") { ft = "Unknown"; fk = "fault"; }
+  else if (B.fan) { ft = "Running"; fk = "on"; }
+  ftxt.appendChild(chip(ft, fk));
   fh.appendChild(ftxt);
 
   const A = s.aster;
@@ -510,13 +569,12 @@ function render(s) {
     ["RL2", A.rl2 ? "Active" : "Inactive", A.rl2 ? "on" : "off"],
     ["ALARM", A.alarm ? "Active" : "Clear", A.alarm ? "fault" : "off"],
   ]);
-
-  rows($("#cNodes"), s.nodes.map(n => [
-    `${n.id}  ${n.role}`,
-    n.state === "ONLINE" ? "Online" : n.state === "STALE" ? "Stale" : "Offline",
-    n.state === "ONLINE" ? "on" : n.state === "STALE" ? "warn" : "fault",
-    `${n.link} · ${ago(n.age_s)}`
-  ]));
+  rows($("#cNodes"), s.nodes.map(n => {
+    let label = "Offline", kind = "fault";
+    if (n.state === "ONLINE") { label = "Online"; kind = "on"; }
+    else if (n.state === "STALE") { label = "Stale"; kind = "warn"; }
+    return [`${n.id}  ${n.role}`, label, kind, `${n.link} · ${ago(n.age_s)}`];
+  }));
 
   $("#hBus").textContent = `${s.rs485.online}/${s.rs485.total}`;
   $("#hRssi").textContent = `${s.sys.rssi} dBm`;
@@ -527,29 +585,30 @@ function render(s) {
   $("#fErr").textContent = s.rs485.errors;
   $("#fPoll").textContent = s.rs485.last_poll_ms + " ms";
 }
+new ResizeObserver(drawPipes).observe(document.documentElement);
 
 /* ── demo simulator ───────────────────────────────────────────
-   Runs only until /api/telemetry answers. Models the actual
-   failure this project exists to fix: borewell goes dry, sump
-   drains, and the sump motor keeps pulling because RWT is low. */
+   Runs until /api/telemetry answers. Models the failure this project
+   exists to fix: the borewell goes dry, the sump drains, and the sump
+   motor keeps lifting because RWT is still below its float.    */
 const demo = {
   sys: { uptime_s: 267340, rssi: -58, fw: "0.4.0-dev", reset_reason: "Power on" },
   rs485: { online: 4, total: 4, errors: 3, last_poll_ms: 412 },
   tanks: {
-    sump: { pct: 46, distance_mm: 1890, state: "ONLINE", sensor: "OK" },
-    rwt: { pct: 38, distance_mm: 1240, state: "ONLINE", sensor: "OK" },
-    dosing: { pct: 17, distance_mm: 452, state: "ONLINE", sensor: "OK" },
-    twt: { pct: 71, distance_mm: 640, state: "ONLINE", sensor: "OK" },
+    sump:   { pct: 46, distance_mm: 1890, state: "ONLINE", sensor: "OK" },
+    rwt:    { pct: 38, distance_mm: 1240, state: "ONLINE", sensor: "OK" },
+    dosing: { pct: 17, distance_mm: 452,  state: "ONLINE", sensor: "OK" },
+    twt:    { pct: 71, distance_mm: 640,  state: "ONLINE", sensor: "OK" },
   },
   pumps: {
-    borewell: { on: true, state: "ONLINE" },
+    borewell:   { on: true, state: "ONLINE" },
     sump_motor: { on: true, state: "ONLINE" },
-    rwp: { on: true, state: "ONLINE" },
-    hpp: { on: true, state: "ONLINE" },
+    rwp:        { on: true, state: "ONLINE" },
+    hpp:        { on: true, state: "ONLINE" },
   },
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false },
   env: {
-    ro_room: { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
+    ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
     battery_room: { t: 36.2, rh: 48, fan: false, state: "ONLINE", src: "SHT30 · Node 0x04", age_s: 1 },
   },
   nodes: [
@@ -563,19 +622,21 @@ const demo = {
 };
 let tick = 0;
 function stepDemo() {
-  const d = demo, T = d.tanks; tick++;
-  d.sys.uptime_s += 2; d.nodes.forEach(n => { if (n.state === "OFFLINE") n.age_s += 2; });
+  const d = demo, T = d.tanks;
+  tick++;
+  d.sys.uptime_s += 2;
+  d.nodes.forEach(n => { if (n.state === "OFFLINE") n.age_s += 2; });
 
-  if (d.pumps.borewell.on) T.sump.pct += 0.55;      // borewell delivering
+  if (d.pumps.borewell.on) T.sump.pct += 0.55;
   if (d.pumps.sump_motor.on) { T.sump.pct -= 1.5; T.rwt.pct += 0.8; }
   if (d.pumps.rwp.on) { T.rwt.pct -= 0.35; T.dosing.pct -= 0.06; }
   if (d.pumps.hpp.on) T.twt.pct += 0.30;
-  T.twt.pct -= 0.22;                                 // building draw
+  T.twt.pct -= 0.22;
 
-  if (tick === 22) { d.pumps.borewell.on = false; }  // the borewell runs dry
-  if (tick === 70) { d.pumps.borewell.on = true; d.tanks.dosing.pct = 84; tick = 0; }
+  if (tick === 22) d.pumps.borewell.on = false;        // the borewell runs dry
+  if (tick === 70) { d.pumps.borewell.on = true; T.dosing.pct = 84; tick = 0; }
 
-  d.pumps.sump_motor.on = T.rwt.pct < 72;            // driven by RWT float, as wired today
+  d.pumps.sump_motor.on = T.rwt.pct < 72;              // driven by the RWT float, as wired today
   d.pumps.rwp.on = T.rwt.pct > 8 && T.twt.pct < 94;
   d.pumps.hpp.on = d.pumps.rwp.on;
   d.env.battery_room.t = 36.6 + Math.sin(tick / 9) * 2.4;
@@ -593,22 +654,23 @@ function stepDemo() {
 }
 
 /* ── live ─────────────────────────────────────────────────── */
-let liveTimer = null, demoTimer = null;
+let demoTimer = null;
 async function poll() {
   try {
     const r = await fetch("/api/telemetry", { cache: "no-store" });
     if (!r.ok) throw new Error("telemetry " + r.status);
     const s = await r.json();
     if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
-    document.documentElement.dataset.demo = "false";
-    const m = $("#mode"); m.textContent = "Live"; m.classList.add("live");
+    const m = $("#mode");
+    m.textContent = "Live";
+    m.classList.add("live");
     render(s);
   } catch {
     if (!demoTimer) { demoTimer = setInterval(stepDemo, 2000); stepDemo(); }
   }
 }
 poll();
-liveTimer = setInterval(poll, 1000);
+setInterval(poll, 1000);
 </script>
 </body>
 </html>
