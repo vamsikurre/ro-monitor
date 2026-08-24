@@ -69,19 +69,21 @@ h1 span{color:var(--ink-3); font-weight:400}
 .alert .where{color:var(--ink-2); margin-left:auto; font-size:12px; flex:none}
 
 /* ── the plant, in elevation (signature) ────────────────── */
-.plantwrap{padding:22px 22px 6px; overflow-x:auto}
+.plantwrap{padding:22px 22px 6px; overflow:hidden}
 .plant{
-  position:relative; display:grid; min-width:1380px;
-  grid-template-columns:[lbl] 116px [c1] .82fr [c2] .5fr [c3] .8fr [c4] .5fr [c5] .42fr [c6] .8fr [c7] 1fr [c8] .85fr;
+  position:relative; display:grid; min-width:1240px; transform-origin:top center;
+  grid-template-columns:[lbl] 108px [c1] 1.55fr [c2] 1fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 1.75fr;
   grid-template-rows:auto minmax(366px,auto) auto 0 auto;
-  row-gap:62px;
+  row-gap:32px;
 }
 .plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
-.cell{display:flex; justify-content:center; align-items:center; position:relative; z-index:2}
+.cell{display:flex; justify-content:center; align-items:center; position:relative; z-index:2; min-width:0}
 .cell.top{align-items:flex-start}
 .cell.line .unit > [data-a]{
-  height:136px; display:flex; align-items:center; justify-content:center;
+  height:130px; display:flex; align-items:center; justify-content:center;
 }
+.glyph{position:relative; display:flex; align-items:center; justify-content:center}
+.chipgap{height:19px}
 .cell.bottom{align-items:flex-end}
 
 /* elevation band label — encodes real building height, not decoration */
@@ -92,6 +94,13 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* the RO room, with both roof tanks resting on it */
 .room{grid-row:2; border:1px solid var(--line-2); border-radius:var(--r); margin:-18px -12px; position:relative; z-index:1}
 .room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
+.room > .roomenv{
+  position:absolute; top:10px; right:12px; display:flex; align-items:baseline; gap:12px;
+  background:var(--ground-c); padding:4px 9px; border-radius:3px;
+}
+.roomenv > .legend{align-self:center}
+.roomenv .vals{font-family:var(--mono); font-weight:700; font-size:18px; color:var(--ink); letter-spacing:-.02em}
+.roomenv .vals u{text-decoration:none; font-size:11px; color:var(--ink-2); font-weight:600; margin-left:2px}
 
 /* battery room — beside the RO room on the terrace, not in the water path */
 .annex{grid-row:2; border:1px dashed var(--line-2); border-radius:var(--r); margin:-18px 0; position:relative; z-index:1; display:flex; align-items:center; justify-content:center}
@@ -174,6 +183,9 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .plant.narrow .cell{align-items:center}
 .plant.narrow .room{margin:-16px -8px}
 .plant.narrow .annex{margin:0}
+.plant.narrow .room > .roomenv{top:10px; right:11px; gap:9px}
+.plant.narrow .roomenv > .legend{display:none}
+.plant.narrow .roomenv .vals{font-size:14px}
 .unit.passive .name{color:var(--ink-2)}
 .unit .loc{
   font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
@@ -425,9 +437,13 @@ function equipUnit(draw, label, id, w, h) {
   const u = node("unit passive");
   const box = node("vessel");
   box.dataset.a = id;
-  box.appendChild(draw(w, h));
+  const g = node("glyph");
+  g.dataset.g = id;
+  g.appendChild(draw(w, h));
+  box.appendChild(g);
   u.appendChild(box);
   u.appendChild(txt("name", label));
+  u.appendChild(node("chipgap"));   // keeps caption height equal across the train
   return u;
 }
 
@@ -436,14 +452,17 @@ function tankUnit(t, cfg) {
   const u = node("unit");
   const v = node("vessel");
   v.dataset.a = cfg.id;
-  v.appendChild(vessel({ ...cfg, pct: t.pct, state: t.state }));
+  const g = node("glyph");
+  g.dataset.g = cfg.id;
+  g.appendChild(vessel({ ...cfg, pct: t.pct, state: t.state }));
+  v.appendChild(g);
   const dead = t.state === "OFFLINE" || t.state === "SENSOR_ERROR";
   if (dead) {
-    const p = node("pct");
-    p.appendChild(txt("nodata", "NO DATA"));
-    v.appendChild(p);
+    const pn = node("pct");
+    pn.appendChild(txt("nodata", "NO DATA"));
+    g.appendChild(pn);
   } else {
-    v.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
+    g.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
   }
   u.appendChild(v);
   u.appendChild(txt("name", cfg.label));
@@ -460,7 +479,10 @@ function machineUnit(m, label, id, r) {
   const dead = m.state && m.state !== "ONLINE";
   const w = node("unit" + (m.on && !dead ? " spin" : ""));
   w.dataset.a = id;
-  w.appendChild(machine({ r, running: m.on, dead }));
+  const g = node("glyph");
+  g.dataset.g = id;
+  g.appendChild(machine({ r, running: m.on, dead }));
+  w.appendChild(g);
   u.appendChild(w);
   u.appendChild(txt("name", label));
   let s = "Idle", kind = "off";
@@ -473,15 +495,23 @@ function machineUnit(m, label, id, r) {
 /* ── orthogonal pipe routing over measured anchors ──────────
    Pipes are drawn after layout from real element rects, so the elevation
    grid can reflow without the pipework drifting off its vessels.  */
-function anchorPt(id, side, hostRect) {
-  const e = document.querySelector(`[data-a="${id}"]`);
-  if (!e) return null;
-  const b = e.getBoundingClientRect();
-  const x = b.left - hostRect.left, y = b.top - hostRect.top, S = 11;
-  if (side === "t") return { x: x + b.width / 2, y: y - S };
-  if (side === "b") return { x: x + b.width / 2, y: y + b.height + S };
-  if (side === "l") return { x: x - S, y: y + b.height / 2 };
-  return { x: x + b.width + S, y: y + b.height / 2 };
+function layoutBox(e, host) {
+  let x = 0, y = 0, n = e;
+  while (n && n !== host) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent; }
+  return { x, y, w: e.offsetWidth, h: e.offsetHeight };
+}
+function anchorPt(id, side, host) {
+  const box = document.querySelector(`[data-a="${id}"]`);
+  if (!box) return null;
+  // horizontal runs use the anchor box (the shared centreline);
+  // vertical runs use the glyph itself, or they would float off it
+  const vert = side === "t" || side === "b";
+  const e = vert ? (document.querySelector(`[data-g="${id}"]`) || box) : box;
+  const b = layoutBox(e, host), S = 2;   // pipes meet the equipment
+  if (side === "t") return { x: b.x + b.w / 2, y: b.y - S };
+  if (side === "b") return { x: b.x + b.w / 2, y: b.y + b.h + S };
+  if (side === "l") return { x: b.x - S, y: b.y + b.h / 2 };
+  return { x: b.x + b.w + S, y: b.y + b.h / 2 };
 }
 function routeD(a, as, b, bs) {
   const va = as === "t" || as === "b", vb = bs === "t" || bs === "b";
@@ -503,14 +533,14 @@ let ROUTES = [], TEE_AXIS = "h";
 function drawPipes() {
   const host = $("#plant"), svg = $("#pipes");
   if (!host || !svg) return;
-  const h = host.getBoundingClientRect();
-  svg.setAttribute("width", h.width);
-  svg.setAttribute("height", h.height);
-  svg.setAttribute("viewBox", `0 0 ${h.width} ${h.height}`);
+  const W = host.offsetWidth, H = host.offsetHeight, h = host;
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.textContent = "";
   // injection point: midpoint of the RWP -> HPP run, whichever way it runs
   const horiz = TEE_AXIS === "h";
-  const rr = anchorPt("mf", horiz ? "r" : "b", h), hl = anchorPt("hpp", horiz ? "l" : "t", h);
+  const rr = anchorPt("filter", horiz ? "r" : "b", h), hl = anchorPt("mf", horiz ? "l" : "t", h);
   const tee = (rr && hl) ? { x: (rr.x + hl.x) / 2, y: (rr.y + hl.y) / 2 } : null;
 
   ROUTES.forEach(rt => {
@@ -556,17 +586,17 @@ function drawPlant(s) {
   const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
 
   const build = {
-    rwt:    () => tankUnit(T.rwt,    { w: 122, h: 152, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
-    twt:    () => tankUnit(T.twt,    { w: 136, h: 168, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
-    dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
-    sump:   () => tankUnit(T.sump,   { w: 126, h: 148, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
-    rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 29),
-    hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 29),
-    smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 30),
-    bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 30),
-    filter: () => equipUnit(equipFilter, "Filter", "filter", 54, 118),
-    mf:     () => equipUnit(equipMF, "MF", "mf", 40, 76),
-    memb:   () => equipUnit(equipMembrane, "RO Membrane", "memb", 132, 48),
+    rwt:    () => tankUnit(T.rwt,    { w: 104, h: 126, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
+    twt:    () => tankUnit(T.twt,    { w: 112, h: 136, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
+    dos:    () => tankUnit(T.dosing, { w: 72,  h: 84,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
+    sump:   () => tankUnit(T.sump,   { w: 108, h: 124, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
+    rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25),
+    hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 25),
+    smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 26),
+    bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 26),
+    filter: () => equipUnit(equipFilter, "Filter", "filter", 58, 126),
+    mf:     () => equipUnit(equipMF, "MF", "mf", 26, 50),
+    memb:   () => equipUnit(equipMembrane, "RO Membrane", "memb", 116, 42),
   };
   const cell = (k, col, row) => {
     const u = build[k]();
@@ -576,13 +606,26 @@ function drawPlant(s) {
     return add(c, col, row);
   };
 
-  const roomBox = () => { const r = node("room"); r.appendChild(txt("tag legend", "RO Room")); return r; };
+  const roomBox = () => {
+    const r = node("room");
+    r.appendChild(txt("tag legend", "RO Room"));
+    const e = s.env.ro_room, env = node("roomenv");
+    env.appendChild(txt("legend", "Room air"));
+    if (e.state === "ONLINE") {
+      env.appendChild(node("vals", `${e.t.toFixed(1)}<u>\u00b0C</u>`));
+      env.appendChild(node("vals", `${e.rh.toFixed(0)}<u>%</u>`));
+    } else {
+      env.appendChild(chip("Sensor offline", "fault"));
+    }
+    r.appendChild(env);
+    return r;
+  };
   const annexBox = () => {
     const a = node("annex");
     a.appendChild(txt("tag legend", "Battery Room"));
     const ab = node("unit");
     const fu = node("unit" + (B.fan ? " spin fast" : ""));
-    fu.appendChild(fan({ r: 27, running: B.fan, dead: B.state !== "ONLINE" }));
+    fu.appendChild(fan({ r: 24, running: B.fan, dead: B.state !== "ONLINE" }));
     ab.appendChild(fu);
     ab.appendChild(txt("name", "Exhaust Fan"));
     ab.appendChild(txt("sub", B.state === "ONLINE" ? `${B.t.toFixed(1)} \u00b0C \u00b7 ${B.rh.toFixed(0)} %` : "\u2014"));
@@ -603,8 +646,8 @@ function drawPlant(s) {
     add(roomBox(), "1 / -1", "5 / span 6");
     cell("rwp", "main", 5);
     cell("filter", "main", 6);
-    cell("mf", "main", 7);
-    cell("dos", "branch", 8);
+    cell("dos", "branch", 7);
+    cell("mf", "main", 8);
     cell("hpp", "main", 9);
     cell("memb", "main", 10);
     cell("twt", "main", 11);
@@ -619,6 +662,7 @@ function drawPlant(s) {
       { from: "rwp",    fs: "b", to: "filter", ts: "t", fluid: "raw",     flow: live("rwp") },
       { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     flow: live("rwp") },
       { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     flow: live("rwp") },
+
       { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", flow: live("rwp"), thin: true },
       { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     flow: live("hpp") },
       { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", flow: live("hpp") },
@@ -639,10 +683,10 @@ function drawPlant(s) {
       const [k, col] = spec.split(" ");
       cell(k, col, 2).classList.add("top", "line");
     });
-    cell("dos", "c5 / span 2", 2).classList.add("bottom");
+    cell("dos", "c4 / span 2", 2).classList.add("bottom");
     add(annexBox(), "c8", 2);
-    cell("sump", "c1", 3);
-    cell("smotor", "c2", 3);
+    cell("sump", "c1", 3).classList.add("top", "line");
+    cell("smotor", "c2", 3).classList.add("top", "line");
     cell("bore", "c1", 5);
 
     TEE_AXIS = "h";
@@ -659,7 +703,7 @@ function drawPlant(s) {
       { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", flow: live("hpp") },
     ];
   }
-  requestAnimationFrame(drawPipes);
+  requestAnimationFrame(relayout);
 }
 
 /* ── panels ───────────────────────────────────────────────── */
@@ -759,7 +803,28 @@ function render(s) {
   $("#fPoll").textContent = s.rs485.last_poll_ms + " ms";
 }
 let LAST = null;
-new ResizeObserver(drawPipes).observe(document.documentElement);
+
+/* The plant should be readable at a glance without scrolling; the cards
+   below are reference material and may sit past the fold. */
+function fitPlant() {
+  const wrap = document.querySelector(".plantwrap"), pl = $("#plant");
+  if (!wrap || !pl) return;
+  pl.style.transform = "none";
+  wrap.style.height = "auto";
+  const pw = pl.offsetWidth, ph = pl.offsetHeight;
+  if (!pw || !ph) return;
+  const padX = 44, padY = 28;
+  let sc = Math.min(1, (wrap.clientWidth - padX) / pw);
+  if (!window.matchMedia("(max-width:900px)").matches) {
+    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    sc = Math.min(sc, (window.innerHeight - top - padY) / ph);
+  }
+  sc = Math.max(sc, 0.45);
+  pl.style.transform = `scale(${sc})`;
+  wrap.style.height = Math.ceil(ph * sc + padY) + "px";
+}
+function relayout() { fitPlant(); drawPipes(); }
+new ResizeObserver(relayout).observe(document.documentElement);
 window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LAST) render(LAST); });
 
 /* ── demo simulator ───────────────────────────────────────────

@@ -332,9 +332,13 @@ RWT → RWP → FILTER → MF → [LPS] → HPP → [HPS] → RO membrane → [R
 
 The dashboard draws RWP, FILTER, MF, HPP, the RO membrane (a horizontal pressure vessel), and TWT. FILTER, MF and the membrane are **passive equipment**: dimmer outline, no status chip, because the hub does not instrument them — the page must not imply knowledge it does not have. LPS, HPS and the RSV reject valve are on the Aster mimic but are not drawn; they are Aster-internal signals the hub does not currently tap.
 
-Every item on the train shares a fixed-height anchor box, so the horizontal runs sit on one centreline instead of staircasing between differently-sized vessels.
+FILTER is drawn as the large pressure vessel it is, against MF as a small cartridge housing.
 
-**Dosing is a tee, not an inline vessel.** Process water runs MF → HPP directly. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum. The tee sits immediately upstream of HPP, which is where antiscalant is actually injected.
+Every item on the train sits in a fixed-height anchor box so horizontal runs share one centreline instead of staircasing between differently-sized vessels. Column widths are set to *item width + a constant*, which spaces the train evenly rather than leaving the wide membrane stranded. Pipes anchor to the box for horizontal runs (the centreline) but to the **glyph itself** for vertical runs — anchoring vertically to the box would leave risers floating well above and below the equipment.
+
+**RO room air** — temperature and humidity from the hub SHT30 — reads in the top-right corner of the room, inside the room outline where it belongs.
+
+**Dosing is a tee, not an inline vessel.** Process water runs RWP → FILTER → MF → HPP directly, and dosing injects **upstream of MF**. The dosing tank sits *below* that line and feeds it through a narrow injection line terminating in a junction marker on the main run, drawn thinner and with its own dash period. Water does not flow through the chemical drum. The tee sits immediately upstream of HPP, which is where antiscalant is actually injected.
 
 **Pumps and the fan do not share a glyph.** Pumps draw a centrifugal impeller — three thin curved blades in a round casing. The exhaust fan draws an axial fan — four broad blades, guard ring, square wall housing with mounting holes. Different equipment doing different jobs should not look identical.
 
@@ -353,6 +357,8 @@ Below the plant, a four-card instrument strip: RO Room climate, Battery Room cli
 **Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
 **Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate.
+
+**The plant fits the viewport without scrolling.** After layout the plant is scaled by `min(widthFit, heightFit, 1)` about its top centre, and its wrapper height is set to the scaled height. The instrument cards sit below the fold deliberately — they are reference material, while the plant is the at-a-glance view. Because the scale is a CSS transform, pipe routing measures **layout coordinates** (walking `offsetLeft`/`offsetTop`) rather than `getBoundingClientRect`, so the transform never drags pipework off its vessels.
 
 **Narrow screens linearise rather than scroll.** Below 900 px the plant re-lays out as a single column in process order — borewell at the top, TWT at the bottom, dosing on a side branch teeing into the vertical main run. Elevation moves off the band labels and onto each unit, which gains a caption naming where it physically sits (`Below ground`, `Ground floor · parking`, `Terrace · RO room`, `Roof of RO room`). Both layouts share one set of unit builders and one router; only the grid placement and the pipe entry/exit sides differ.
 
