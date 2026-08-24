@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<title>RO Plant · Live</title>
+<title>Varenyam · RO Plant</title>
 <style>
 /* ─────────────────────────────────────────────────────────────
    RO-MONITOR — PLANT ELEVATION DASHBOARD
@@ -147,7 +147,7 @@ h1 span{color:var(--ink-3); font-weight:400}
   pointer-events:none; opacity:.42; margin-bottom:-12px;
 }
 .scenery.cars{justify-content:space-evenly; padding:0 30px}
-.scenery.plants{justify-content:flex-start; gap:20px; padding-left:22px}
+.scenery.plants{justify-content:space-between; padding:0 16px}
 
 /* level marker, as on an architectural elevation */
 .tier b::before{
@@ -244,7 +244,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 <body>
 
 <header>
-  <h1>RO Plant <span>/ Elevation</span></h1>
+  <h1>Varenyam <span>/ RO Plant · Elevation</span></h1>
   <span class="mode" id="mode">Demo data</span>
   <div class="hstats">
     <div class="hstat"><span class="legend">Bus</span><span class="readout" id="hBus">–</span></div>
@@ -377,10 +377,10 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
     for (let x = 0; x < w * 2 + LEN; x += LEN)
       d += ` q ${LEN / 4} ${-AMP} ${LEN / 2} 0 q ${LEN / 4} ${AMP} ${LEN / 2} 0`;
     d += ` L ${w * 2 + LEN} ${h + AMP} L 0 ${h + AMP} Z`;
-    [[.34, 8.5, 0], [1, 5.5, -LEN / 2]].forEach(([op, sec, off], i) => {
+    [[.34, 7.5, 0], [1, 5.5, -LEN / 2]].forEach(([op, sec, off], i) => {
       const drift = el("g", { opacity: op });
       drift.appendChild(el("path", { d, fill: fillRef, transform: `translate(${off} 0)` }));
-      drift.style.animation = `wave${i} ${sec}s linear infinite`;
+      drift.style.animation = `wave${i} ${sec}s ease-in-out infinite`;
       level.appendChild(drift);
     });
     body.appendChild(level);
@@ -392,7 +392,8 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
   return svg;
 }
 const kf = document.createElement("style");
-kf.textContent = `@keyframes wave0{to{transform:translateX(-26px)}}@keyframes wave1{to{transform:translateX(26px)}}`;
+kf.textContent = `@keyframes wave0{0%,100%{transform:translateY(0)}50%{transform:translateY(1.9px)}}` +
+  `@keyframes wave1{0%,100%{transform:translateY(1.5px)}50%{transform:translateY(0)}}`;
 document.head.appendChild(kf);
 
 /* ── machine ──────────────────────────────────────────────
@@ -462,33 +463,68 @@ function svgLine(w, h, paths, circles) {
   return svg;
 }
 
-function carGlyph(w) {
-  const h = Math.round(w * 0.42);
-  const svg = svgLine(80, 34, [
-    "M 0 30 H 80",
-    "M 6 29 L 6 20 Q 6 17 10 16 L 22 16 L 30 8 Q 32 6 36 6 L 52 6 Q 56 6 58 8 L 64 16 L 72 18 Q 76 19 76 23 L 76 29",
-    "M 31 15 L 36 9 L 44 9 L 44 15 Z",
-    "M 47 15 L 47 9 L 51 9 L 55 15 Z",
-  ], [[22, 29, 5], [60, 29, 5]]);
+function sized(vbW, vbH, paths, circles, w) {
+  const svg = svgLine(vbW, vbH, paths, circles);
   svg.setAttribute("width", w);
-  svg.setAttribute("height", h);
+  svg.setAttribute("height", Math.round(w * vbH / vbW));
   return svg;
 }
 
-function plantGlyph(scale) {
-  const w = Math.round(44 * scale), h = Math.round(58 * scale);
-  const svg = svgLine(44, 58, [
-    "M 14 57 L 12 42 L 32 42 L 30 57 Z",   // pot
-    "M 10 42 H 34",                         // rim
-    "M 22 42 C 22 32, 22 22, 22 8",         // centre leaf
-    "M 22 44 C 17 34, 13 26, 14 15",
-    "M 22 44 C 27 34, 31 26, 30 15",
-    "M 22 46 C 14 40, 8 34, 6 26",
-    "M 22 46 C 30 40, 36 34, 38 26",
-  ]);
-  svg.setAttribute("width", w);
-  svg.setAttribute("height", h);
-  return svg;
+/* Pickup: short hood, raked screen, cab, then an open bed. */
+function truckGlyph(w) {
+  return sized(132, 56, [
+    "M 0 50 H 132",
+    "M 6 44 L 6 30 Q 6 26 11 25 L 40 25 L 50 11 Q 52 9 56 9 L 72 9 Q 76 9 76 13 L 76 25 L 80 25 L 80 21 L 126 21 L 126 44",
+    "M 6 44 L 21 44", "M 39 44 L 95 44", "M 113 44 L 126 44",
+    "M 53 24 L 59 12 L 72 12 L 72 24 Z",
+    "M 80 21 L 80 44",
+    "M 85 26 L 121 26",
+    "M 126 30 L 131 30",
+  ], [[30, 44, 8], [104, 44, 8], [30, 44, 3], [104, 44, 3]], w);
+}
+
+/* G-Wagon: upright screen, flat roof, square arches, spare on the door. */
+function gwagonGlyph(w) {
+  return sized(126, 56, [
+    "M 0 50 H 126",
+    "M 6 44 L 6 24 L 10 20 L 34 20 L 36 7 L 102 7 L 102 44",
+    "M 6 44 L 19 44", "M 39 44 L 77 44", "M 97 44 L 102 44",
+    "M 40 18 L 41 10 L 58 10 L 58 18 Z",
+    "M 62 10 L 78 10 L 78 18 L 62 18 Z",
+    "M 82 10 L 97 10 L 97 18 L 82 18 Z",
+    "M 17 44 L 17 33 L 41 33 L 41 44",
+    "M 75 44 L 75 33 L 99 33 L 99 44",
+    "M 6 27 L 10 27",
+    "M 102 41 L 113 41",
+  ], [[29, 44, 9], [87, 44, 9], [29, 44, 3.5], [87, 44, 3.5],
+      [111, 26, 10], [111, 26, 4]], w);
+}
+
+/* A tree, drawn as a lobed canopy over a forked trunk. */
+function treeGlyph(w) {
+  return sized(120, 152, [
+    "M 46 150 L 76 150",
+    "M 55 150 C 55 122, 51 104, 53 88",
+    "M 68 150 C 68 122, 72 104, 70 88",
+    "M 58 108 L 39 88",
+    "M 65 101 L 84 84",
+    "M 61 90 C 41 92, 27 79, 31 63 C 21 52, 28 33, 43 30 C 47 13, 70 9, 79 23 " +
+    "C 95 21, 105 36, 98 50 C 108 63, 99 81, 83 82 C 77 91, 67 93, 61 90 Z",
+    "M 44 50 C 53 43, 67 43, 76 50",
+  ], null, w);
+}
+
+/* A smaller potted plant, for scale against the tree. */
+function shrubGlyph(w) {
+  return sized(44, 60, [
+    "M 14 59 L 12 44 L 32 44 L 30 59 Z",
+    "M 10 44 H 34",
+    "M 22 44 C 22 34, 22 24, 22 10",
+    "M 22 46 C 17 36, 13 28, 14 17",
+    "M 22 46 C 27 36, 31 28, 30 17",
+    "M 22 48 C 14 42, 8 36, 6 28",
+    "M 22 48 C 30 42, 36 36, 38 28",
+  ], null, w);
 }
 
 /* ── passive process equipment ────────────────────────────
@@ -794,11 +830,13 @@ function buildPlant(s) {
 
     // the terrace has planters; the ground floor is parking
     const plants = node("scenery plants");
-    [1.45, 1.0, 1.25, .85].forEach(k => plants.appendChild(plantGlyph(k)));
+    plants.appendChild(treeGlyph(214));
+    plants.appendChild(shrubGlyph(92));
     add(plants, "c1 / span 2", 2);
 
     const cars = node("scenery cars");
-    [430, 386].forEach(w => cars.appendChild(carGlyph(w)));
+    cars.appendChild(truckGlyph(430));
+    cars.appendChild(gwagonGlyph(392));
     add(cars, "c3 / -1", 3);
     cell("bore", "c1", 5);
 

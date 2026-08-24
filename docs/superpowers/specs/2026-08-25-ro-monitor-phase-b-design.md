@@ -322,7 +322,7 @@ New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped
 | Ground floor / parking | Sump, Sump Motor |
 | Below grade | Borewell |
 
-**Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — planters on the terrace, cars on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
+**Drawn as an architectural section.** Each level carries a hatched structural slab at its floor, the RO room and battery room sit as built volumes on the terrace slab, and earth hatching marks everything below grade. Level labels use a diamond elevation marker. Occupied space reads as a building; the leftover space is furnished with dimmed wireframe scenery — a tree and a potted plant on the terrace, a pickup and a boxy SUV on the ground floor, which is parking. Scenery is non-interactive and drawn well below the plant in contrast so it never competes with live data. The riser from the sump motor to RWT crosses two full bands, so the head the sump motor works against is visible rather than implied — that is the pump this project exists to protect.
 
 **The treatment train follows the Aster mimic panel.** A photograph of the controller's own process display fixes the order:
 
@@ -358,7 +358,7 @@ Below the plant, a four-card instrument strip: RO Room climate, Battery Room cli
 
 **The plant is built once and mutated in place.** Rebuilding its DOM on every poll restarted every CSS transition and dash animation, so levels and flow visibly jumped each second. A structure signature (layout mode plus each vessel/machine online-vs-dead state) decides when a rebuild is genuinely needed; otherwise the level transforms, readouts, chips and rotor colours are updated on the existing nodes. Pipes are redrawn only when the flow signature changes or on resize. Measured: one build and four pipe redraws across nine seconds of ticks, with the 0.9s level transition intact.
 
-**Motion.** Two sine layers drift across each liquid surface at different speeds; levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
+**Motion.** Two sine layers bob **vertically** in opposite phase across each liquid surface. They originally drifted horizontally, but the dominant layer read as a left-to-right sweep — and on the hatched dosing tank it slid the whole pattern like a progress bar. Vertical motion keeps the surface alive with no directional read. levels transition over 900 ms; pipes carry a dash animation only while their pump is energised; impellers rotate only while running. All of it is suppressed under `prefers-reduced-motion`.
 
 **Constraints honoured.** No external requests — system font stacks, no CDN (`plan.txt` §19). Monospace tabular figures throughout, so digits do not jitter as values animate.
 
