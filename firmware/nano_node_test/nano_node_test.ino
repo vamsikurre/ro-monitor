@@ -2,10 +2,10 @@
  * RO Monitor - Arduino Nano Tank Node Test Sketch
  * 
  * Hardware Setup:
- * - JSN-SR04T: TRIG -> Pin D7, ECHO -> Pin D8, VCC -> 5V, GND -> GND
+ * - AJ-SR04M: TRIG -> Pin D7, ECHO -> Pin D8, VCC -> 5V, GND -> GND
  * - XY-485: RXD -> Pin D2, TXD -> Pin D3, VCC -> 5V, GND -> GND
  * - Status LED: Pin 13 (Onboard LED)
- * - Node Address: Default to Node 1 (0x01)
+ * - Node Address: read from the A0/A1 jumpers at boot (see ADDR_MAP below)
  */
 
 #include <SoftwareSerial.h>
@@ -13,42 +13,43 @@
 // Pin Definitions
 #define PIN_RS485_RX    2   // Connects to XY-485 RXD
 #define PIN_RS485_TX    3   // Connects to XY-485 TXD
-#define PIN_US_TRIG     7   // JSN-SR04T Trigger Pin
-#define PIN_US_ECHO     8   // JSN-SR04T Echo Pin
+#define PIN_US_TRIG     7   // AJ-SR04M Trigger Pin
+#define PIN_US_ECHO     8   // AJ-SR04M Echo Pin
 #define PIN_LED         13  // Onboard Activity LED
 #define PIN_ADDR_0      A0  // Hardware Address Bit 0
 #define PIN_ADDR_1      A1  // Hardware Address Bit 1
 
-// Dynamic Node Address (Determined at boot via A0/A1 or defaults to 0x01)
-uint8_t MY_NODE_ID = 0x01;
+// Dynamic Node Address (Determined at boot via A0/A1; 0x00 = unassigned, stay off the bus)
+uint8_t MY_NODE_ID = 0x00;
 
 // SoftwareSerial for RS485 (9600 baud)
 SoftwareSerial rs485(PIN_RS485_RX, PIN_RS485_TX);
 
 // Read Node Address from A0 & A1 (Internal Pullup: Open = 1, Jumper to GND = 0)
-// Jumper Truth Table:
-// - A1=0, A0=1 (0b01) -> 0x01 (Dosing Tank)
-// - A1=1, A0=0 (0b10) -> 0x02 (Raw Water Tank)
-// - A1=1, A0=1 (0b11) -> 0x03 (Treated Water Tank / Default Unconnected)
-// - A1=0, A0=0 (0b00) -> 0x04 (Aux / 4th Node)
+// ADDR_MAP is written to fit the boards as they are already jumpered.
+// WIRING.md section 9.1 is the authority; if a board is ever re-jumpered,
+// that table and this one change in the same commit. docs/check_addrmap.py enforces it.
+static const uint8_t ADDR_MAP[4] = {
+  0x00,   // 0b00  both GND    -> unassigned, do not join the bus
+  0x03,   // 0b01  A1 to GND   -> TWT
+  0x02,   // 0b10  A0 to GND   -> RWT (end of bus)
+  0x04,   // 0b11  both open   -> Battery Room (climate + fan relay, its own sketch)
+};
+
 uint8_t readNodeAddress() {
   pinMode(PIN_ADDR_0, INPUT_PULLUP);
   pinMode(PIN_ADDR_1, INPUT_PULLUP);
   delay(10); // Settle pullups
 
-  uint8_t bit0 = (digitalRead(PIN_ADDR_0) == HIGH) ? 1 : 0;
-  uint8_t bit1 = (digitalRead(PIN_ADDR_1) == HIGH) ? 1 : 0;
-  uint8_t raw = (bit1 << 1) | bit0;
-
-  if (raw == 0) return 0x04; // Both jumpered to GND -> Node 4
-  return raw;               // 0x01, 0x02, or 0x03
+  uint8_t raw = ((digitalRead(PIN_ADDR_1) == HIGH) << 1) | (digitalRead(PIN_ADDR_0) == HIGH);
+  return ADDR_MAP[raw];
 }
 
 // Global Variables
 unsigned long lastMeasureTime = 0;
 uint16_t currentDistanceMM = 0;
 
-// Function to measure distance using JSN-SR04T
+// Function to measure distance using AJ-SR04M
 uint16_t measureDistanceMM() {
   digitalWrite(PIN_US_TRIG, LOW);
   delayMicroseconds(4);
@@ -93,6 +94,13 @@ void setup() {
   Serial.println(F("========================================"));
   Serial.print(F("Auto-Detected Node ID: 0x0"));
   Serial.println(MY_NODE_ID, HEX);
+  // 0x00 means both jumpers are grounded: unassigned. Never guess an address --
+  // two boards answering one poll is the failure this whole table exists to avoid.
+  if (MY_NODE_ID == 0x00) {
+    Serial.println(F("!! Both address jumpers grounded -> UNASSIGNED. Holding off the bus."));
+    for (;;) { digitalWrite(PIN_LED, !digitalRead(PIN_LED)); delay(200); }
+  }
+
   Serial.println(F("Listening for ESP32 Hub polls on RS485..."));
 }
 
@@ -102,7 +110,7 @@ void loop() {
     lastMeasureTime = millis();
     currentDistanceMM = measureDistanceMM();
 
-    Serial.print(F("[JSN-SR04T] Distance: "));
+    Serial.print(F("[AJ-SR04M] Distance: "));
     if (currentDistanceMM > 0) {
       Serial.print(currentDistanceMM);
       Serial.print(F(" mm  ("));

@@ -38,6 +38,23 @@
 
 #define LED_STATUS       2
 
+// Dosing tank AJ-SR04M, wired straight to the hub (WIRING.md 13). ECHO is 5V logic
+// and reaches GPIO 4 through a 1k/2k divider - the ESP32 pads are not 5V tolerant.
+#define US_TRIG_DOS      5
+#define US_ECHO_DOS      4
+// Tuning knob, not a magic number: some AJ-SR04M batches are unreliable at the
+// nominal 10 us and want 20 us (WIRING.md 9.0). Widen this before suspecting the head.
+#define US_TRIG_WIDTH_US 10
+
+// Dosing tank calibration - MEASURE THESE, the values below are placeholders.
+// Both are transducer face to liquid surface, in mm:
+//   DOS_FULL_MM  = distance when the tank is at its working full mark
+//   DOS_EMPTY_MM = distance when the tank is empty (face to tank floor)
+// DOS_FULL_MM must stay above the ~200 mm blind zone or a full tank reads as nothing.
+#define DOS_FULL_MM      250
+#define DOS_EMPTY_MM     900
+#define DOS_LOW_PCT      20    // dashboard raises "Dosing Chemical Low" here
+
 // SHT30 Read Function
 bool readSHT30(float &temperature, float &humidity) {
   Wire.beginTransmission(SHT30_I2C_ADDR);
@@ -63,6 +80,69 @@ bool readSHT30(float &temperature, float &humidity) {
     humidity = 100.0 * ((float)rawHum / 65535.0);
 
     return true;
+  }
+  return false;
+}
+
+// Dosing tank distance, read locally - no RS485 node involved (WIRING.md 13).
+// Returns 0 on timeout / no echo. Blocks up to 35 ms, so call it AFTER the last
+// slave response in the cycle, never between a poll and its reply.
+uint16_t measureDosingMM() {
+  digitalWrite(US_TRIG_DOS, LOW);
+  delayMicroseconds(4);
+  digitalWrite(US_TRIG_DOS, HIGH);
+  delayMicroseconds(US_TRIG_WIDTH_US);
+  digitalWrite(US_TRIG_DOS, LOW);
+
+  unsigned long duration = pulseIn(US_ECHO_DOS, HIGH, 35000UL); // ~6 m of range
+  if (duration == 0) return 0;
+
+  return (uint16_t)((duration * 10UL) / 58UL); // mm, speed of sound ~343 m/s
+}
+
+// Distance -> level %. Far reading = empty tank, near reading = full one.
+// Returns 255 for "invalid", the same sentinel RS485_PROTOCOL.md 4.2 uses.
+uint8_t dosingLevelPercent(uint16_t distanceMM) {
+  if (distanceMM == 0) return 255;                 // no echo
+  if (distanceMM < DOS_FULL_MM) return 255;        // inside the blind zone, or miscalibrated
+  if (distanceMM >= DOS_EMPTY_MM) return 0;
+
+  long span = (long)DOS_EMPTY_MM - (long)DOS_FULL_MM;
+  return (uint8_t)(((long)DOS_EMPTY_MM - (long)distanceMM) * 100L / span);
+}
+
+// Poll Battery Room climate node 0x04 over RS485 (CMD_READ_CLIMATE, RS485_PROTOCOL.md 4.3)
+// Reply: [0xAA][0x55][ID][0x86][T_HI][T_LO][RH_HI][RH_LO][FAN][FAULT][CS] = 11 bytes
+bool pollClimateNode(int16_t &tempDeciC, uint16_t &humDeciPct, uint8_t &fanOn, uint8_t &fault) {
+  while (Serial2.available()) Serial2.read();
+
+  Serial2.write(0xAA);
+  Serial2.write(0x55);
+  Serial2.write(0x04);
+  Serial2.write(0x06);
+  Serial2.flush();
+
+  unsigned long start = millis();
+  while (millis() - start < 150) {
+    if (Serial2.available() >= 11) {
+      if (Serial2.read() == 0xAA && Serial2.read() == 0x55) {
+        uint8_t node = Serial2.read();
+        uint8_t cmd  = Serial2.read();
+        uint8_t p[6];
+        for (uint8_t i = 0; i < 6; i++) p[i] = Serial2.read();
+        uint8_t cs = Serial2.read();
+
+        uint8_t calculatedCS = node ^ cmd;
+        for (uint8_t i = 0; i < 6; i++) calculatedCS ^= p[i];
+        if (node == 0x04 && cs == calculatedCS) {
+          tempDeciC  = (int16_t)(((uint16_t)p[0] << 8) | p[1]);
+          humDeciPct = ((uint16_t)p[2] << 8) | p[3];
+          fanOn      = p[4];
+          fault      = p[5];
+          return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -133,6 +213,10 @@ void setup() {
   pinMode(OPTO_HPP_AC,   INPUT);
   pinMode(OPTO_RWP_AC,   INPUT);
 
+  pinMode(US_TRIG_DOS, OUTPUT);
+  pinMode(US_ECHO_DOS, INPUT);
+  digitalWrite(US_TRIG_DOS, LOW);
+
   pinMode(LED_STATUS, OUTPUT);
   digitalWrite(LED_STATUS, LOW);
 
@@ -153,18 +237,49 @@ void loop() {
     Serial.println(F("[SHT30 Sensor]  FAILED / NOT DETECTED"));
   }
 
-  // 2. RS485 Nano Nodes (Poll 0x01 through 0x04)
-  const char* nodeLabels[] = { "Dosing Tank", "Raw Water (RWT)", "Treated Water (TWT)", "Node 4 / Aux" };
-  for (uint8_t nodeId = 1; nodeId <= 4; nodeId++) {
+  // 2. RS485 tank nodes. 0x01 is retired -- the dosing sensor is wired straight to
+  //    the hub now. 0x04 (Battery Room) is climate, not ultrasonic: nothing to poll
+  //    here until its command is defined, and polling it for distance just times out.
+  const struct { uint8_t id; const char* label; } tankNodes[] = {
+    { 0x02, "Raw Water (RWT)" },
+    { 0x03, "Treated Water (TWT)" },
+  };
+  for (uint8_t i = 0; i < sizeof(tankNodes) / sizeof(tankNodes[0]); i++) {
     uint16_t distanceMM = 0;
-    if (pollNanoNode(nodeId, distanceMM)) {
-      Serial.printf("[RS485 Node 0x%02X - %-19s] OK! Tank Dist: %4d mm (%.1f cm)\n", 
-                    nodeId, nodeLabels[nodeId - 1], distanceMM, distanceMM / 10.0);
+    if (pollNanoNode(tankNodes[i].id, distanceMM)) {
+      Serial.printf("[RS485 Node 0x%02X - %-19s] OK! Tank Dist: %4d mm (%.1f cm)\n",
+                    tankNodes[i].id, tankNodes[i].label, distanceMM, distanceMM / 10.0);
     } else {
-      Serial.printf("[RS485 Node 0x%02X - %-19s] TIMEOUT / NO RESPONSE\n", 
-                    nodeId, nodeLabels[nodeId - 1]);
+      Serial.printf("[RS485 Node 0x%02X - %-19s] TIMEOUT / NO RESPONSE\n",
+                    tankNodes[i].id, tankNodes[i].label);
     }
     delay(40); // Short gap between successive polls on the bus
+  }
+
+  // 2b. Battery Room climate node (0x04). The fan is that node's own decision --
+  //     the hub only reports what it did.
+  int16_t bTemp = 0; uint16_t bHum = 0; uint8_t bFan = 0, bFault = 0;
+  if (pollClimateNode(bTemp, bHum, bFan, bFault)) {
+    Serial.printf("[RS485 Node 0x04 - %-19s] %.1f C | %.1f %%RH | Fan: %s%s\n",
+                  "Battery Room", bTemp / 10.0, bHum / 10.0,
+                  bFan ? "ON" : "OFF", bFault ? "  (SHT30 FAULT)" : "");
+  } else {
+    Serial.printf("[RS485 Node 0x04 - %-19s] TIMEOUT / NO RESPONSE\n", "Battery Room");
+  }
+  delay(40);
+
+  // 2c. Dosing tank, read here because the bus is now idle for the rest of the cycle
+  uint16_t dosingMM = measureDosingMM();
+  uint8_t dosingPct = dosingLevelPercent(dosingMM);
+  if (dosingMM == 0) {
+    Serial.println(F("[Dosing Direct  - Chemical Tank    ] NO ECHO (wiring, power, or blind zone)"));
+  } else if (dosingPct == 255) {
+    Serial.printf("[Dosing Direct  - Chemical Tank    ] %4d mm - OUT OF RANGE, calibrate DOS_FULL_MM/DOS_EMPTY_MM\n",
+                  dosingMM);
+  } else {
+    Serial.printf("[Dosing Direct  - Chemical Tank    ] %3d %%  (%4d mm / %.1f cm)%s\n",
+                  dosingPct, dosingMM, dosingMM / 10.0,
+                  dosingPct < DOS_LOW_PCT ? "  << LOW, REPLENISH" : "");
   }
 
   // 3. Optocoupler Status Readings (Filtered for AC inputs)
