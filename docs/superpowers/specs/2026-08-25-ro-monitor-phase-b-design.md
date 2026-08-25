@@ -145,6 +145,9 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 32 | `IN_TWT_FLOT` | PC817 ch1 | `INPUT_PULLUP` |
 | 26 | `IN_RL1_STAT` | PC817 ch2 | `INPUT_PULLUP` |
 | 25 | `IN_RL2_STAT` | PC817 ch3 | `INPUT_PULLUP` |
+| 33 | `IN_ALARM` | PC817 ch4 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact, `WIRING.md` §6 |
+| 5 | `US_TRIG_DOS` | AJ-SR04M (dosing) | Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
+| 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
 | 34 | `IN_HPP_AC` | AC opto 1 | **External 10 kΩ pull-up to 3V3 required** |
 | 35 | `IN_RWP_AC` | AC opto 2 | **External 10 kΩ pull-up to 3V3 required** |
 | 27 | `OUT_RLY_TWT` | Relay `IN1` | Active LOW. Phase C use |
@@ -156,7 +159,11 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 
 GPIO 34 and 35 are input-only pins with **no internal pull-up**. The current sketch's `pinMode(pin, INPUT)` against an open-collector opto output leaves them floating. This is a defect on already-built hardware and must be fixed physically.
 
-### 3.6 Arduino Nano pin map
+### 3.6 Node pin map (Nano 0x01-0x03, Pro Mini 0x04)
+
+> **Amended 2026-08-25 (a):** node `0x04` is built on an Arduino Pro Mini (5V / 16 MHz), not a Nano. Same ATmega328P, same pin functions, same binary. The board differences are mechanical only (5V to `VCC` not `RAW`, `A4`/`A5` on inner pads, FTDI programming) and are specified in `WIRING.md` 10.1.
+>
+> **Amended 2026-08-25 (b):** node `0x01` (dosing) is **deleted**. The tank is ~1 m from the hub, so the sensor is wired direct to the ESP32 (`WIRING.md` §13). The fleet is three slaves: `0x02` and `0x03` ultrasonic Nanos, `0x04` climate Pro Mini. If either already-built node was jumpered as `0x01`, re-jumper it to `0x02` or `0x03`. The dashboard contract is unchanged — `tanks.dosing` keeps its shape and is sourced locally instead of over the bus; `nodes[]` drops to three entries.
 
 | Pin | Signal | Nodes |
 | :--- | :--- | :--- |
@@ -171,11 +178,22 @@ GPIO 34 and 35 are input-only pins with **no internal pull-up**. The current ske
 | A1 | `ADDR_SEL1` | All |
 | D13 | `LED_STATUS` | All |
 
-### 3.7 Node addressing — OPEN ITEM
+### 3.7 Node addressing — RESOLVED 2026-08-25
 
-`nano_node_test.ino` and `docs/WIRING.md` §8 publish **contradictory jumper truth tables**. Two nodes are already built and jumpered.
+`nano_node_test.ino` and `docs/WIRING.md` published **contradictory jumper truth tables** (`0x01`/`0x02` swapped, both-grounded mislabelled `0x03`, `0x04` missing).
 
-**Resolution method:** both built nodes print their detected ID at boot over USB serial. Read both. Whatever they report is the truth; the table in `common/protocol.h` is written from that observation and both docs are corrected to match.
+**Resolved by writing the table from the observed hardware — no rewiring.** The three built boards presented three *distinct* jumper codes, so there was never an ambiguity to resolve with a soldering iron, only a lookup table to author. `common/protocol.h` carries it and `WIRING.md` §9.1 publishes it:
+
+```c
+static const uint8_t ADDR_MAP[4] = {  // raw = (A1 << 1) | A0, open = 1, GND = 0
+  0x00,   // 0b00  both GND   -> unassigned, must not transmit
+  0x03,   // 0b01  A1 to GND  -> TWT        (Nano #2, as built)
+  0x02,   // 0b10  A0 to GND  -> RWT        (Nano #1, as built)
+  0x04,   // 0b11  both open  -> Battery Rm (Pro Mini, as built)
+};
+```
+
+Consequences recorded in `WIRING.md` §9.2: the arithmetic `return raw` decoder in `nano_node_test.ino:39-44` is superseded; the unjumpered default becomes `0x04`, so **a new board must be jumpered before it joins the bus**; both-grounded is now an explicit "do not transmit" code, usable to bench a spare while it sits on the bus. Confirm each node by boot print before bussing.
 
 Address space stays at 2 jumper bits / 4 addresses (`0x01`–`0x04`). A third bit for future expansion is **deliberately skipped** — see §8.
 
@@ -183,9 +201,11 @@ Address space stays at 2 jumper bits / 4 addresses (`0x01`–`0x04`). A third bi
 
 ## 4. Section 2 — Node firmware
 
-One binary for all four nodes. The address jumper selects both the node ID and the sensor personality (0x01–0x03 ultrasonic, 0x04 climate + fan relay).
+One binary for all three nodes. The address jumper selects both the node ID and the sensor personality (`0x02`/`0x03` ultrasonic, `0x04` climate + fan relay). `0x01` remains a legal jumper setting but is unassigned — see §3.6 amendment (b).
 
 ### 4.1 The deaf-window defect
+
+> **Amended 2026-08-25:** the sensors are **AJ-SR04M**, not JSN-SR04T. Same Trig/Echo interface and the same 35 ms timeout, but the `R19` mode pad must be empty or the board runs in UART mode and `ECHO` never pulses, and the `TRIG` width (10 µs nominal) is a per-batch tuning knob. See `WIRING.md` §9.0.
 
 `pulseIn(PIN_US_ECHO, HIGH, 35000UL)` blocks for up to 35 ms. `SoftwareSerial` cannot buffer during that block. A 4-byte poll at 9600 baud occupies ~4 ms. With measurement on a free-running 250 ms timer, roughly **15 % of polls are silently lost**.
 
@@ -400,7 +420,7 @@ Specified here for continuity; detailed design belongs to its own document.
 
 **This sensor buys better data, not better safety.** Dry-run protection is the float in series with the starter coil (§1.1); it functions regardless of what measures the sump, or whether anything does. Evaluate the sensor purely as "is accurate sump telemetry worth the money", not as pump protection.
 
-**Step 1 — test what is already owned.** `docs/HARDWARE.md` §2 lists four JSN-SR04T units, one earmarked for the sump. **Lower it down the actual manhole and take readings at two or three different water levels before ordering anything.** One hour, no cost.
+**Step 1 — test what is already owned.** `docs/HARDWARE.md` §2 lists four AJ-SR04M units, one earmarked for the sump. **Lower it down the actual manhole and take readings at two or three different water levels before ordering anything.** One hour, no cost.
 
 The concern is real but unproven: 3.5 m against a 4.5 m specification, in a narrow shaft that produces wall echoes, in an atmosphere that fogs transducer faces. This remains the single most likely component in the project to simply not work — but "likely to fail" is not "known to fail".
 
@@ -441,10 +461,11 @@ Three procurement constraints to verify **before** ordering:
 
 | Document | Correction |
 | :--- | :--- |
-| `docs/HARDWARE.md` §3.1 | GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document. |
+| `docs/HARDWARE.md` §3.1 | ~~GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document.~~ **Applied 2026-08-25.** GPIO 33 now carries `IN_ALARM` on PC817 ch4 (§3.5), and the BOM records the 4-channel board. |
+| `docs/RO_HARDWARE_ANALYSIS.md` §4, §5.1 | ~~`LPS` recorded as `C`/`NC`.~~ **Corrected 2026-08-25** to `C`/`NO` from the board silkscreen and manual p.12. `HPS` reads open as normal and is unwired on this plant. `ALARM` is the configurable `AUX OP`, not a dedicated alarm relay. Polarity now specified once, in `WIRING.md` §6. |
 | `docs/RS485_PROTOCOL.md` §4.2 | `level_percent` removed from node payload; geometry moves to the hub (§4.3). Payload shrinks 10 to 8 bytes. |
-| `docs/WIRING.md` §8 | Address jumper truth table contradicts `nano_node_test.ino`. Both to be corrected from observed hardware (§3.7). |
-| `docs/POWER_BUDGET.md` §5 | Computes a 50 m worst-case run. Actual longest electrical path is Cat5e2 out + return (10 m) + Cat5e3 (10 m) + Cat5e4, roughly 25–30 m to node 0x04. Drop is smaller than stated; conclusion is unchanged. |
+| `docs/WIRING.md` §9 | ~~Address jumper truth table contradicts `nano_node_test.ino`. Both to be corrected from observed hardware (§3.7).~~ **Applied 2026-08-25.** Firmware's decoder is authoritative; the table is now published once, in `WIRING.md` §9.1, with the as-built audit in §9.2. (Section renumbered §8 → §9 when the contact-polarity section was inserted.) |
+| `docs/POWER_BUDGET.md` §5 | Computes a 50 m worst-case run. ~~Actual longest electrical path is Cat5e2 out + return (10 m) + Cat5e3 (10 m) + Cat5e4, roughly 25–30 m to node 0x04.~~ **Superseded 2026-08-25:** the chain was re-ordered to `0x00 -> 0x01 -> 0x04 -> 0x03 -> 0x02` with no return loopback, so the longest path now ends at node `0x02` and the per-hop lengths need re-measuring (`WIRING.md` §12). Drop is smaller than stated either way; conclusion is unchanged. |
 | `firmware/esp32_hub_test/esp32_hub_test.ino` | Comment claims GPIO 34/35 have a hardware pull-up. They do not. |
 | `README.md` / `architecture.png` | Present relay float-override as current scope. It is Phase C provision only; Phase B is monitoring. |
 
@@ -458,7 +479,7 @@ None of these block the start of implementation.
 2. **Tank dimensions.** `empty_distance_mm` / `full_distance_mm` per tank, measured on site. Configuration, not code — the system runs with placeholder values.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
-5. **Sump sensor choice (§7.1).** Settled by lowering the JSN-SR04T already owned down the actual manhole. Decide before ordering the ₹6,071 transducer, not after. Phase C only.
+5. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole. Decide before ordering the ₹6,071 transducer, not after. Phase C only.
 
 ---
 

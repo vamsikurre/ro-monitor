@@ -7,63 +7,53 @@
 -------------------------------------------------------------------------------
 
 Physical Layout:
-- Central Skid & Dosing Tank in RO Room.
+- Central Skid & Dosing Tank in RO Room (dosing sensor lands straight on the hub, ~1 m).
 - Raw Water Tank (RWT) and Treated Water Tank (TWT) on Roof Top in opposite directions.
-- Battery Room with Exhaust Fan & Climate monitoring on extended Cat5e run.
+- Battery Room with Exhaust Fan & Climate monitoring, spliced mid-chain between the RO Room and the Roof.
 
-Electrical Topology: 100% Strictly Linear Daisy-Chain (Outbound -> Loopback -> Return)
+Electrical Topology: 100% Strictly Linear Daisy-Chain, single outbound walk
+Chain order: 0x00 HUB -> 0x04 BATTERY ROOM -> 0x03 TWT -> 0x02 RWT
+Terminators: 0x00 (hub) and 0x02 (RWT, end of bus). No loopback, no junction box.
+Dosing tank (~1 m from hub): AJ-SR04M wired DIRECT to the ESP32, not an RS485 node.
+  Address 0x01 is retired. See docs/WIRING.md section 13.
 
  [120Ω TERM RESISTOR]
 ┌─────────────────────────────────────────────────────────┐
 │                      ESP32-S HUB                        │  (Bus Master, 0x00 - RO Room)
 │  - XY-485 Auto-Flow Control Transceiver                 │
 │  - Astero NXT 11 AC Isolators (HPP & RWP AC Monitoring) │
-│  - Astero NXT 11 DC Isolators (TWT, RL1, RL2 Contacts)  │
+│  - Astero NXT 11 DC Isolators (TWT, RL1, RL2, ALARM)    │
+│  - AJ-SR04M DIRECT: dosing tank level (GPIO 5 / GPIO 4)│
 │  - 4-Channel Relay Board (TWT Floty, RWT Floty, DOS LVL)│
 │  - Local Enclosure Climate: GY-SHT30-D (I2C)            │
 │  - Local Web Dashboard Server & ESP RainMaker Cloud     │
 └────────────────────────────┬────────────────────────────┘
                              │
-                             │ Cat5e 1 (1.5 meters) - RO Room Link
+                             │ Cat5e 1 (length TBM): Outbound Pair (Blue / White-Blue)
                              ▼
 ┌─────────────────────────────────────────────────────────┐
-│               NODE 0x01: DOSING TANK NODE               │  (Slave Node 0x01 - RO Room)
-│  - Arduino Nano + XY-485 Module                         │
-│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
-│  - Onboard 12V -> 5V DC Mini Buck Converter             │
+│             NODE 0x04: BATTERY ROOM NODE                │  (Slave Node 0x04 - Battery Room)
+│  - Arduino Pro Mini (5V/16MHz) + XY-485 Module           │
+│  - 5V fed to VCC pin; RAW pin left unconnected           │
+│  - GY-SHT30-D Digital Temp & Humidity Sensor (I2C)      │
+│  - 1-Channel Relay Module (Exhaust Fan Control)         │
+│  - MID-CHAIN: no termination resistor                   │
 └────────────────────────────┬────────────────────────────┘
                              │
-                             │ Cat5e 2 (5 meters): Outbound Pair (Blue / White-Blue)
-                             ▼
-┌─────────────────────────────────────────────────────────┐
-│              NODE 0x02: RAW WATER TANK (RWT)            │  (Slave Node 0x02 - Roof Top)
-│  - Arduino Nano + XY-485 Module                         │
-│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
-│  - Physical Return Loopback: Outbound Blue -> Return Brn│
-└────────────────────────────┬────────────────────────────┘
-                             │
-                             │ Cat5e 2: Return Pair (Brown / White-Brown)
-                             ▼
-┌─────────────────────────────────────────────────────────┐
-│                  CENTRAL JUNCTION BOX                   │  (RO Room Junction)
-│  - Pass-Through Splice: Cat5e 2 Return -> Cat5e 3 Out   │
-└────────────────────────────┬────────────────────────────┘
-                             │
-                             │ Cat5e 3 (10 meters): Outbound Pair (Blue / White-Blue)
+                             │ Cat5e 2 (length TBM): Outbound Pair (Blue / White-Blue)
                              ▼
 ┌─────────────────────────────────────────────────────────┐
 │            NODE 0x03: TREATED WATER TANK (TWT)          │  (Slave Node 0x03 - Roof Top)
 │  - Arduino Nano + XY-485 Module                         │
-│  - JSN-SR04T Waterproof Ultrasonic Sensor               │
+│  - AJ-SR04M Waterproof Ultrasonic Sensor               │
 └────────────────────────────┬────────────────────────────┘
                              │
-                             │ Cat5e 4: Extension Outbound Pair
+                             │ Cat5e 3 (length TBM): Roof-to-roof Outbound Pair
                              ▼
 ┌─────────────────────────────────────────────────────────┐
-│             NODE 0x04: BATTERY ROOM NODE                │  (Slave Node 0x04 - Battery Room)
+│              NODE 0x02: RAW WATER TANK (RWT)            │  (Slave Node 0x02 - Roof Top)
 │  - Arduino Nano + XY-485 Module                         │
-│  - GY-SHT30-D Digital Temp & Humidity Sensor (I2C)      │
-│  - 1-Channel Relay Module (Exhaust Fan Control)         │
+│  - AJ-SR04M Waterproof Ultrasonic Sensor               │
 │  - [120Ω END-OF-BUS TERMINATION RESISTOR]               │
 └─────────────────────────────────────────────────────────┘
 
@@ -79,7 +69,7 @@ Communication: Direct Wi-Fi LAN / mDNS (ro-hub.local) / HTTP REST JSON Push / UD
 │  - Location: Ground Floor Parking (Sump Manhole)                            │
 │  - Power: Hi-Link HLK-20M5 (240V AC -> 5V DC 4A)                            │
 │  - Microcontroller: ESP32-WROOM-32 / ESP32-C3                               │
-│  - Sensor: JSN-SR04T Waterproof Ultrasonic Sensor (3.5m Deep Sump)          │
+│  - Sensor: AJ-SR04M Waterproof Ultrasonic Sensor (3.5m Deep Sump)          │
 │  - Role: Telemetry push of Sump Distance (mm), Level (%), and Status        │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │

@@ -93,8 +93,12 @@ ESP RainMaker automatically dispatches native push notifications to all paired m
 | **TWT Level > 95%** | `INFO` | ✅ **Treated Water Tank Full!** RO Plant entering standby flush cycle. | Astero TWT Float Relay opened. |
 | **Dosing Level < 20%** | `WARNING` | ⚠️ **Dosing Chemical Low!** Replenish anti-scalant / dosing reagent tank. | Astero Dosing Relay opened; Alarm flag set. |
 | **Battery Room Temp > 38°C**| `ALERT` | 🌡️ **High Battery Room Temperature!** Room temp is {X}°C. Exhaust fan turned ON. | Node `0x04` Exhaust Fan Relay automatically energized. |
-| **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check LPS/HPS pressure switches. | System status set to FAULT; Alarm flagged in UI. |
+| **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check feed pressure (LPS), dosing level and pump overload. | System status set to FAULT; Alarm flagged in UI. |
 | **Wi-Fi Node Disconnect** | `WARNING` | 📡 **Ground Floor Node Offline!** No telemetry received for > 10 seconds. | Plant interlocks revert to safe default state. |
+
+**Two constraints on the `alarm` field, both from `WIRING.md` Section 6:**
+1. The Aster `ALARM` terminal is the configurable `AUX OP`. Until it is confirmed set to `ALARM` (password 678), the signal may actually mean "RWP running" and must not be surfaced as a fault.
+2. `HPS` is unwired on this plant, so over-pressure can never be the cause of a trip and no `hps` state should be published. Low pressure additionally lags the display by up to the `LPS TRIP` time (factory 3 min), so alarm onset and fault onset are separate timestamps.
 
 ---
 

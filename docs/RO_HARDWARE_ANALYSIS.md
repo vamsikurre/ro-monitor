@@ -1,8 +1,10 @@
 # RO Plant Hardware Analysis
 
-**Document Version:** 1.0  
-**Date:** 2026-08-19  
-**Source Evidence:** 19 High-Resolution Photographs in `/images`
+**Document Version:** 1.1  
+**Date:** 2026-08-25  
+**Source Evidence:** 19 High-Resolution Photographs in `/images`, plus the Aster NXT manual `docs/ASTERO-NXTG-1_opt.pdf`
+
+> **v1.1 corrections (2026-08-25):** `LPS` is silkscreened `C`/`NO`, not `C`/`NC`. `HPS` reads open-circuit as *normal*, not as a fault, and is unwired on this plant. The `ALARM` terminal is the panel's configurable `AUX OP`, not a dedicated alarm relay. Contact polarity is now specified in one place — `WIRING.md` Section 6 — and this document defers to it.
 
 ---
 
@@ -70,23 +72,24 @@ The system is controlled by an **Aster NXT 11** embedded controller built on the
 
 ## 4. Identified PCB Terminal Blocks & Pinout (ASTERO-LTE-CPU-22-VER-1.5)
 
-Based on direct inspection of `IMG_3384.JPG`, `IMG_3385.JPG`, `IMG_3389.JPG`, `IMG_3399.JPG`, and `IMG_3400.JPG`, the primary terminal blocks are mapped as follows:
+Based on direct inspection of `IMG_2836.JPG`, `IMG_3384.JPG`, `IMG_3385.JPG`, `IMG_3389.JPG`, `IMG_3399.JPG`, and `IMG_3400.JPG`, the primary terminal blocks are mapped as follows:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │           ASTERO-LTE-CPU-22-VER-1.5 TERMINAL BLOCKS         │
 ├─────────────────────────────────────────────────────────────┤
-│ Top Block (Relay / Alarm):                                  │
-│   [ ALARM ]  [ R ] [ ... ]                                  │
+│ Upper-Right Block (Aux Output / Solenoid):                  │
+│   [ ALARM     ]  C   | NO    (AUX OP relay - CONFIGURABLE)  │
+│   [ RSV       ]  ...         (Reject Solenoid Valve output) │
 ├─────────────────────────────────────────────────────────────┤
-│ Main Signal & Relay Block (Top to Bottom):                  │
-│   [ HPS       ]  C   | NO    (High Pressure Switch)         │
-│   [ LPS       ]  C   | NC    (Low Pressure Switch)          │
-│   [ TWT FLOTY ]  C   | NC    (Treated Water Tank Float)     │
-│   [ RWT FLOTY ]  C   | NC    (Raw Water Tank Float)         │
+│ Main Block (silkscreen order, left to right):               │
+│   [ RL1       ]  C   | NO    (Relay 1 Output - HPP / MPV)   │
+│   [ RL2       ]  C   | NO    (Relay 2 Output - RWP / MPV)   │
 │   [ DOS LVL   ]  C   | NC    (Dosing Tank Level Switch)     │
-│   [ RL2       ]  C   | NO    (Relay 2 Output - e.g. RWP)    │
-│   [ RL1       ]  C   | NO    (Relay 1 Output - e.g. HPP)    │
+│   [ RWT FLOTY ]  C   | NC    (Raw Water Tank Float)         │
+│   [ TWT FLOTY ]  C   | NC    (Treated Water Tank Float)     │
+│   [ LPS       ]  C   | NO    (Low Pressure Switch)          │
+│   [ HPS       ]  C   | NO    (High Pressure Sw - UNWIRED)   │
 ├─────────────────────────────────────────────────────────────┤
 │ Flow Sensor Block:                                          │
 │   [ FLOW 1    ]  R   | G   | B  (+5V / Signal / GND)        │
@@ -103,13 +106,14 @@ Based on direct inspection of `IMG_3384.JPG`, `IMG_3385.JPG`, `IMG_3389.JPG`, `I
 ## 5. Candidate vs. Confirmed vs. Unknown Signals
 
 ### 5.1. Confirmed Signals (Physical Evidence Verified)
-1. **HPS (High Pressure Switch Input):** Dry contact input, marked `C` (Common) and `NO` (Normally Open).
-2. **LPS (Low Pressure Switch Input):** Dry contact input, marked `C` (Common) and `NC` (Normally Closed).
+1. **HPS (High Pressure Switch Input):** Dry contact input, marked `C` / `NO`. **Open circuit is the normal state** (setpoint sits above operating pressure, so the switch only closes on over-pressure). Unwired on this plant, which is why the plant runs with nothing landed on it.
+2. **LPS (Low Pressure Switch Input):** Dry contact input, marked `C` / `NO` — **corrected in v1.1, this was previously recorded as `NC`**. The switch closes once feed pressure exceeds its setpoint, so the loop is **closed while running**; an open loop reads as `LOW PRESSURE!!` (manual p.12).
 3. **TWT FLOTY (Treated Water Tank Float):** Switch input marked `C` and `NC`.
 4. **RWT FLOTY (Raw Water Tank Float):** Switch input marked `C` and `NC`.
 5. **DOS LVL (Dosing Level Switch):** Switch input marked `C` and `NC`.
 6. **RL1 Output:** Relay 1 dry contact `C` / `NO` (switches contactor coil / pump power).
 7. **RL2 Output:** Relay 2 dry contact `C` / `NO` (switches raw water pump or auxiliary solenoid).
+7a. **ALARM Output:** the panel's `AUX OP` — volt-free `C` / `NO` pair of the third `HF3FF-012-1ZST`, sited between the relay bank and `RSV`. Configurable in firmware as `ALARM` / `DOSING PUMP` / `PMP ON` (password 678), so **the terminal name does not guarantee the function**. See `WIRING.md` 6.3.
 8. **Contactor Coil Control (HPP):** 240V AC 50Hz on contactor A1/A2 coil.
 9. **FLOW 1 / FLOW 2:** Flow sensor pulse inputs.
 10. **COND:** EC/TDS conductivity probe interface with AC excitation.
@@ -122,9 +126,11 @@ Based on direct inspection of `IMG_3384.JPG`, `IMG_3385.JPG`, `IMG_3389.JPG`, `I
 5. **Dosing Level Status:** Tap into DOS LVL or monitor via remote tank Node #1 ultrasonic sensor.
 
 ### 5.3. Unknown / Unverified Signals (Requiring Multi-meter Check on Site)
-1. **Internal Logic Voltage on C (Common) terminals:** Determine whether `C` is tied to +5V, +12V, or GND through internal pull-up resistors.
+1. **Internal Logic Voltage on C (Common) terminals:** Determine whether `C` is tied to +5V, +12V, or GND through internal pull-up resistors. Gates whether our 12V wetting loop (`WIRING.md` 5.2) can be applied to a given pair.
 2. **PULSE O/P Electrical Characteristics:** Verify if open-collector NPN or 5V logic pulse.
 3. **Communication Header `J16`:** Header pins near CPU marked J16 may be factory programming / UART; currently unverified.
+4. **`AUX OP` current setting:** is it `ALARM`, `DOSING PUMP`, or `PMP ON`? Read under password 678. Blocks the alarm telemetry channel — the manual directs `PMP ON` when an auto-MPV is fitted in pretreatment, which this plant has.
+5. **`HI PRESS SW` enabled or bypassed:** with `HPS` unwired, `ON` means an input watching a switch that can never close; `OFF` means the input is bypassed. Determines whether shorting `HPS` is usable as a commissioning test trigger.
 
 ---
 
@@ -139,7 +145,7 @@ Based on direct inspection of `IMG_3384.JPG`, `IMG_3385.JPG`, `IMG_3389.JPG`, `I
 - **Technique:** Galvanic opto-isolation (PC817 based) for dry contact inputs so that potential ground loops or fault voltages in the Aster controller do not feed back into the ESP32 Hub.
 
 ### 6.3. Remote Tank Levels (Dosing, Raw, Treated)
-- **Technique:** Dedicated Arduino Nano nodes located at each tank running JSN-SR04T / AJ-SR04M waterproof ultrasonic sensors, transmitting filtered numeric millimeter levels over daisy-chained RS485 (MAX485 / MAX13487) back to the ESP32 Hub.
+- **Technique:** Dedicated Arduino Nano nodes located at each tank running AJ-SR04M waterproof ultrasonic sensors, transmitting filtered numeric millimeter levels over daisy-chained RS485 (MAX485 / MAX13487) back to the ESP32 Hub.
 
 ---
 

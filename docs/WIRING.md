@@ -1,14 +1,16 @@
 # Wiring & Interconnection Specifications
 
-**Document Version:** 2.3  
-**Date:** 2026-08-23  
-**Scope:** Complete Pinout Mappings, CAT5e Drop Schedules, RS485 Daisy-Chain, 240V AC Isolation, 4-Channel Opto-Isolation (Inputs), 4-Channel Relay Module (Future Asterro Float/Level Emulation), I2C Environmental Sensor, and Tank Node Power & Wiring.
+**Document Version:** 2.4  
+**Date:** 2026-08-25  
+**Scope:** Complete Pinout Mappings, CAT5e Drop Schedules, RS485 Daisy-Chain, 240V AC Isolation, 4-Channel Opto-Isolation (Inputs), Aster Terminal Contact Polarity & Alarm Output, 4-Channel Relay Module (Future Asterro Float/Level Emulation), I2C Environmental Sensor, and Tank Node Power & Wiring.
+
+> **Pin allocation authority:** Section 1 below describes the hub **as physically built** and is the single source of truth, per `superpowers/specs/2026-08-25-ro-monitor-phase-b-design.md` §3.5. It equals that spec's table plus `IN_ALARM`, added 2026-08-25. `HARDWARE.md` Section 3.1 is kept identical to it and is corrected — not reconciled — whenever the two diverge.
 
 ---
 
 ## 1. ESP32-S Central Master Hub Complete Pin Allocation
 
-The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the local SHT30 environmental sensor, isolates and reads the Aster controller status lines via a 4-channel PC817 optoisolator, controls a 4-channel relay module for future float/level emulation, and acts as the RS485 Modbus Master.
+The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the local SHT30 environmental sensor **and the directly-attached dosing tank ultrasonic sensor**, isolates and reads the Aster controller status lines via a 4-channel PC817 optoisolator (all 4 channels used once `IN_ALARM` is fitted), controls a 4-channel relay module for future float/level emulation, and acts as the RS485 Modbus Master for three remote slaves.
 
 ### Master Pin Mapping Table
 
@@ -21,17 +23,28 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 17** | `RS485_TX` | XY-485 Auto-Flow RS485 Module | `TXD` | Output | UART2 Serial TX (3.3V TTL logic) |
 | **GPIO 21** | `I2C_SDA` | GY-SHT30-D Temp/Humidity Sensor | `SDA` | Bidirectional | I2C Data Line (4.7k pull-up to 3.3V) |
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D Temp/Humidity Sensor | `SCL` | Output | I2C Clock Line (Standard 100 kHz / Fast 400 kHz) |
-| **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` / `U1` | Input | Active LOW when Treated Water Tank Float switch is closed (`INPUT_PULLUP`) |
-| **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` / `U2` | Input | Active LOW when Aster RL1 / Multiport valve status is active (`INPUT_PULLUP`) |
-| **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 3) | `V3` / `U3` | Input | Active LOW when Aster RL2 / Multiport valve status is active (`INPUT_PULLUP`) |
-| **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when 240V AC High Pressure Pump contactor is energized |
-| **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when 240V AC Raw Water Pump contactor is energized |
-| **GPIO 27** | `OUT_RLY_TWT`| 4-Ch 5V Relay Module (Relay 1) | `IN1` | Output | Active LOW: Triggers/Emulates Treated Water Float Contact to Asterro |
-| **GPIO 23** | `OUT_RLY_RWT`| 4-Ch 5V Relay Module (Relay 2) | `IN2` | Output | Active LOW: Triggers/Emulates Raw Water Float Contact to Asterro |
-| **GPIO 18** | `OUT_RLY_DOS`| 4-Ch 5V Relay Module (Relay 3) | `IN3` | Output | Active LOW: Triggers/Emulates Dosing Level Contact to Asterro |
-| **GPIO 19** | `OUT_RLY_AUX`| 4-Ch 5V Relay Module (Relay 4) | `IN4` | Output | Active LOW: Auxiliary / Interlock dry contact override |
+| **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` | Input | Active LOW when Aster `TWT FLOTY` loop is closed (`INPUT_PULLUP`) |
+| **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL1 / Multiport valve contact is closed (`INPUT_PULLUP`) |
+| **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
+| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when Aster `ALARM` (AUX OP) contact is closed — **verify AUX OP config first, Section 6.3** (`INPUT_PULLUP`) |
+| **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
+| **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
+| **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
+| **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
+| **GPIO 27** | `OUT_RLY_TWT`| 4-Ch 5V Relay Module (Relay 1) | `IN1` | Output | Active LOW: Emulates Treated Water Float Contact to Asterro (Phase C) |
+| **GPIO 23** | `OUT_RLY_RWT`| 4-Ch 5V Relay Module (Relay 2) | `IN2` | Output | Active LOW: Emulates Raw Water Float Contact to Asterro (Phase C) |
+| **GPIO 18** | `OUT_RLY_DOS`| 4-Ch 5V Relay Module (Relay 3) | `IN3` | Output | Active LOW: Emulates Dosing Level Contact to Asterro (Phase C) |
+| **GPIO 19** | `OUT_RLY_AUX`| 4-Ch 5V Relay Module (Relay 4) | `IN4` | Output | Active LOW: Auxiliary / Interlock dry contact override (Phase C, spare) |
 | **GPIO 2** | `LED_STATUS` | Onboard DevKit Blue LED | Anode | Output | System Heartbeat & Modbus polling activity indicator (No external wire needed) |
 | **GPIO 0** | `BTN_BOOT` | Onboard DevKit BOOT Button | Switch | Input | Factory Reset / AP Provisioning Mode trigger (No external wire needed) |
+
+**Pin selection constraints — re-check these before any reshuffle:**
+* **GPIO 34-39 have no internal pull-up**, and the AC opto modules present their phototransistor collector on `OUT`. Both are open-collector, so GPIO 34 and 35 need an **external 10 kΩ pull-up to 3V3**; `pinMode(pin, INPUT)` alone leaves them floating. This is a known defect on the already-built hub and must be fixed physically (phase-B spec §3.5).
+* PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
+* GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added.
+* `GPIO 4` is `ADC2_CH0`. ADC2 is unusable while Wi-Fi is active, but this pin is used as a **digital** input, which is unaffected. Do not repurpose it for analog.
+* `GPIO 5` emits a brief pulse at boot (strapping pin). On a `TRIG` line that costs one spurious ranging cycle at power-up and nothing else.
+* GPIO 27/23/18/19 drive relay opto inputs only. They idle HIGH (relay de-energized) through reset and boot, which is the fail-safe state defined in Section 7.2.
 
 ---
 
@@ -103,38 +116,152 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 
 ---
 
-## 5. 4-Channel PC817 Optoisolator Module (817 Module - Sensor Inputs)
+## 5. 4-Channel PC817 Optoisolator Module (Sensor Inputs)
 
-Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve.
+Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part; three channels were in use and channel 4 is claimed by `IN_ALARM`, leaving **no spare channel**. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
 
 ### 5.1. Module Architecture & Jumpers
 * **Input Side (Left):** `IN1`..`IN4` (+) and `G` (Return) with onboard 3k ohm current-limiting resistors (compatible with 3.3V to 24V DC).
-* **Output Side (Right):** `V1`..`V4` (Signal) and `G` (Ground). Acts as open-collector phototransistors.
+* **Output Side (Right):** `V1`..`V4` (Signal) and `G` (Ground). Open-collector phototransistors.
 * **Jumpers:** Keep all black jumper caps installed (Default position).
 * **ESP32 Connection:** ESP32 uses internal `INPUT_PULLUP`. No external `VCC` connection is required on the output side.
 
 ```
             INPUT SIDE (Left)                            OUTPUT SIDE (Right)
     +---------------------------------+          +---------------------------------+
-    | [ IN1 ] (TWT Float Signal)      |          | [ V1 ] --> ESP32 GPIO 32        |
-    | [  G  ] (TWT Float Return)      |          | [  G ] --> ESP32 GND            |
-    +---------------------------------+          +---------------------------------+
-    | [ IN2 ] (RL1 Multiport Sense)   |          | [ V2 ] --> ESP32 GPIO 26        |
-    | [  G  ] (RL1 Circuit Return)    |          | [  G ] --> ESP32 GND            |
-    +---------------------------------+          +---------------------------------+
-    | [ IN3 ] (RL2 Multiport Sense)   |          | [ V3 ] --> ESP32 GPIO 25        |
-    | [  G  ] (RL2 Circuit Return)    |          | [  G ] --> ESP32 GND            |
-    +---------------------------------+          +---------------------------------+
-    | [ IN4 ] (Spare)                 |          | [ V4 ] --> Unused               |
-    | [  G  ] (Spare)                 |          | [  G ] --> Unused               |
+    | [ IN1 ] (TWT FLOTY loop)        |          | [ V1 ] --> ESP32 GPIO 32        |
+    | [ IN2 ] (RL1 contact loop)      |          | [ V2 ] --> ESP32 GPIO 26        |
+    | [ IN3 ] (RL2 contact loop)      |          | [ V3 ] --> ESP32 GPIO 25        |
+    | [ IN4 ] (ALARM / AUX OP loop)   |          | [ V4 ] --> ESP32 GPIO 33        |
+    | [  G  ] (Common input return)   |          | [  G ] --> ESP32 GND            |
     +---------------------------------+          +---------------------------------+
 ```
 
+### 5.2. Wetting Loop for Volt-Free Contacts
+
+Every Aster contact tapped here is volt-free, so the loop must be wetted from our own 12V rail. Series the contact between +12V and the channel input. The board's onboard 3k resistor sets roughly 4 mA, which is above the HF3FF minimum wetting current and far below its rating.
+
+```
+  +12V DC (HLK-20M12 rail) --------> Aster terminal [ C      ]
+                                     Aster terminal [ NO/NC  ] --------> PC817 [ INn ]
+  12V GND ------------------------------------------------------------> PC817 [  G  ]
+
+  Contact CLOSED -> ~4 mA through the opto LED -> phototransistor conducts -> GPIO reads LOW
+  Contact OPEN   -> no current                 -> internal pull-up wins    -> GPIO reads HIGH
+```
+
+**Never apply this 12V wetting loop to a terminal the Aster panel energizes itself.** Confirm each tapped pair reads 0V AC and 0V DC across it, in both healthy and faulted states, before wiring. Procedure in Section 6.4.
+
 ---
 
-## 6. 4-Channel Relay Output Module (Asterro Float & Level Emulation)
+## 6. Aster NXT Terminal Contact Polarity & Alarm Output
 
-### 6.1. Relay Module to ESP32 Pin Connections
+**Sources of truth:** `docs/ASTERO-NXTG-1_opt.pdf` (Aster NXT manual) — terminal list p.3, input/output configuration p.8-10, troubleshooting table p.12 — cross-checked against the board silkscreen photographed in `images/IMG_2836.JPG`.
+
+> **Do not infer polarity from the `NO` / `NC` silkscreen alone.** Those marks name the contact form of the **field device at rest**, not the state the panel requires while running. On this controller `LPS` and `HPS` are both silkscreened `C NO` and behave in *opposite* directions.
+
+### 6.1. Input Terminal Polarity (Verified)
+
+| Terminal | Silkscreen | Field device | At rest (0 bar / normal tank) | **While running normally** | Open circuit is read as |
+| :--- | :---: | :--- | :--- | :--- | :--- |
+| `LPS` | `C` / `NO` | Low pressure switch, setpoint **below** normal feed pressure | open | **CLOSED** | `LOW PRESSURE!!` |
+| `HPS` | `C` / `NO` | High pressure switch, setpoint **above** normal RO pressure | open | **OPEN** | normal — no fault |
+| `TWT FLOTY` | `C` / `NC` | Treated water tank float | closed | **CLOSED** | `TW TANK FULL!!` |
+| `RWT FLOTY` | `C` / `NC` | Raw water tank float | closed | **CLOSED** | `RW TANK EMPTY!!` |
+| `DOS LVL` | `C` / `NC` | Dosing tank low-level float | closed | **CLOSED** | dosing low fault |
+
+**Why `LPS` and `HPS` invert despite identical silkscreen.** Both are the same physical contact form — open at zero pressure, closing once pressure rises past their setpoint. What differs is where that setpoint sits relative to normal operating pressure:
+
+```
+  LPS setpoint  ~0.5-1 bar   ----+
+                                 |   normal running feed pressure  (~2-3 bar)
+                                 +--> LPS sits CLOSED while running
+                                        opens only when feed fails      => closed = permissive
+
+                                     normal running RO pressure      (~10-14 bar)
+  HPS setpoint  ~18-20 bar   ----+
+                                 +--> HPS sits OPEN while running
+                                        closes only on over-pressure    => closed = trip
+```
+
+Manual p.12 confirms both directions: `LOW PRESSURE!!` lists *"LPS not connected"* as a cause, while the `HIGH PRESSURE!!` row does not — its wiring-error cause is *"check, is it C NO contact"*, i.e. a **closed** loop landed on `HPS` reads as over-pressure. The same page instructs *"Floaty is not connected. Short FLOATY terminal by an external wire link"*, confirming closed = healthy on the `NC`-form inputs.
+
+### 6.2. As-Built Deviations Recorded on This Plant
+
+| Observation | Date | Consequence |
+| :--- | :--- | :--- |
+| `HPS` terminal has **no field wiring** and the plant runs normally | 2026-08-25 | Consistent with 6.1 (open = healthy). Means there is **no controller-level over-pressure protection**, and **no `HPS` signal exists for the hub to monitor** — do not publish an `hps` state. Confirm on site whether `HI PRESS SW` is `ON` (enabled, watching a switch that can never close) or `OFF` (bypassed) and record the answer here. |
+| `LPS` silkscreen is `C` / `NO` | 2026-08-25 | `RO_HARDWARE_ANALYSIS.md` previously recorded `C` / `NC`; corrected there. |
+
+### 6.3. The `ALARM` Terminal Is the Configurable AUX OP
+
+Physically: a 2-screw pair on the upper-right block, immediately right of the third `HF3FF-012-1ZST` and left of `RSV` — the volt-free `C` / `NO` pair of that third relay (`images/IMG_2836.JPG`).
+
+Logically it is the panel's **AUX OP**, and its meaning is a software setting, not a fixed function:
+
+| `AUX OP` setting | Relay energizes when |
+| :--- | :--- |
+| `ALARM` | any fault is active (this is what our telemetry assumes) |
+| `DOSING PUMP` | HPP is running |
+| `PMP ON` | RWP is running |
+
+Read the current value under **password 678** (Input Configuration, manual §1.4): press `<` and `>` together, enter `678`, scroll to `AUX OP:`.
+
+> **Open risk — this plant may not be set to `ALARM`.** `RL1` / `RL2` are documented here as multiport-valve status, which implies `MPV CNTRL` is `ON`, and the manual states *"IF ON, one has to configure AUX OP as PMPON when there is AMPV in pretreatment."* If `AUX OP` is `PMP ON`, this terminal is a raw-water-pump run signal and every "controller trip" alert built on it is wrong. **Verify before wiring, and do not label the signal `alarm` in telemetry until confirmed.**
+
+### 6.4. Commissioning Procedure — Verify, Then Sense
+
+**Step 1 — confirm `AUX OP` = `ALARM`** (6.3). If it is `PMP ON` or `DOSING PUMP`, stop: rename the signal or reconfigure the panel with the plant owner's agreement.
+
+**Step 2 — trigger a fault and characterise the contact electrically.** The unwired `HPS` pair is the cheapest trigger: no wire is disturbed and no timer stands in the way.
+
+```
+  Short HPS [ C ] to [ NO ] for ~2 s
+    -> display shows "HIGH PRESSURE!!", AUX OP relay energizes
+    -> measure across the ALARM pair, both states:
+         V~ and V= = 0 in both  -> volt-free dry contact  -> Step 3
+         230 V~ when tripped    -> switched mains         -> Step 3 (AC opto variant)
+         12 V= when tripped     -> switched 12 V          -> Step 3, omit external 12V rail
+    -> power down, confirm with an ohmmeter: open idle, ~0 ohm tripped
+  Remove the jumper -> fault clears.
+```
+
+If shorting `HPS` produces nothing, `HI PRESS SW` is `OFF` (bypassed); use `DOS LVL` (open one wire) instead. The HPP stopping during this test is a normal protective action — do not hold the short or cycle it repeatedly, the contactor pays for it.
+
+**Step 3 — wire the sense channel.**
+
+*Volt-free result (expected):* PC817 channel 4 per Section 5.2 — `+12V -> ALARM [C]`, `ALARM [NO] -> IN4`, `12V GND -> G`, `V4 -> GPIO 33`, `INPUT_PULLUP`, alarm = LOW. No new hardware: channel 4 was the spare on the board already fitted.
+
+*Switched-mains result:* do **not** use the PC817. Add a 220V AC opto module wired as in Section 8 (`L` = switched leg, `N` = the other screw), `OUT` -> GPIO 33 **with a 10 kΩ pull-up to 3V3** (same open-collector caveat as GPIO 34/35). Note this is a **fifth** AC opto module; the BOM's four are already allocated.
+
+**Step 4 — debounce in firmware.** The contact bounces and the HPP contactor induces blips on the loop. Require a sustained state:
+
+```c
+// IN_ALARM on GPIO 33, INPUT_PULLUP, active LOW. Latch after 200 ms sustained.
+static uint32_t t_edge;
+static bool raw, alarm;
+bool now = !digitalRead(PIN_IN_ALARM);
+if (now != raw)            { raw = now; t_edge = millis(); }
+else if (millis() - t_edge > 200) { alarm = raw; }
+```
+
+### 6.5. Fault-to-Alarm Timing (Do Not Assume It Is Instant)
+
+Configured delays sit between a physical fault and the AUX OP relay picking up. Firmware must latch and timestamp the alarm rather than expect it to mirror a fault edge:
+
+| Fault | Delay before trip / alarm | Setting |
+| :--- | :--- | :--- |
+| Low pressure | `LO PRESS. DBNCE` (factory **015 s**) then `LPS TRIP` (factory **03 min**, range 03-60 min) | password 678 |
+| High pressure | no documented delay | — |
+| Pump overload | trips, then **auto-restarts after 15 min** and re-checks current | password 123 (overload current) |
+
+A `LOW PRESSURE!!` message on the display therefore precedes the alarm contact by up to three minutes. Treat display state and alarm contact as two separate observations.
+
+---
+
+## 7. 4-Channel Relay Output Module (Asterro Float & Level Emulation)
+
+### 7.1. Relay Module to ESP32 Pin Connections
 
 ```
   ESP32-S Hub (Control)            5V 4-Channel Relay Module
@@ -149,14 +276,18 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
  +------------------------+        +-------------------------+
 ```
 
-### 6.2. Relay Contacts to Asterro Terminal Interconnections (Dry Contacts)
+### 7.2. Relay Contacts to Asterro Terminal Interconnections (Dry Contacts)
 
-| Relay Channel | ESP32 GPIO | Target Asterro Terminal | Relay Contacts Used | Emulated State |
-| :---: | :---: | :--- | :---: | :--- |
-| **Relay 1** | **GPIO 27** | `TWT FLOTY [ C ]` & `[ NC ]` | `COM` & `NC` | **Closed (De-energized)** = Tank Normal / **Open (Energized)** = Tank Full |
-| **Relay 2** | **GPIO 23** | `RWT FLOTY [ C ]` & `[ NC ]` | `COM` & `NC` | **Closed (De-energized)** = Tank Normal / **Open (Energized)** = Tank Empty |
-| **Relay 3** | **GPIO 18** | `DOS LVL [ C ]` & `[ NC ]`   | `COM` & `NC` | **Closed (De-energized)** = Chemical OK / **Open (Energized)** = Dosing Low |
-| **Relay 4** | **GPIO 19** | Spare / `LPS` / `HPS`        | `COM` & `NO` / `NC` | Configurable auxiliary dry-contact trigger |
+Polarity follows Section 6.1 and is **not** interchangeable between terminals. Every de-energized state below is "plant permitted to run", so a hub reset, a firmware crash or loss of the 5V coil rail leaves the panel running on its own real switches — fail-safe by construction.
+
+| Relay Channel | ESP32 GPIO | Target Asterro Terminal | Relay Contacts Used | De-energized (default / boot) | Energized |
+| :---: | :---: | :--- | :---: | :--- | :--- |
+| **Relay 1** | **GPIO 27** | `TWT FLOTY [ C ]` & `[ NC ]` | `COM` & `NC` | **Closed** = tank not full, plant may run | **Open** = `TW TANK FULL!!` |
+| **Relay 2** | **GPIO 23** | `RWT FLOTY [ C ]` & `[ NC ]` | `COM` & `NC` | **Closed** = raw water available | **Open** = `RW TANK EMPTY!!` |
+| **Relay 3** | **GPIO 18** | `DOS LVL [ C ]` & `[ NC ]`   | `COM` & `NC` | **Closed** = chemical OK | **Open** = dosing low |
+| **Relay 4** | **GPIO 19** | Spare — see note below | `COM` & `NC` for `LPS`, `COM` & `NO` for `HPS` | `LPS` form: **closed** = pressure OK. `HPS` form: **open** = pressure OK | trip |
+
+> **Never substitute a hub relay for the real `LPS` or `HPS` switch.** Doing so hands dry-run and over-pressure protection to an ESP32. If a remote stop is wanted, wire Relay 4 **in series** with the real `LPS` loop (`COM`/`NC`, either the switch or the hub can open it) or **in parallel** across `HPS` (`COM`/`NO`, either can close it). The mechanical switch keeps its authority in both arrangements.
 
 ```
               Relay Module Dry Contacts                   Asterro Terminal Block
@@ -174,7 +305,7 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
 
 ---
 
-## 7. 240V AC Optocoupler Modules (HPP & RWP Contactor Monitoring)
+## 8. 240V AC Optocoupler Modules (HPP & RWP Contactor Monitoring)
 
 ```
   240V AC Side (From Contactor)           240V AC Opto Module          ESP32 Hub
@@ -189,7 +320,9 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
 
 ---
 
-## 8. Remote Arduino Nano Tank Nodes (0x01 Dosing, 0x02 RWT, 0x03 TWT)
+## 9. Remote Arduino Nano Tank Nodes (0x02 RWT, 0x03 TWT)
+
+**Node 0x02 (RWT) is the end of the bus** and carries the second 120 ohm resistor across its `A+` / `B-`, per Section 12. Node 0x03 is mid-chain and carries none.
 
 ```
                                   12V DC CAT5e Power Bus
@@ -213,10 +346,10 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
      (Soft RX)   (Soft TX)     (US TRIG)     (US ECHO)     (Hardware Address)
         |            |             |             |             |
  +------v------------v------+ +----v-------------v----+ +------v----------+
- |    XY-485 MODULE         | |   JSN-SR04T MODULE    | | ADDRESS JUMPERS |
- | RXD --> D2               | | TRIG --> D7           | | 0x01: A0=0, A1=1|
- | TXD --> D3               | | ECHO --> D8           | | 0x02: A0=1, A1=0|
- | VCC --> 5V (from Buck)   | | VCC  --> 5V (from Buck| | 0x03: A0=0, A1=0|
+ |    XY-485 MODULE         | |   AJ-SR04M MODULE     | | ADDRESS JUMPERS |
+ | RXD --> D2               | | TRIG --> D7           | | see 9.1 below   |
+ | TXD --> D3               | | ECHO --> D8           | | A0 -> GND or open|
+ | VCC --> 5V (from Buck)   | | VCC  --> 5V (from Buck| | A1 -> GND or open|
  | GND --> GND              | | GND  --> GND          | +-----------------+
  | A+  --> RS485 Bus (A+)   | +---------+-------------+
  | B-  --> RS485 Bus (B-)   |           | (Coaxial Cable)
@@ -227,9 +360,85 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
                                +-----------------+
 ```
 
+### 9.0. AJ-SR04M Sensor Notes (applies to every ultrasonic node and the hub's dosing sensor)
+
+The sensors in hand are **AJ-SR04M**, not JSN-SR04T. Electrically interchangeable for our purposes — 5 V supply, 5 V `ECHO` needing the divider, ~20 cm blind zone, `pulseIn` timeout of 35000 µs still covering the useful range — with two board-specific gotchas:
+
+| Check | Detail |
+| :--- | :--- |
+| **`R19` mode-select pad must be EMPTY** | Unpopulated selects HC-SR04-compatible **Trig/Echo** mode, which is what the firmware drives. A resistor fitted there (47 k / 120 k / 200 k) puts the board into one of its **UART** modes, where it either streams frames unasked or waits for a `0x55` command — and `pulseIn` on `ECHO` then reads nothing at all. Inspect the pad before wiring; a board that measures zero every time is almost always this, not a wiring fault. |
+| **Trigger pulse width is a tuning knob** | The firmware issues the nominal **10 µs** `TRIG` pulse. Some AJ-SR04M batches are unreliable at exactly 10 µs and want **20 µs**. If a node returns intermittent zeros or wild outliers with the pad confirmed empty, widen the pulse before suspecting the transducer. Keep it as a named constant, not a magic number. |
+
+**Verified 2026-08-25:** `R19` inspected on **all four sensors** and **empty** on each — Trig/Echo mode, which is what the sketches drive. So a zero reading on this build is wiring, power, or the blind zone, not the mode pad. Check the pad again on any sensor added later; batches differ.
+
+Range: 20–600 cm nominal, realistically dependable to ~4–4.5 m on a flat water surface. That covers all three tanks. The 3.5 m ground sump is inside the figure but with less margin than the datasheet implies — see phase-B spec §7.1, which is already tracking the sump sensor choice as an open decision.
+
+### 9.1. Address Jumper Truth Table (authoritative)
+
+Derived from the firmware that actually runs — `firmware/nano_node_test/nano_node_test.ino:39-44`:
+
+```c
+bit0 = (digitalRead(A0) == HIGH) ? 1 : 0;   // INPUT_PULLUP: open = 1, jumpered to GND = 0
+bit1 = (digitalRead(A1) == HIGH) ? 1 : 0;
+raw  = (bit1 << 1) | bit0;
+if (raw == 0) return 0x04;                  // both grounded
+return raw;                                 // 0x01 / 0x02 / 0x03
+```
+
+| `A1` | `A0` | raw | Node ID | Role |
+| :---: | :---: | :---: | :---: | :--- |
+| open | **GND** | `0b10` | **`0x02`** | RWT (end of bus, 120 Ω) |
+| **GND** | open | `0b01` | **`0x03`** | TWT |
+| open | open | `0b11` | **`0x04`** | Battery Room climate + fan (Pro Mini, §10). Also the unjumpered default |
+| **GND** | **GND** | `0b00` | **unassigned** | Refuse to join the bus — see below |
+
+The mapping is a **lookup table written from the observed hardware**, not an arithmetic identity. The three built boards already carried three distinct jumper codes, so the codes were kept and the table was written around them (§9.2). This is exactly what phase-B spec §3.7 prescribed.
+
+```c
+// common/protocol.h  --  raw = (A1 << 1) | A0, INPUT_PULLUP: open = 1, GND = 0
+static const uint8_t ADDR_MAP[4] = {
+  0x00,   // 0b00  both GND    -> unassigned, do not join the bus
+  0x03,   // 0b01  A1 to GND   -> TWT
+  0x02,   // 0b10  A0 to GND   -> RWT (end of bus)
+  0x04,   // 0b11  both open   -> Battery Room, climate + fan relay
+};
+
+uint8_t nodeIdFromJumpers(bool a0_high, bool a1_high) {
+  return ADDR_MAP[((a1_high ? 1 : 0) << 1) | (a0_high ? 1 : 0)];
+}
+```
+
+A node decoding `0x00` must **not** transmit — hold in a fault state and blink the LED. Guessing an address is how you get two boards answering the same poll. Grounding both jumpers is therefore also the deliberate way to bench a spare board while it is physically on the bus.
+
+> The table previously published here had `0x01`/`0x02` swapped, labelled both-grounded `0x03`, and omitted `0x04`. The bringup sketch's own decoder (`nano_node_test.ino:39-44`) returned `raw` directly with a special case for zero, which no longer matches any assignment. Both are superseded by `ADDR_MAP` above. Phase-B spec §3.7 is closed by this.
+
+**Address `0x01` no longer exists in any form** — the dosing sensor moved onto the hub (§13), and no jumper combination produces it.
+
+**The address also selects the node's personality** (spec §4): `0x02`/`0x03` run the ultrasonic build, `0x04` runs climate + fan relay. A misjumpered node therefore doesn't just answer to the wrong ID — it runs the wrong hardware profile and publishes plausible-looking wrong data.
+
+### 9.2. As-Built Jumper Audit (2026-08-25)
+
+The jumpers are staying as they are. `ADDR_MAP` (§9.1) was written to fit them, so **no board needs rewiring**:
+
+| Board | `A0` | `A1` | raw | Resolves to | Action |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| Nano #1 | **GND** | open | `0b10` | `0x02` RWT | Label RWT, fit its 120 Ω (§12). No change. |
+| Nano #2 | open | **GND** | `0b01` | `0x03` TWT | Label TWT. **No change** — this code used to mean the retired `0x01`. |
+| Pro Mini (Battery Room) | open | open | `0b11` | `0x04` Climate | Label Battery Room. **No change** — leave both pads unconnected. |
+
+Why software rather than the soldering iron: the three codes were already distinct, so there was nothing to disambiguate — only a table to write. It avoids lifting a pad on the Pro Mini's inner pads, avoids touching a node that may already be sealed in its enclosure, and puts the assignment in the one place spec §3.1 says addressing belongs.
+
+**The cost, stated plainly:** the unjumpered default is now `0x04` rather than a tank node. A fresh board dropped on the bus claims to be the Battery Room. That is *louder* than the old failure — two nodes answering the same poll produces immediate CRC/collision errors, where a duplicate tank level produces plausible wrong data nobody notices — but it does mean **any new node must be jumpered before it is bussed**, not after.
+
+**If the boards are ever re-jumpered instead, `ADDR_MAP` must change in the same commit.** One authoritative table; a second person re-deriving jumpers from a stale one is precisely the defect class §3.1 exists to prevent.
+
+Confirm by boot print before bussing: each node prints its detected ID at startup. Read all three.
+
 ---
 
-## 9. Battery Room Node (0x04: SHT30 & Exhaust Fan)
+## 10. Battery Room Node (0x04: SHT30 & Exhaust Fan)
+
+**Mid-chain node — no termination resistor.** 0x04 sits between the Dosing node and the TWT node in the as-installed run (Section 12). If a 120 ohm resistor was fitted here under the earlier end-of-bus assumption, **remove it**: three terminators on one bus over-load the drivers and blunt the differential swing.
 
 ```
                                   12V DC CAT5e Power Bus
@@ -244,38 +453,56 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
                                             +-- GND ---------+----------+
                                                              |          |
  +-----------------------------------------------------------v----------v-+
- |                            ARDUINO NANO (ATmega328P)                   |
- |  - 5V Pin  <-- +5V Buck Output                                         |
+ |            ARDUINO PRO MINI  (ATmega328P-AU, 5V / 16 MHz)              |
+ |  - VCC Pin <-- +5V Buck Output      *** NOT the RAW pin - see 10.1 *** |
  |  - GND Pin <-- Common Ground                                           |
  +------+------------+-------------+-------------+-------------+----------+
         |            |             |             |             |
       Pin D2       Pin D3        Pin A4        Pin A5        Pin D9
      (Soft RX)   (Soft TX)      (I2C SDA)     (I2C SCL)     (Relay IN)
+                              [inner pad]    [inner pad]
         |            |             |             |             |
  +------v------------v------+ +----v-------------v----+ +------v----------+
  |    XY-485 MODULE         | |   GY-SHT30-D SENSOR   | | 1-CH RELAY BOARD|
  | RXD --> D2               | | SDA --> A4            | | IN1 --> D9      |
  | TXD --> D3               | | SCL --> A5            | | VCC --> 5V      |
- | [120Ω Term Resistor on]  | | VCC --> 5V            | | GND --> GND     |
- | A+ & B-                  | | GND --> GND           | | COM/NO -> Fan AC|
+ | A+  --> RS485 Bus (A+)   | | VCC --> 5V            | | GND --> GND     |
+ | B-  --> RS485 Bus (B-)   | | GND --> GND           | | COM/NO -> Fan AC|
  +--------------------------+ +-----------------------+ +-----------------+
+
+ Programming header (6-pin FTDI / CP2102 adapter, 5V setting):
+   DTR -> DTR   TXO -> RX   RXI -> TX   VCC -> 5V   GND -> GND
 ```
+
+### 10.1. Pro Mini Build Notes (0x04 only)
+
+This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nanos. Same ATmega328P, same `pinmap_node.h`, same binary — only the board mechanics differ.
+
+| Item | Requirement | Why |
+| :--- | :--- | :--- |
+| **Power feed** | +5V from the Mini560 / LM2596 into **`VCC`**. Leave **`RAW` unconnected.** | `RAW` goes through the Pro Mini's SOT-23 LDO. Dropping 12V→5V at this node's ~168 mA peak dissipates **~1.2 W** in a package good for ~0.4 W, and the relay coil alone brushes the LDO's ~150 mA rating. It would brown out or thermally shut down — in the hottest room in the building, on the node whose job is reporting that room's temperature. |
+| **Board variant** | 5V / 16 MHz **only**. Verify: 9–12V on `RAW`, nothing else connected, measure `VCC` = **5.0V**. | ~5 mA flows unloaded, so the LDO is safe for this one test. A 3.3V board starves the XY-485 and the 5V relay coil, and 8 MHz halves the SoftwareSerial bit-timing margin at 9600 baud. |
+| **`A4` / `A5`** | Solder wires to the **two inner pads** (labelled on the underside). They are not on the edge headers — those run `A3 A2 A1 A0`. | I²C is hardware TWI on `PC4`/`PC5` and cannot be moved to other pins. If a board truly omits the breakouts, the fallback is soldering to TQFP pins 27 (`PC4`/SDA) and 28 (`PC5`/SCL). |
+| **`A0` / `A1` address jumpers** | **Leave both unconnected** — that is `0x04` under `ADDR_MAP` (§9.1). | No wiring needed, but it means an unjumpered board *is* a Battery Room node. Never put a second unjumpered board on the bus: two nodes answering `0x04` collide on every climate poll. |
+| **Programming** | FTDI / CP2102 adapter set to 5V, **`DTR` wired** (auto-reset). IDE: board *Arduino Pro or Pro Mini*, processor *ATmega328P (5V, 16 MHz)*. | Without `DTR` every upload times out. |
+| **During programming** | **Disconnect the buck's 5V** while the adapter is plugged in. | Two supplies fighting on `VCC` kills adapters. |
+| **RS485 on `D2`/`D3`** | Unchanged — SoftwareSerial, not the hardware UART. | On a Pro Mini `D0`/`D1` *are* the FTDI header. Keeping RS485 off them leaves the debug port usable without desoldering, which is the same reasoning as phase-B spec §199 and matters more here. |
 
 ---
 
-## 10. Ground Floor Wi-Fi Nodes Wiring (Parking)
+## 11. Ground Floor Wi-Fi Nodes Wiring (Parking)
 
-### 10.1. Ground Floor ESP32 Node 1: Sump Ultrasonic Level (0x05)
+### 11.1. Ground Floor ESP32 Node 1: Sump Ultrasonic Level (0x05)
 * **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
 * **ESP32 5V / VIN:** `+5V DC` from HLK-20M5
 * **ESP32 GND:** `GND` from HLK-20M5
-* **JSN-SR04T Sensor:**
+* **AJ-SR04M Sensor:**
   * `VCC` $\to$ `5V DC`
   * `GND` $\to$ `GND`
   * `TRIG` $\to$ `ESP32 GPIO 5`
   * `ECHO` $\to$ `1kΩ resistor` $\to$ `ESP32 GPIO 18` *(and 2kΩ from GPIO 18 to GND for 3.3V voltage divider)*
 
-### 10.2. Ground Floor ESP32 Node 2: Motor AC Sensing & Float Relays (0x06)
+### 11.2. Ground Floor ESP32 Node 2: Motor AC Sensing & Float Relays (0x06)
 * **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
 * **220V AC Optocoupler 1 (Sump Motor Monitor):**
   * `AC L / N` $\to$ Connected across Sump Motor Starter Contactor 240V Coil
@@ -297,17 +524,59 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
 
 ---
 
-## 11. Complete RS485 Daisy-Chain Topology & Bus Termination
+## 12. Complete RS485 Daisy-Chain Topology & Bus Termination
 
 ```
- +----------------+     +----------------+     +----------------+     +----------------+     +----------------+
- | ESP32 HUB      |     | DOSING NODE    |     | RWT NODE       |     | TWT NODE       |     | BATTERY ROOM   |
- | Master (0x00)  +-----+ Slave (0x01)   +-----+ Slave (0x02)   +-----+ Slave (0x03)   +-----+ Slave (0x04)   |
- | [120Ω Enabled] |     | (No Resistor)  |     | (No Resistor)  |     | (No Resistor)  |     | [120Ω Enabled] |
- +----------------+     +----------------+     +----------------+     +----------------+     +----------------+
+ +----------------+     +----------------+     +----------------+     +----------------+
+ | ESP32 HUB      |     | BATTERY ROOM   |     | TWT NODE       |     | RWT NODE       |
+ | Master (0x00)  +-----+ Slave (0x04)   +-----+ Slave (0x03)   +-----+ Slave (0x02)   |
+ | [120Ω Enabled] |     | (No Resistor)  |     | (No Resistor)  |     | [120Ω Enabled] |
+ +----------------+     +----------------+     +----------------+     +----------------+
+   RO Room               Battery Room           Roof Top               Roof Top
+        Cat5e 1 (TBM)          Cat5e 2 (TBM)          Cat5e 3 (TBM)
+
+ Dosing tank sensor is NOT on this bus - it is wired direct to the hub (Section 13).
 ```
 
-* **Bus Topology:** Strict linear daisy chain (no star/branch topologies).
+* **Bus Topology:** Strict linear daisy chain (no star/branch topologies). Physical order is `0x00 -> 0x04 -> 0x03 -> 0x02`. Node addresses are logical and deliberately do **not** follow the cable order — the hub's poll sequence is by address, not by position on the bus. Address `0x01` is retired and unassigned.
 * **Termination:** Exactly **two 120 ohm resistors** on the entire physical bus:
   1. One at the **ESP32 Central Hub** (RO Room) across `A+` and `B-`.
-  2. One at the physical end of the bus (**Battery Room Node 0x04**) across `A+` and `B-`.
+  2. One at the physical end of the bus — **RWT Node 0x02** — across `A+` and `B-`.
+* **No return loopback, no junction-box splice.** Earlier revisions routed the bus up to a mid-chain RWT and back down through the brown pair to an RO room splice. With RWT last, every hop is a single outbound pair and both spare pairs stay free for the 12V rail.
+* **All cable lengths are TBM** and must be measured on site before re-running the power budget. The old 1.5 m `Cat5e 1` drop belonged to the deleted dosing node; the trunk now starts with the hub-to-battery-room run.
+
+### 12.1. Transceiver Count — Resolved
+
+The bus needs **4** XY-485 modules: one at the hub and one per remaining slave (`0x04`, `0x03`, `0x02`). An earlier revision of this section described deferring the RWT node because the design then called for five. Deleting node `0x01` (Section 13) removed the fifth. **Build the whole bus in one pass — there is no interim state and the 120 Ω lives at RWT `0x02` from the start.**
+
+---
+
+## 13. Dosing Tank Level — Direct to Hub (No RS485 Node)
+
+The dosing tank sits roughly **100 cm** from the hub enclosure, well inside the AJ-SR04M's own captive transducer lead. A Nano, a buck converter, an XY-485 module, an enclosure and a 1.5 m Cat5e drop existed only to carry one distance reading across one metre. All of it is deleted; the sensor lands on the hub directly.
+
+```
+  ESP32-S Hub                        AJ-SR04M Module (at the hub)
+ +------------------------+         +--------------------------------+
+ | 5V (Buck Output)       +-------->| VCC   (5V - do NOT use 3V3)    |
+ | GND                    +-------->| GND                            |
+ | GPIO 5                 +-------->| TRIG                           |
+ |                        |         |                                |
+ | GPIO 4  <--+-- 1kΩ ----+---------+ ECHO  (5V logic - divide it)   |
+ |            |                     +---------------+----------------+
+ |           2kΩ                                    | 2.5 m coax
+ | GND  <-----+                                     v
+ +------------------------+                +--------------------+
+                                           | Waterproof         |
+   ECHO divider: 5.0V x 2k/(1k+2k)         | Transducer Head    |
+              = 3.33V at GPIO 4            | (in dosing tank)   |
+                                           +--------------------+
+```
+
+**AJ-SR04M checks apply here too** — `R19` mode pad empty, `TRIG` width tunable. See Section 9.0; a dosing sensor reading a flat zero is that pad, not the wiring.
+
+**Why the divider is not optional.** `ECHO` idles low and swings to a hard 5 V. The ESP32 is 3.3 V logic with no 5 V tolerance on its GPIOs; a bare connection stresses the pad every ranging cycle. Same 1 kΩ / 2 kΩ arrangement as ground-floor node 1 (Section 11.1).
+
+**Scheduling — do not read this sensor inside a poll window.** `pulseIn(GPIO4, HIGH, 35000UL)` blocks for up to 35 ms. Phase-B spec §4.1 documents this as fatal *on a Nano slave*, where a blocked `SoftwareSerial` silently drops ~15 % of incoming polls. On the hub the risk is different and milder: the hub is the master and slaves never transmit unbidden (`RS485_PROTOCOL.md` §1.1), so nothing is missed — but a 35 ms stall inside the poll/response sequence still eats into the turnaround guard time. Read it at a fixed point in the 1 s cycle, **after** the last slave response and before serving the dashboard. There is ~800 ms of idle cycle to put it in.
+
+**What this removes from the build:** one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.

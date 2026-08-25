@@ -11,11 +11,15 @@
 
 To ensure industrial-grade reliability and avoid bus contention:
 1. **Strict Master-Polled Architecture:** Slaves **NEVER** initiate communication autonomously. Slaves only transmit in immediate response to a valid request addressed specifically to them.
-2. **Deterministic Sequence:** The ESP32 Hub polls each node sequentially:
-   - Poll Node 1 (Dosing Tank) -> Await Response / Timeout ->
-   - Poll Node 2 (Raw Water Tank) -> Await Response / Timeout ->
-   - Poll Node 3 (Treated Water Tank) -> Await Response / Timeout ->
+2. **Deterministic Sequence:** The ESP32 Hub polls each node sequentially **by address, not by position on the cable**:
+   - Poll Node `0x02` (Raw Water Tank) -> Await Response / Timeout ->
+   - Poll Node `0x03` (Treated Water Tank) -> Await Response / Timeout ->
+   - Poll Node `0x04` (Battery Room) -> Await Response / Timeout ->
    - Repeat cycle every **1000 ms** (1 second configurable interval).
+
+   The physical chain runs `0x00 -> 0x04 -> 0x03 -> 0x02` (`WIRING.md` §12). Address order and cable order differ on purpose; do not "fix" the poll sequence to match the wiring.
+
+   **Address `0x01` is retired.** The dosing tank is ~1 m from the hub, so its AJ-SR04M is wired straight to the ESP32 (`WIRING.md` §13) and its level is read locally, outside this protocol. The hub must not poll `0x01` — doing so just burns a timeout every cycle.
 3. **Guard Time (Turnaround Delay):** A 5 ms delay is observed by master and slaves after toggling `DE/RE` direction pins to allow the RS485 line transceivers to settle.
 
 ---
@@ -38,6 +42,12 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 > **Frame Overhead:** 6 bytes (2 Preamble + 1 Addr + 1 Cmd + 1 Length + 2 CRC16).  
 > A standard 6-byte payload frame total length is 12 bytes ($\approx 10\text{ ms}$ transmission time at 9600 baud).
 
+> **Bringup sketches speak a reduced frame.** `esp32_hub_test`, `nano_node_test` and
+> `promini_battery_node_test` use `[0xAA][0x55][ADDR][CMD]` requests and
+> `[0xAA][0x55][ADDR][CMD|0x80][payload...][XOR]` responses — no `PAYLOAD_LEN`, XOR in
+> place of CRC-16. Enough to prove wiring and addressing on the bench; the framing above
+> is what phase-B firmware implements, and both ends change together when it does.
+
 ---
 
 ## 3. Node Addressing Scheme
@@ -45,11 +55,11 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | Node ID | Assigned Tank / Role | Subsystem / Transport | Microcontroller | Primary Sensors / Actuators |
 | :---: | :--- | :--- | :--- | :--- |
 | `0x00` | **ESP32 HUB (Master)** | RO Room Core | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs, 4-Ch Relays |
-| `0x01` | **Dosing Chemical Tank** | RO Room RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
-| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) + Loopback |
-| `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (JSN-SR04T) |
-| `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Nano | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
-| `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi | ESP32 | Waterproof Ultrasonic (JSN-SR04T - 3.5m Sump) |
+| ~~`0x01`~~ | **Dosing Chemical Tank** | *Retired — sensor wired direct to hub* | — | Waterproof Ultrasonic (AJ-SR04M) on hub `GPIO 5` / `GPIO 4` |
+| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) + 120Ω end-of-bus termination |
+| `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) |
+| `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
+| `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi | ESP32 | Waterproof Ultrasonic (AJ-SR04M - 3.5m Sump) |
 | `0x06` | **Ground Motors & Interlock** | Ground Floor Wi-Fi | ESP32 | 2x 220V AC Optos (Sump/Borewell) + 4-Ch Relays |
 | `0xFF` | **Broadcast Address** | Global Sync | All Slaves | Global synchronization / Bus Reset |
 
@@ -63,7 +73,7 @@ Used by the Master to verify slave liveness and measure round-trip latency.
 - **Response Payload:** `uint8_t status_flags`, `uint16_t firmware_version`.
 
 ### 4.2. `CMD_READ_LEVEL` (`0x02`)
-Requests processed, filtered water level and telemetry from tank nodes (`0x01`, `0x02`, `0x03`).
+Requests processed, filtered water level and telemetry from tank nodes (`0x02`, `0x03`). The dosing tank level is read locally by the hub and never appears on the bus.
 - **Request Payload:** None ($N=0$).
 - **Response Payload (10 Bytes):**
   - `uint16_t distance_mm`: Median-filtered distance from sensor transducer to liquid surface in millimeters.
