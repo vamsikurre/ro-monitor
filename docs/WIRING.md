@@ -29,8 +29,8 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `AUX OP` contact is closed. **Confirmed 2026-08-26: normally open, closes on a plant issue — `AUX OP` behaves as `ALARM`** (Section 6.3, `INPUT_PULLUP`) |
 | **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
 | **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
-| **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
-| **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
+| **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. Module carries its own **47 k pull-up to `VCC`** (silkscreen `47K VCC`); wire `VCC` to 3V3 and no external resistor is needed — see §8 |
+| **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. Same onboard 47 k pull-up — see §8 |
 | **GPIO 36** | `IN_HPP_CT`  | SCT-013-030 clamp, HPP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH0, 11 dB. Rides a shared 1.65 V bias rail — spec §7.3 |
 | **GPIO 39** | `IN_RWP_CT`  | SCT-013-030 clamp, RWP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH3, 11 dB. Same bias rail — spec §7.3 |
 | **GPIO 27** | `OUT_RLY_TWT`| 4-Ch 5V Relay Module (Relay 1) | `IN1` | Output | Active LOW: Emulates Treated Water Float Contact to Asterro (Phase C) |
@@ -41,7 +41,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 0** | `BTN_BOOT` | Onboard DevKit BOOT Button | Switch | Input | Factory Reset / AP Provisioning Mode trigger (No external wire needed) |
 
 **Pin selection constraints — re-check these before any reshuffle:**
-* **GPIO 34-39 have no internal pull-up**, and the AC opto modules present their phototransistor collector on `OUT`. Both are open-collector, so GPIO 34 and 35 need an **external 10 kΩ pull-up to 3V3**; `pinMode(pin, INPUT)` alone leaves them floating. This is a known defect on the already-built hub and must be fixed physically (phase-B spec §3.5).
+* **GPIO 34-39 have no internal pull-up** — but the AC opto modules supply their own. **Corrected 2026-08-27:** the fitted module has a **47 k pull-up from `OUT` to `VCC`**, printed on the silkscreen as `47K VCC`, which is why it has a `VCC` terminal at all (§8). With `VCC` on 3V3 the pin idles high and `pinMode(pin, INPUT)` is correct. No external resistor is required, and the "outstanding hub defect" recorded in phase-B spec §3.5 was a misreading of this part. What *does* float the pin is `VCC` or `OUT` losing continuity — observed once on this build, from a broken wire at the module. 47 k is a weak pull-up, so a parallel 10 k remains available as noise-hardening on a long `OUT` run; that is a tuning choice, not a fix.
 * PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
 * GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added. **They are all ADC2 and therefore useless for analog while Wi-Fi is up**, which is why the two CT channels take `GPIO 36` and `GPIO 39` (ADC1) instead. Those were the last two free ADC1 pins on this hub.
 * `GPIO 4` is `ADC2_CH0`. ADC2 is unusable while Wi-Fi is active, but this pin is used as a **digital** input, which is unaffected. Do not repurpose it for analog.
@@ -250,7 +250,7 @@ If shorting `HPS` produces nothing, `HI PRESS SW` is `OFF` (bypassed); use `DOS 
 
 *Volt-free result (expected):* PC817 channel 3 per Section 5.2 — `+12V -> ALARM [C]`, `ALARM [NO] -> IN3`, `12V GND -> G`, `V3 -> GPIO 33`, `INPUT_PULLUP`, alarm = LOW. No new hardware: the board already fitted had a spare channel.
 
-*Switched-mains result:* do **not** use the PC817. Add a 220V AC opto module wired as in Section 8 (`L` = switched leg, `N` = the other screw), `OUT` -> GPIO 33 **with a 10 kΩ pull-up to 3V3** (same open-collector caveat as GPIO 34/35). Note this is a **fifth** AC opto module; the BOM's four are already allocated.
+*Switched-mains result:* do **not** use the PC817. Add a 220V AC opto module wired as in Section 8 (`L` = switched leg, `N` = the other screw), `OUT` -> GPIO 33 (the module's own 47 k to `VCC` covers the pull-up, as on GPIO 34/35 — §8). Note this is a **fifth** AC opto module; the BOM's four are already allocated.
 
 **Step 4 — debounce in firmware.** The contact bounces and the HPP contactor induces blips on the loop. Require a sustained state:
 
@@ -335,6 +335,32 @@ Polarity follows Section 6.1 and is **not** interchangeable between terminals. E
                                         |                 OUT +------>| GPIO 34/35|
                                         +---------------------+       +-----------+
 ```
+
+**The `VCC` wire is not optional, and it is the failure point.** This module is
+not a bare optocoupler. Its output side carries a **47 k pull-up from `OUT` to
+`VCC`**, silkscreened `47K VCC`, and the input side rectifies (`MB6S`), clamps
+(5.1 V zener) and smooths (100 µF) the mains before driving the opto LED. So:
+
+* `VCC` on 3V3 is what makes `OUT` idle high. **No external pull-up is needed** —
+  the "outstanding 10 kΩ retrofit" this document and phase-B spec §3.5 carried
+  until 2026-08-27 was a misreading of the part.
+* If `VCC` or `OUT` loses continuity the pin floats, and `digitalRead` reports
+  that as `OFF` — identical to a healthy module seeing no mains. **This has
+  already happened once on this build** (broken wire at the module).
+* Because the input is smoothed, `OUT` should be *steady* low with mains
+  present, not a 100 Hz pulse train. Phase-B spec §5.4 assumed a pulse train;
+  that is re-opened pending measurement.
+
+**Verify with `probeACInput()`**, which the hub sketch runs every cycle. GPIO 34
+and 35 are `ADC1_CH6`/`CH7`, so it reads actual millivolts and prints the min/max
+spread over a full mains cycle — the only way to tell the three states apart:
+
+| Reading | Means |
+| :--- | :--- |
+| `~3300-3300 mV` | Idle. Pull-up alive, `VCC` and `OUT` intact. |
+| `0-0 mV` | Mains present, smoothed as expected. |
+| swings `0` to `~3300` | Mains present but pulsing — spec §5.4's filter fix is needed after all. |
+| stuck mid-scale | **Floating.** Check `VCC` and `OUT` continuity at the module. |
 
 ---
 

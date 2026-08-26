@@ -86,8 +86,8 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 17** | `RS485_TX` | XY-485 Module `TXD` | Output | 3.3V UART2 TX |
 | **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` (RO Room) | Bidirectional | I2C SDA (4.7kΩ pull-up to 3.3V) |
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` (RO Room) | Output | I2C SCL (100kHz standard) |
-| **GPIO 34** | `IN_HPP_AC` | 220V AC Optocoupler Module 1 `OUT` | Input | Active LOW when HPP 240V contactor active. **External 10 kΩ pull-up to 3V3 required** |
-| **GPIO 35** | `IN_RWP_AC` | 220V AC Optocoupler Module 2 `OUT` | Input | Active LOW when RWP 240V active. **External 10 kΩ pull-up to 3V3 required** |
+| **GPIO 34** | `IN_HPP_AC` | 220V AC Optocoupler Module 1 `OUT` | Input | Active LOW when HPP 240V contactor active. Onboard 47 k pull-up to `VCC`; wire `VCC` to 3V3 |
+| **GPIO 35** | `IN_RWP_AC` | 220V AC Optocoupler Module 2 `OUT` | Input | Active LOW when RWP 240V active. Onboard 47 k pull-up to `VCC`; wire `VCC` to 3V3 |
 | **GPIO 32** | `IN_TWT_FLOT` | 4-Ch PC817 Board Ch 4 `V4` | Input | Aster `TWT FLOTY` loop. LOW = closed = tank not full |
 | **GPIO 26** | `IN_RL1_STAT` | 4-Ch PC817 Board Ch 1 `V1` | Input | Aster RL1 contact. LOW = closed = output active |
 | **GPIO 25** | `IN_RL2_STAT` | 4-Ch PC817 Board Ch 2 `V2` | Input | Aster RL2 contact. LOW = closed = output active |
@@ -103,7 +103,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 2** | `LED_STATUS` | System Heartbeat LED | Output | Active HIGH onboard LED |
 | **GPIO 0** | `BTN_BOOT` | Onboard BOOT Button | Input | Factory reset / provisioning trigger |
 
-**Constraints:** GPIO 34-39 have no internal pull-up and the AC opto `OUT` is open-collector, so 34 and 35 need an external 10 kΩ pull-up to 3V3 — a physical fix outstanding on the built hub. The four open-collector PC817 channels sit on pull-up-capable pins (25/26/32/33). GPIO 6-11 are flash, 1/3 are the serial console; 4/5/12/13/14/15 are free, with 13 reserved for a fifth opto channel if one is added.
+**Constraints:** GPIO 34-39 have no internal pull-up, but the AC opto module supplies a 47 k pull-up from `OUT` to `VCC` (**corrected 2026-08-27** — `WIRING.md` §1), so 34 and 35 need no external resistor, only `VCC` on 3V3. The four open-collector PC817 channels sit on pull-up-capable pins (25/26/32/33). GPIO 6-11 are flash, 1/3 are the serial console; 4/5/12/13/14/15 are free, with 13 reserved for a fifth opto channel if one is added.
 
 ---
 

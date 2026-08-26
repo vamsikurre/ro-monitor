@@ -496,6 +496,36 @@ void commandFan() {
   }
 }
 
+// GPIO 34/35 are ADC1_CH6/CH7, so the pins the digital read uses can also be
+// measured. That is the whole diagnostic: digitalRead collapses three different
+// hardware states onto one "OFF", and the module's own 47k pull-up to VCC means
+// a broken VCC or OUT wire reads OFF just as convincingly as a dark opto.
+//
+//   both ends high   -> idle, pull-up alive, wiring intact
+//   swings 0 to 3V3  -> opto switching on the mains half-cycles
+//   pinned near 0    -> mains present and smoothed by the module's 100uF
+//   stuck mid-scale  -> nothing is pulling the pin at all: VCC or OUT is open
+//
+// The min/max spread over one full mains cycle is what tells them apart, so
+// sample across 30 ms rather than reporting a single instantaneous reading.
+void probeACInput(const char *label, int pin) {
+  uint32_t lo = 5000, hi = 0;
+  unsigned long start = millis();
+  while (millis() - start < 30) {
+    uint32_t mv = analogReadMilliVolts(pin);
+    if (mv < lo) lo = mv;
+    if (mv > hi) hi = mv;
+  }
+
+  const char *verdict;
+  if (lo > 2500)                      verdict = "idle, pull-up OK";
+  else if (hi < 500)                  verdict = "MAINS PRESENT (steady)";
+  else if (hi > 2500 && lo < 500)     verdict = "MAINS PRESENT (pulsing - see spec 5.4)";
+  else                                verdict = "FLOATING - check VCC and OUT continuity";
+
+  Serial.printf("  %-8s %4u-%4u mV   %s\n", label, lo, hi, verdict);
+}
+
 // Debounced AC Detection (filters out noise / transient glitches)
 bool readACInputFiltered(int pin) {
   int lowCount = 0;
@@ -612,20 +642,17 @@ void loop() {
   bool hppActive = readACInputFiltered(OPTO_HPP_AC);
   bool rwpActive = readACInputFiltered(OPTO_RWP_AC);
 
-  // GPIO 34/35 have no internal pull-up and the AC modules are open-collector, so
-  // those two read whatever the air decides until the external 10k to 3V3 is fitted
-  // (phase-B spec 3.5). Said on every cycle: a floating pin that happens to read OFF
-  // is indistinguishable from a working opto seeing no mains.
-  // ponytail: unconditional nag, delete the trailing string once the resistors
-  // are on the board - there is nothing to sense the pull-up with from software.
-  Serial.printf("[Opto Inputs]   TWT Float: %s | RL1: %s | RL2: %s | ALARM: %s | 240V HPP: %s | 240V RWP: %s%s\n",
+  Serial.printf("[Opto Inputs]   TWT Float: %s | RL1: %s | RL2: %s | ALARM: %s | 240V HPP: %s | 240V RWP: %s\n",
                 twtClosed ? "CLOSED" : "OPEN",
                 rl1Active ? "ACTIVE" : "INACTIVE",
                 rl2Active ? "ACTIVE" : "INACTIVE",
                 alarmActive ? "ACTIVE" : "INACTIVE",
                 hppActive ? "240V ON" : "OFF",
-                rwpActive ? "240V ON" : "OFF",
-                "   (34/35 unverified: no pull-up fitted)");
+                rwpActive ? "240V ON" : "OFF");
+
+  // The two AC channels get measured, not just sampled - see probeACInput.
+  probeACInput("HPP AC", OPTO_HPP_AC);
+  probeACInput("RWP AC", OPTO_RWP_AC);
 
   // 4. Relay Sequential Cycling
   Serial.println(F("[Relay Test]    Cycling Relay 1 -> 2 -> 3 -> 4 -> node 0x04 fan..."));

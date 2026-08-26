@@ -60,7 +60,7 @@ Every added element is **normally closed** and can only ever *stop* the motor, n
 | Dosing tank AJ-SR04M wired direct to hub (§13 of `WIRING.md`) | Built, needs calibration |
 | Node `0x02` RWT, node `0x03` TWT — Arduino Nano, one shared binary | **Firmware done, on the bench** |
 | Node `0x04` battery room — Pro Mini, SHT30 + fan relay | **Firmware done, on the bench** |
-| `GPIO 34` / `GPIO 35` external 10 kΩ pull-ups — outstanding hub defect (§3.5) | To fit |
+| ~~`GPIO 34` / `GPIO 35` external 10 kΩ pull-ups — outstanding hub defect (§3.5)~~ | **Not a defect — withdrawn 2026-08-27.** Module has an onboard 47 k pull-up (§3.5) |
 | HPP + RWP current clamps on `GPIO 36` / `GPIO 39` (§7.3, `WIRING.md` §14) | Parts ordered |
 | TWT level sensor — ultrasonic ruled out by the wall-adjacent hole (`WIRING.md` §9.3) | **Decision open** |
 | Local dashboard served by the hub | To build |
@@ -185,14 +185,14 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 17 | `RS485_TX` | XY-485 `TXD` | UART2 |
 | 21 | `I2C_SDA` | GY-SHT30-D | |
 | 22 | `I2C_SCL` | GY-SHT30-D | |
-| 32 | `IN_TWT_FLOT` | PC817 ch1 | `INPUT_PULLUP` |
-| 26 | `IN_RL1_STAT` | PC817 ch2 | `INPUT_PULLUP` |
-| 25 | `IN_RL2_STAT` | PC817 ch3 | `INPUT_PULLUP` |
-| 33 | `IN_ALARM` | PC817 ch4 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact. **Confirmed 2026-08-26** as a genuine fault flag: normally open, closes on a plant issue (`WIRING.md` §6.3) |
+| 32 | `IN_TWT_FLOT` | PC817 ch4 | `INPUT_PULLUP` |
+| 26 | `IN_RL1_STAT` | PC817 ch1 | `INPUT_PULLUP` |
+| 25 | `IN_RL2_STAT` | PC817 ch2 | `INPUT_PULLUP` |
+| 33 | `IN_ALARM` | PC817 ch3 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact. **Confirmed 2026-08-26** as a genuine fault flag: normally open, closes on a plant issue (`WIRING.md` §6.3) |
 | 5 | `US_TRIG_DOS` | AJ-SR04M (dosing) | Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
 | 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
-| 34 | `IN_HPP_AC` | AC opto 1 | **External 10 kΩ pull-up to 3V3 required** |
-| 35 | `IN_RWP_AC` | AC opto 2 | **External 10 kΩ pull-up to 3V3 required** |
+| 34 | `IN_HPP_AC` | AC opto 1 | ADC1_CH6. **Corrected 2026-08-27:** module has its own 47 k pull-up to `VCC`; no external resistor — §3.5 |
+| 35 | `IN_RWP_AC` | AC opto 2 | ADC1_CH7. Same onboard pull-up — §3.5 |
 | 36 | `IN_HPP_CT` | SCT-013-030 clamp | ADC1_CH0, 11 dB. Added 2026-08-26 — §7.3 |
 | 39 | `IN_RWP_CT` | SCT-013-030 clamp | ADC1_CH3, 11 dB. Added 2026-08-26 — §7.3 |
 | 27 | `OUT_RLY_TWT` | Relay `IN1` | Active LOW. Phase C use |
@@ -202,7 +202,9 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 2 | `LED_STATUS` | Onboard LED | |
 | 0 | `BTN_BOOT` | Onboard button | Config reset |
 
-GPIO 34 and 35 are input-only pins with **no internal pull-up**. The current sketch's `pinMode(pin, INPUT)` against an open-collector opto output leaves them floating. This is a defect on already-built hardware and must be fixed physically.
+GPIO 34 and 35 are input-only pins with **no internal pull-up**. ~~The current sketch's `pinMode(pin, INPUT)` against an open-collector opto output leaves them floating. This is a defect on already-built hardware and must be fixed physically.~~
+
+**Withdrawn 2026-08-27.** The fitted 240 V module is not a bare open-collector: it carries a **47 k pull-up from `OUT` to `VCC`**, silkscreened `47K VCC`, which is the reason it has a `VCC` terminal (`WIRING.md` §8). With `VCC` on 3V3, `pinMode(pin, INPUT)` is correct and there is nothing to retrofit. The floating reading that prompted this entry was traced to a **broken wire at the module**, since repaired. Both pins sit on ADC1, so `probeACInput()` in the hub sketch now measures them and separates idle-with-pull-up from genuinely floating — which a `digitalRead` cannot.
 
 ### 3.6 Node pin map (Nano 0x01-0x03, Pro Mini 0x04)
 
@@ -328,7 +330,9 @@ A 240 V / 50 Hz signal through an opto is a ~100 Hz pulse train; the output is L
 
 The current `readACInputFiltered` samples 10 × 500 µs = **5 ms** and requires 8 of 10 LOW. It will report OFF while the pump is running.
 
-**Fix:** sample across a **25 ms window** (more than one full mains cycle) and latch ON if *any* sample is active. Combined with the external pull-ups from §3.5.
+**Fix:** sample across a **25 ms window** (more than one full mains cycle) and latch ON if *any* sample is active.
+
+**Re-opened 2026-08-27, premise unverified.** The fitted module rectifies (MB6S bridge), clamps (5.1 V zener) and **smooths (100 µF)** ahead of the opto LED, so `OUT` may be steady rather than a pulse train — in which case the existing 5 ms / 8-of-10 filter is adequate and this fix is unnecessary. `probeACInput()` reports the min/max spread over a full mains cycle and settles it: a steady low reads near `0-0 mV`, a pulse train swings the full rail. Measure with a contactor energised before rewriting the filter.
 
 ### 5.5 Web server and concurrency
 
@@ -574,7 +578,7 @@ The SCT-013-**030** is the voltage-output variant: burden resistor inside, 1 V a
   GND -----------+---- CT tip of each channel --> its own ADC pin
 ```
 
-So a hub interface board is **two resistors, one capacitor, and one 3.5 mm socket per channel** — for the hub, three passives total. That is less work than sourcing a breakout, and it fits on the same perfboard as the `GPIO 34`/`35` pull-ups that already need retrofitting (§3.5).
+So a hub interface board is **two resistors, one capacitor, and one 3.5 mm socket per channel** — for the hub, three passives total. That is less work than sourcing a breakout. (This previously noted that the perfboard would also carry the `GPIO 34`/`35` pull-ups; those turned out not to be needed — §3.5.)
 
 **If richer data is wanted instead, the alternative is PZEM-004T v3** (₹660-999 each): true RMS voltage, current, power, power factor and cumulative energy over Modbus, addressable, no ADC involvement at all. Power factor is a better dry-run discriminator than current alone. Against it: six units is ₹4-6 k, each needs a **mains voltage tap** as well as its CT — more invasive than a clamp that touches nothing — and its serial bus is a second protocol to carry. Recorded as the upgrade path, not the starting point.
 
@@ -615,12 +619,12 @@ Split-core clamps break no conductor, but the panel is live and must be opened. 
 
 | Document | Correction |
 | :--- | :--- |
-| `docs/HARDWARE.md` §3.1 | ~~GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document.~~ **Applied 2026-08-25.** GPIO 33 now carries `IN_ALARM` on PC817 ch4 (§3.5), and the BOM records the 4-channel board. |
+| `docs/HARDWARE.md` §3.1 | ~~GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document.~~ **Applied 2026-08-25.** GPIO 33 now carries `IN_ALARM` on PC817 ch3 as built (§3.5), and the BOM records the 4-channel board. |
 | `docs/RO_HARDWARE_ANALYSIS.md` §4, §5.1 | ~~`LPS` recorded as `C`/`NC`.~~ **Corrected 2026-08-25** to `C`/`NO` from the board silkscreen and manual p.12. `HPS` reads open as normal and is unwired on this plant. `ALARM` is the configurable `AUX OP`, not a dedicated alarm relay. Polarity now specified once, in `WIRING.md` §6. |
 | `docs/RS485_PROTOCOL.md` §4.2 | `level_percent` removed from node payload; geometry moves to the hub (§4.3). Payload shrinks 10 to 8 bytes. |
 | `docs/WIRING.md` §9 | ~~Address jumper truth table contradicts `nano_node_test.ino`. Both to be corrected from observed hardware (§3.7).~~ **Applied 2026-08-25.** Firmware's decoder is authoritative; the table is now published once, in `WIRING.md` §9.1, with the as-built audit in §9.2. (Section renumbered §8 → §9 when the contact-polarity section was inserted.) |
 | `docs/POWER_BUDGET.md` §5 | Computes a 50 m worst-case run. ~~Actual longest electrical path is Cat5e2 out + return (10 m) + Cat5e3 (10 m) + Cat5e4, roughly 25–30 m to node 0x04.~~ **Superseded 2026-08-25:** the chain was re-ordered to `0x00 -> 0x01 -> 0x04 -> 0x03 -> 0x02` with no return loopback, so the longest path now ends at node `0x02` and the per-hop lengths need re-measuring (`WIRING.md` §12). Drop is smaller than stated either way; conclusion is unchanged. |
-| `firmware/esp32_hub_test/esp32_hub_test.ino` | Comment claims GPIO 34/35 have a hardware pull-up. They do not. |
+| `firmware/esp32_hub_test/esp32_hub_test.ino` | ~~Comment claims GPIO 34/35 have a hardware pull-up. They do not.~~ **This finding was itself wrong — corrected 2026-08-27.** The module does provide one: 47 k to `VCC`, silkscreened. The original comment was right, and this row is what created the phantom defect in §3.5. |
 | `README.md` / `architecture.png` | Present relay float-override as current scope. It is Phase C provision only; Phase B is monitoring. |
 
 ---
