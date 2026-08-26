@@ -617,7 +617,7 @@ void loop() {
                 rwpActive ? "240V ON" : "OFF");
 
   // 4. Relay Sequential Cycling
-  Serial.println(F("[Relay Test]    Cycling Relay 1 -> 2 -> 3 -> 4..."));
+  Serial.println(F("[Relay Test]    Cycling Relay 1 -> 2 -> 3 -> 4 -> node 0x04 fan..."));
   
   digitalWrite(RELAY1_PIN, LOW);
   idle(300);
@@ -634,6 +634,22 @@ void loop() {
   digitalWrite(RELAY4_PIN, LOW);
   idle(300);
   digitalWrite(RELAY4_PIN, HIGH);
+
+  // Node 0x04's fan relay, exercised with the other four. Fan policy will never
+  // click it on a bench - the room is 25 C below the ON threshold - so a relay
+  // that is dead, miswired, or on a browned-out Pro Mini looks exactly like a
+  // relay that is simply not needed yet. Restore to climateFanOn, not to OFF:
+  // if the room really is hot, this must not seal it for the rest of the cycle.
+  if (climateOnline) {
+    uint8_t on = 1, ack[MAX_PAYLOAD];
+    bool clicked = pollNode(0x04, CMD_SET_FAN_RELAY, &on, 1, ack) == 1;
+    idle(300);
+    pollNode(0x04, CMD_SET_FAN_RELAY, &climateFanOn, 1, ack);
+    Serial.printf("[Relay Test]    node 0x04 fan: %s\n",
+                  clicked ? "clicked" : "NO ACK - check D9, relay 5V, buck");
+  } else {
+    Serial.println(F("[Relay Test]    node 0x04 fan: skipped, node offline"));
+  }
 
   digitalWrite(LED_STATUS, LOW);
   idle(2000);
