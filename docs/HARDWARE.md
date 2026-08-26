@@ -92,6 +92,8 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 26** | `IN_RL1_STAT` | 4-Ch PC817 Board Ch 2 `V2` | Input | Aster RL1 contact. LOW = closed = output active |
 | **GPIO 25** | `IN_RL2_STAT` | 4-Ch PC817 Board Ch 3 `V3` | Input | Aster RL2 contact. LOW = closed = output active |
 | **GPIO 33** | `IN_ALARM` | 4-Ch PC817 Board Ch 4 `V4` | Input | Aster `AUX OP` contact. **Confirmed 2026-08-26:** normally open, closes on a plant issue (`WIRING.md` 6.3) |
+| **GPIO 36** | `IN_HPP_CT` | SCT-013-030 clamp (HPP) | Input | Analog, ADC1_CH0. Motor current for health trending — spec §7.3 |
+| **GPIO 39** | `IN_RWP_CT` | SCT-013-030 clamp (RWP) | Input | Analog, ADC1_CH3. Motor current for health trending — spec §7.3 |
 | **GPIO 27** | `OUT_RLY_TWT` | 4-Ch Relay Module IN1 | Output | TWT Float Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
 | **GPIO 23** | `OUT_RLY_RWT` | 4-Ch Relay Module IN2 | Output | RWT Float Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
 | **GPIO 18** | `OUT_RLY_DOS` | 4-Ch Relay Module IN3 | Output | Dosing Level Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |

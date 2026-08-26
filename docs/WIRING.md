@@ -31,6 +31,8 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
 | **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
+| **GPIO 36** | `IN_HPP_CT`  | SCT-013-030 clamp, HPP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH0, 11 dB. Rides a shared 1.65 V bias rail — spec §7.3 |
+| **GPIO 39** | `IN_RWP_CT`  | SCT-013-030 clamp, RWP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH3, 11 dB. Same bias rail — spec §7.3 |
 | **GPIO 27** | `OUT_RLY_TWT`| 4-Ch 5V Relay Module (Relay 1) | `IN1` | Output | Active LOW: Emulates Treated Water Float Contact to Asterro (Phase C) |
 | **GPIO 23** | `OUT_RLY_RWT`| 4-Ch 5V Relay Module (Relay 2) | `IN2` | Output | Active LOW: Emulates Raw Water Float Contact to Asterro (Phase C) |
 | **GPIO 18** | `OUT_RLY_DOS`| 4-Ch 5V Relay Module (Relay 3) | `IN3` | Output | Active LOW: Emulates Dosing Level Contact to Asterro (Phase C) |
@@ -41,7 +43,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 **Pin selection constraints — re-check these before any reshuffle:**
 * **GPIO 34-39 have no internal pull-up**, and the AC opto modules present their phototransistor collector on `OUT`. Both are open-collector, so GPIO 34 and 35 need an **external 10 kΩ pull-up to 3V3**; `pinMode(pin, INPUT)` alone leaves them floating. This is a known defect on the already-built hub and must be fixed physically (phase-B spec §3.5).
 * PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
-* GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added.
+* GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added. **They are all ADC2 and therefore useless for analog while Wi-Fi is up**, which is why the two CT channels take `GPIO 36` and `GPIO 39` (ADC1) instead. Those were the last two free ADC1 pins on this hub.
 * `GPIO 4` is `ADC2_CH0`. ADC2 is unusable while Wi-Fi is active, but this pin is used as a **digital** input, which is unaffected. Do not repurpose it for analog.
 * `GPIO 5` emits a brief pulse at boot (strapping pin). On a `TRIG` line that costs one spurious ranging cycle at power-up and nothing else.
 * GPIO 27/23/18/19 drive relay opto inputs only. They idle HIGH (relay de-energized) through reset and boot, which is the fail-safe state defined in Section 7.2.

@@ -160,6 +160,8 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
 | 34 | `IN_HPP_AC` | AC opto 1 | **External 10 kΩ pull-up to 3V3 required** |
 | 35 | `IN_RWP_AC` | AC opto 2 | **External 10 kΩ pull-up to 3V3 required** |
+| 36 | `IN_HPP_CT` | SCT-013-030 clamp | ADC1_CH0, 11 dB. Added 2026-08-26 — §7.3 |
+| 39 | `IN_RWP_CT` | SCT-013-030 clamp | ADC1_CH3, 11 dB. Added 2026-08-26 — §7.3 |
 | 27 | `OUT_RLY_TWT` | Relay `IN1` | Active LOW. Phase C use |
 | 23 | `OUT_RLY_RWT` | Relay `IN2` | Active LOW. Phase C use |
 | 18 | `OUT_RLY_DOS` | Relay `IN3` | Active LOW. Phase C use |
@@ -492,7 +494,62 @@ Decided 2026-08-26, and it is the right shape for anything that can stop a pump:
 
 **Graduation criteria — write these down before stage 1 starts, not after.** Promote to stage 2 only when the detection has run for a defined period with **zero false positives**, and every alert it did raise was independently corroborated. A dry-run detector that trips spuriously does not protect a pump; it teaches somebody to bypass it, and a bypassed interlock protects nothing.
 
-**Sensor notes if the flow sensor is chosen.** Match the body to the delivery pipe — DN50 is 2" BSP, and reducers either side of a 1.5" line add turbulence and two failure points. Install downstream of the non-return valve, with unions, and support the pipe: the 1.75 MPa rating is nominal for a plastic body, and hammer on shutdown spikes well above static pressure. **The K-factor is unknown until measured** — clone sensors vary, so fill a known volume, count pulses, and store litres-per-pulse hub-side alongside the tank calibration, not in node firmware.
+**Sensor notes if the flow sensor is chosen — see also §7.3, which makes the current clamp the cheaper half of this decision.** Match the body to the delivery pipe — DN50 is 2" BSP, and reducers either side of a 1.5" line add turbulence and two failure points. Install downstream of the non-return valve, with unions, and support the pipe: the 1.75 MPa rating is nominal for a plastic body, and hammer on shutdown spikes well above static pressure. **The K-factor is unknown until measured** — clone sensors vary, so fill a known volume, count pulses, and store litres-per-pulse hub-side alongside the tank calibration, not in node firmware.
+
+### 7.3 Motor current monitoring — six CT channels
+
+**What this is for.** The AC optos already say *the contactor is closed*. They cannot say whether the motor behind it is doing any work. A current clamp turns every pump into an instrument:
+
+- **HPP current trend is a membrane-fouling gauge.** Fouling raises feed pressure, the pump works harder, running current creeps up over weeks. That curve is the cleaning schedule, replacing a calendar guess.
+- **A sudden drop** on any pump is lost suction or a dry run — the §7.2 detection, for ₹349 instead of ₹1,828, and with nothing in the water to jam.
+- **Opto closed but no current** is a welded contactor, an open winding or a tripped overload. Neither sensor sees that alone; the pair does.
+- **Phase imbalance** on the 3-phase borewell. A lost phase makes the remaining two draw hard and cooks the motor, and it is invisible to everything else in this system.
+
+#### Measurement points and pin budget
+
+| Motor | Supply | Panel | Node | Pin |
+| :--- | :--- | :--- | :--- | :--- |
+| HPP | 1-phase (`P`/`N` per panel label) | RO skid | Hub `0x00` | `GPIO 36` — ADC1_CH0 |
+| RWP | 1-phase | RO skid | Hub `0x00` | `GPIO 39` — ADC1_CH3 |
+| Sump motor | 1-phase | Ground starter | Node `0x06` | ADC1, Phase C |
+| Borewell L1 / L2 / L3 | 3-phase | Ground starter | Node `0x06` | ADC1 ×3, Phase C |
+
+Six clamps, **₹2,094** at ₹349 each. The split matters: only two land on the hub, and `GPIO 36`/`39` were the last free **ADC1** pins on it. Everything still free there (12/13/14/15) is ADC2, which is dead whenever Wi-Fi is up — so the hub is now full for analog, and any further current channel has to go on a node.
+
+#### Interface — the "off-the-shelf board" question, answered
+
+The SCT-013-**030** is the voltage-output variant: burden resistor inside, 1 V at 30 A, so no burden calculation. What remains is a DC bias, because the output swings either side of zero and the ADC reads 0-3.3 V only.
+
+**A ready-made breakout exists but is not worth importing.** The boards that carry a 3.5 mm jack plus bias network (Tindie, Mottram Labs, various eBay sellers) are UK/US hobby sellers; six of them, shipped, costs more than the clamps and takes weeks.
+
+**And the passive count is smaller than it looks: the bias rail is shared, not per channel.** One divider feeds every clamp on that node:
+
+```
+  3V3 ---[10k]---+--- bias rail (1.65 V) ---> CT ring of every channel
+                 |
+                [10k]      10uF from the rail to GND
+                 |
+  GND -----------+---- CT tip of each channel --> its own ADC pin
+```
+
+So a hub interface board is **two resistors, one capacitor, and one 3.5 mm socket per channel** — for the hub, three passives total. That is less work than sourcing a breakout, and it fits on the same perfboard as the `GPIO 34`/`35` pull-ups that already need retrofitting (§3.5).
+
+**If richer data is wanted instead, the alternative is PZEM-004T v3** (₹660-999 each): true RMS voltage, current, power, power factor and cumulative energy over Modbus, addressable, no ADC involvement at all. Power factor is a better dry-run discriminator than current alone. Against it: six units is ₹4-6 k, each needs a **mains voltage tap** as well as its CT — more invasive than a clamp that touches nothing — and its serial bus is a second protocol to carry. Recorded as the upgrade path, not the starting point.
+
+#### Getting a trustworthy number
+
+- **Clamp one conductor, never the cable.** The panel label lists `P` and `N` per circuit; a clamp around both reads zero, because the currents cancel. This is the most common first-time failure.
+- **Use the turns multiplier on small loads.** A 1 HP RWP at ~5 A gives only ~170 mV from a 30 A clamp. Passing the conductor through the window **2-3 times** multiplies the signal by that factor — the 13 × 13 mm window takes three turns of 2.5 sqmm easily. Record turns per channel; calibration divides by it.
+- **Sample properly.** ~2 kHz for 200 ms, subtract the measured DC offset, then RMS. That is a 200 ms blocking read, so it belongs where the dosing read already sits: after the last RS485 reply, in the idle part of the cycle — never between a poll and its response.
+- **Two-point calibrate against a clamp meter**, and store the scale factor hub-side with the tank calibration. The ESP32 ADC is nonlinear enough that raw counts are not worth trusting, and this is a trend instrument: consistency matters more than absolute accuracy.
+- **Set ADC attenuation to 11 dB** for the full 0-3.3 V range.
+
+#### Panel work
+
+Split-core clamps break no conductor, but the panel is live and must be opened. **Fit them with the supply isolated.** The 3.5 mm plug is a poor connector inside a vibrating starter enclosure — either panel-mount the sockets or cut the plugs off and terminate into screw terminals. Route CT leads away from the mains bundles: these are millivolt signals sitting beside contactors.
+
+**Staging is the same as §7.2.** These are instruments, not actuators. Nothing derived from a current reading enters a motor control circuit until it has run long enough to have earned it.
+
 
 ---
 
@@ -534,7 +591,8 @@ None of these block the start of implementation.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
 5. **Borewell dry-run detection (§7.2).** Three options costed: ₹1,828 flow sensor, ~₹400 current clamp, or ₹0 by inference once node 0x05 exists. Stage 1 is monitoring only; nothing enters a motor control circuit until the detection has run without false positives. Phase C.
-6. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
+6. **Motor current monitoring (§7.3).** Six SCT-013-030 clamps, ₹2,094 total: HPP and RWP on hub `GPIO 36`/`39`, sump and three borewell phases on node `0x06` in Phase C. Needs one shared bias network per node and a two-point calibration. Instruments only — nothing derived from them controls a motor.
+7. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
 
 ---
 
