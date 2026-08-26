@@ -155,6 +155,17 @@ python docs/check_pinmap.py    # GPIO allocation agrees across the documents
 python docs/check_frame.py     # node and hub agree on CRC-16, framing, level maths
 ```
 
+**Compile both before flashing** — `arduino-cli` ships inside the Arduino IDE install
+(`.../Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe`):
+
+```
+arduino-cli compile -b arduino:avr:nano  firmware/ro_node
+arduino-cli compile -b esp32:esp32:esp32 firmware/esp32_hub_test
+```
+
+Each sketch also carries a `#error` guard for the wrong target, so selecting the ESP32
+for `ro_node` tells you that in one line instead of failing inside `SoftwareSerial.h`.
+
 ---
 
 ## 5. Detailed Documentation Index

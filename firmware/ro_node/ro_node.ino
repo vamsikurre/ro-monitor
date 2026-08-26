@@ -19,6 +19,12 @@
  * on D2/D3 so D0/D1 remain the FTDI header.
  */
 
+// Wrong-target guard. Compiling this for an ESP32 fails deep inside SoftwareSerial
+// with an error that says nothing about the actual mistake.
+#if !defined(__AVR__)
+#error "ro_node is AVR firmware. Select Arduino Nano, or Arduino Pro or Pro Mini (ATmega328P 5V 16MHz) - not the ESP32."
+#endif
+
 #include <SoftwareSerial.h>
 #include <Wire.h>
 

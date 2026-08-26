@@ -20,6 +20,11 @@
  * http://192.168.4.1/ to set full/empty per tank; values persist in NVS.
  */
 
+// Wrong-target guard - the mirror of the one in ro_node.ino.
+#if !defined(ESP32)
+#error "esp32_hub_test is ESP32 firmware. Select your ESP32 dev board - not a Nano or Pro Mini."
+#endif
+
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -61,6 +66,12 @@
 // Calibration AP. Open network would let anyone on the roof change tank scaling.
 #define CAL_AP_SSID      "RO-HUB"
 #define CAL_AP_PASSWORD  "ro-monitor"   // >= 8 chars, change it
+
+// Transmit power. Full power by default. WIFI_POWER_11dBm is 8.5 dB down - about a
+// third of the range for roughly half the radio's peak current - which is a trade
+// worth making ONLY on a supply too weak to carry the peaks. It is not a fix for a
+// brownout: a rail that cannot start a radio cannot be trusted to run relays either.
+#define WIFI_TX_POWER    WIFI_POWER_19_5dBm
 
 // Per-tank calibration. These are first-boot defaults only: whatever you set over
 // Wi-Fi is stored in NVS and wins from then on. Both values are transducer face to
@@ -329,12 +340,13 @@ const char *sensorStatusText(uint8_t status) {
   }
 }
 
-// One tank node: median distance, raw, level, echo quality, status, uptime.
-void reportTankNode(uint8_t addr, const char *label) {
+// One tank node: median distance, raw, echo quality, status, uptime. The node sends
+// millimetres only - the percentage is this hub's, scaled by this hub's calibration.
+void reportTankNode(uint8_t addr, uint8_t tank) {
   uint8_t p[MAX_PAYLOAD];
   int len = pollNode(addr, CMD_READ_LEVEL, NULL, 0, p);
   if (len != 10) {
-    Serial.printf("[Node 0x%02X - %-13s] %s\n", addr, label,
+    Serial.printf("[Node 0x%02X - %-13s] %s\n", addr, tanks[tank].label,
                   len < 0 ? "TIMEOUT / NO RESPONSE" : "BAD PAYLOAD LENGTH");
     return;
   }
@@ -342,10 +354,13 @@ void reportTankNode(uint8_t addr, const char *label) {
   uint16_t median = ((uint16_t)p[0] << 8) | p[1];
   uint16_t raw    = ((uint16_t)p[2] << 8) | p[3];
   uint16_t uptime = ((uint16_t)p[8] << 8) | p[9];
+  tanks[tank].lastMM = median;
 
-  Serial.printf("[Node 0x%02X - %-13s] ", addr, label);
-  if (p[4] == 255) Serial.print("--- %");
-  else             Serial.printf("%3d %%", p[4]);
+  uint8_t pct = levelPercent(median, tanks[tank].fullMM, tanks[tank].emptyMM);
+
+  Serial.printf("[Node 0x%02X - %-13s] ", addr, tanks[tank].label);
+  if (pct == 255) Serial.print("--- %");
+  else            Serial.printf("%3d %%", pct);
   Serial.printf("  %4d mm (raw %4d)  q=%3d %%  %-12s  up %u s\n",
                 median, raw, p[5], sensorStatusText(p[6]), uptime);
 }
@@ -410,30 +425,29 @@ void setup() {
 
   loadCal();
 
-  // AP rather than joining a network: the roof has no Wi-Fi worth relying on, and
-  // calibration must work standing next to the tank with a phone.
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(CAL_AP_SSID, CAL_AP_PASSWORD);
-  // Wi-Fi transmit peaks are what brown out a hub fed through a thin USB cable:
-  // the radio pulls a few hundred mA in bursts the AMS1117 on a dev board cannot
-  // follow. 11 dBm still covers a phone standing at the panel. If the board still
-  // resets with "Brownout detector was triggered", the supply is the fault - fix
-  // that rather than disabling the detector, which just moves the crash later.
-  WiFi.setTxPower(WIFI_POWER_11dBm);
-  server.on("/", handleRoot);
-  server.on("/api/cal", handleCalJson);
-  server.on("/api/cal/set", handleCalSet);
-  server.begin();
-
+  // Banner before the radio starts, deliberately: bringing up Wi-Fi is the biggest
+  // current step in boot, and if the board browns out there you want to have seen
+  // this much printed. A reset loop that prints nothing at all is a different fault
+  // from one that prints the banner and dies on the next line.
   Serial.println(F("\n=================================================="));
   Serial.println(F("    RO MONITOR - ESP32 CENTRAL HUB SELF-TEST     "));
   Serial.println(F("=================================================="));
-  Serial.printf("Calibration AP: %s  ->  http://%s/\n",
-                CAL_AP_SSID, WiFi.softAPIP().toString().c_str());
   for (uint8_t i = 0; i < TANK_COUNT; i++) {
     Serial.printf("  %-14s full %4d mm  empty %4d mm\n",
                   tanks[i].label, tanks[i].fullMM, tanks[i].emptyMM);
   }
+
+  // AP rather than joining a network: the roof has no Wi-Fi worth relying on, and
+  // calibration must work standing next to the tank with a phone.
+  Serial.print(F("Starting calibration AP... "));
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(CAL_AP_SSID, CAL_AP_PASSWORD);
+  WiFi.setTxPower(WIFI_TX_POWER);
+  server.on("/", handleRoot);
+  server.on("/api/cal", handleCalJson);
+  server.on("/api/cal/set", handleCalSet);
+  server.begin();
+  Serial.printf("%s -> http://%s/\n", CAL_AP_SSID, WiFi.softAPIP().toString().c_str());
 }
 
 void loop() {
