@@ -485,6 +485,8 @@ Fit a **membrane breather vent** (Gore-Tex / IP68 M12 type) in the enclosure wal
 
 Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, open at the bottom, vented at the top, sensor on the cap. The water inside follows the sump but stays still, and the pipe wall stops the beam ever seeing the shaft. A few hundred rupees, and it addresses turbulence and false echoes in one part.
 
+**Cable routing near the PV installation.** The roof array has no string inverters — the DC runs down to the battery room, where every inverter lives. That is also where node `0x04` sits and where the RS485 chain passes on its way to the roof, so the electrically noisy room is the battery room, not the roof. Keep the Cat5e clear of inverter AC and DC runs there, cross at 90 degrees rather than running parallel, and do not share a conduit with the PV strings on their way down. A 4-20 mA loop feeding a 10-bit ADC will show every bit of noise it picks up as jitter in the level.
+
 **Judging any of these from the data, not by argument:** the node reports `raw` alongside the filtered `median`, plus an echo-quality figure. Clean tracking is a median that moves smoothly with quality at 100. False echoes look like a median stepping between two values with quality stuck below 100. Log a day of it before concluding anything about a sensor.
 
 ---

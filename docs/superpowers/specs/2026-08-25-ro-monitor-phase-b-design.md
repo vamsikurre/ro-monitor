@@ -423,7 +423,7 @@ Specified here for continuity; detailed design belongs to its own document.
 - **Hardware layer.** New low float → NC contact → in series with the RWT float → sump starter coil. No firmware, no network. The layer that holds when everything else is off.
 - **Node 0x05 (sump level).** See §7.1 — sensor choice is unresolved and is the largest open procurement question in Phase C.
 - **Node 0x06 (starter panel).** 2 × AC opto sensing sump and borewell motor state, plus the ESP32 relay in series as a second cutoff.
-- **Dry-borewell detection.** Borewell energised for N minutes with sump level not rising means the borewell itself is dry. Alert and optionally stop it. This is the upstream condition that begins the whole failure chain, and it only becomes observable once node 0x05 exists.
+- **Dry-borewell detection.** Borewell energised for N minutes with sump level not rising means the borewell itself is dry. **See §7.2** — costed against a flow sensor and a current clamp, and staged: observe first, interlock only once the detection has earned trust.
 - **Fail-safe direction.** ESP32 relay de-energised = closed = current behaviour. WiFi loss, hub crash or a pulled plug degrades to the hardware float.
 
 ### 7.1 Sump level sensor — unresolved
@@ -466,6 +466,34 @@ Three procurement constraints to verify **before** ordering:
 
 **Trade-off summary.** Ultrasonic: ~₹500, already owned, may not work in this environment, no immersion fouling. Pressure transducer: ~₹6,300 all-in including ADS1115 and PSU change, 25 mm accuracy, immune to wall echoes and fogging, but sits permanently in the water and will need periodic diaphragm cleaning and eventual attention if the sump silts up.
 
+### 7.2 Borewell dry-run detection — unresolved
+
+**The failure being addressed.** The borewell's own aquifer runs dry while the starter stays energised, and the borewell motor runs dry. This is upstream of, and separate from, the sump-motor dry-run in §1.1 — that one is fixed by a float; this one has no float that can see it, because the water that has gone missing is underground.
+
+Today nothing observes it. The first sign is a failed pump.
+
+#### Options, costed
+
+| Approach | Cost | Detects | Weakness |
+| :--- | :--- | :--- | :--- |
+| **Flow sensor** — YF-DN50, 2" Hall, 10-200 L/min | **₹1,828** inc. GST | Motor energised with no delivery, within seconds. Also litres/day, i.e. aquifer trend | Impeller and bearing in sandy borewell water — a wear item. Jammed reads as "dry" while water flows. Needs plumbing work |
+| **Current transformer** — SCT-013 clamp on the motor feed | **~₹400** | Dry run (a dry pump draws markedly less), plus locked rotor and overload | No volume data. Threshold must be learned per pump. |
+| **Sump level not rising** while the borewell contactor is energised | **₹0** | A dry borewell, over minutes | Needs node `0x05` to exist. Slow, and confounded by simultaneous draw from the sump |
+
+**Protection and telemetry are different jobs.** The clamp cannot be jammed by sand and catches electrical faults the flow sensor cannot see; the flow sensor counts litres, which is the only one of the three that says anything about the aquifer itself. Choosing between them is choosing which job matters — buying both is defensible and still under ₹2,300.
+
+#### Staged adoption — observe first, interlock later
+
+Decided 2026-08-26, and it is the right shape for anything that can stop a pump:
+
+**Stage 1 — non-intrusive monitoring.** Sensors installed, readings logged and alerted on, **nothing wired into any motor control circuit.** The system is a witness, not an actor. Run it long enough to see a real dry-borewell event and a full season of normal operation.
+
+**Stage 2 — interlock, only once stage 1 has earned it.** An NC relay in the borewell starter's control circuit, in the same fail-safe direction as §1.2: de-energised equals today's behaviour, and the added element can only ever *stop* the motor, never start it.
+
+**Graduation criteria — write these down before stage 1 starts, not after.** Promote to stage 2 only when the detection has run for a defined period with **zero false positives**, and every alert it did raise was independently corroborated. A dry-run detector that trips spuriously does not protect a pump; it teaches somebody to bypass it, and a bypassed interlock protects nothing.
+
+**Sensor notes if the flow sensor is chosen.** Match the body to the delivery pipe — DN50 is 2" BSP, and reducers either side of a 1.5" line add turbulence and two failure points. Install downstream of the non-return valve, with unions, and support the pipe: the 1.75 MPa rating is nominal for a plastic body, and hammer on shutdown spikes well above static pressure. **The K-factor is unknown until measured** — clone sensors vary, so fill a known volume, count pulses, and store litres-per-pulse hub-side alongside the tank calibration, not in node firmware.
+
 ---
 
 ## 8. Deliberate simplifications
@@ -505,7 +533,8 @@ None of these block the start of implementation.
 2. **Tank dimensions.** `empty_distance_mm` / `full_distance_mm` per tank, measured on site. Configuration, not code — the system runs with placeholder values.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
-5. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
+5. **Borewell dry-run detection (§7.2).** Three options costed: ₹1,828 flow sensor, ~₹400 current clamp, or ₹0 by inference once node 0x05 exists. Stage 1 is monitoring only; nothing enters a motor control circuit until the detection has run without false positives. Phase C.
+6. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
 
 ---
 
