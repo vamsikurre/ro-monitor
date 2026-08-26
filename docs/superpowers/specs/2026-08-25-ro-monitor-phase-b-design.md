@@ -50,18 +50,51 @@ Every added element is **normally closed** and can only ever *stop* the motor, n
 
 ## 2. Scope and build order
 
-Build order **B** was selected: complete the RS485 ring using hardware already in hand, then the ground floor.
+**Restructured 2026-08-26 into two site-based phases.** The work is now split by *where it is*, not by what kind of work it is — finish everything on the terrace, then open up the ground floor. Two reasons that is the right cut: each phase is a self-contained system that delivers value on its own, and the two sites need different trades on site at different times.
 
-| Phase | Content | State |
-| :--- | :--- | :--- |
-| **A** | Hub (0x00), Dosing (0x01), RWT (0x02) hardware | **Built.** Test sketches only |
-| **B** | *This document.* Contract layer, real hub + node firmware, nodes 0x03 + 0x04, local dashboard | To build |
-| **C** | Ground floor: dry-run float, node 0x05 (sump), node 0x06 (starter panel), interlock logic | Later |
-| **D** | Cloud / push alerts | Later, optional |
+### Phase 1 — Terrace (RO room, battery room, roof tanks)
 
-### 2.1 Out-of-band recommendation
+| Item | State |
+| :--- | :--- |
+| Hub `0x00`: ESP32, SHT30, 4-ch PC817 opto, RS485 master | **Built** |
+| Dosing tank AJ-SR04M wired direct to hub (§13 of `WIRING.md`) | Built, needs calibration |
+| Node `0x02` RWT, node `0x03` TWT — Arduino Nano, one shared binary | **Firmware done, on the bench** |
+| Node `0x04` battery room — Pro Mini, SHT30 + fan relay | **Firmware done, on the bench** |
+| `GPIO 34` / `GPIO 35` external 10 kΩ pull-ups — outstanding hub defect (§3.5) | To fit |
+| HPP + RWP current clamps on `GPIO 36` / `GPIO 39` (§7.3, `WIRING.md` §14) | Parts ordered |
+| TWT level sensor — ultrasonic ruled out by the wall-adjacent hole (`WIRING.md` §9.3) | **Decision open** |
+| Local dashboard served by the hub | To build |
 
-The **dry-run float (§1.1) requires no firmware and is independent of all Phase B work.** It is an afternoon of electrical work. Fitting it before or during Phase B means the pump is protected for the weeks Phase B takes. Deferring it to Phase C is the one part of build order B that carries avoidable risk.
+**Phase 1 is done when** all three RS485 nodes answer the hub reliably on the installed cable, every tank reads a calibrated level, the battery room fan runs on hub policy, and the dashboard shows it.
+
+### Phase 2 — Ground floor (sump, borewell, starter panel)
+
+| Item | State |
+| :--- | :--- |
+| Node `0x05` sump level — sensor choice still open (§7.1) | Later |
+| Node `0x06` starter panel — 2 × AC opto, 4-ch relay | Later |
+| Sump + borewell current clamps, 2 per motor (§7.3) | Clamps in hand |
+| Borewell dry-run detection, observe-only first (§7.2) | Later |
+| Dry-run float + interlock chain (§1.2) | **See the carve-out below** |
+
+**Phase 2 is done when** the sump has a level, both ground motors report current and run state, and dry-run detection has run long enough in observe-only mode to earn an interlock.
+
+### 2.1 The one thing that must not wait for its phase
+
+**The dry-run float (§1.1) is ground-floor work that belongs in Phase 1's timeframe.** It needs no firmware, no node and no network — a float, a length of cable and an afternoon of an electrician's time, wired NC in series into the sump starter coil.
+
+Everything else on the ground floor can wait for Phase 2 without consequence. This cannot: it is the *only* thing standing between a dry sump and a burnt sump motor, and the failure it prevents is the reason this project exists (§1). Terrace-first means the pump would otherwise stay unprotected for the entire duration of Phase 1.
+
+**Fit it while Phase 1 is being built.** It is the single highest value-per-rupee item in the whole project, and it is independent of every line of code here.
+
+### 2.2 Deferred beyond both phases
+
+| Item | Why it waits |
+| :--- | :--- |
+| Aster float / level emulation on the hub's 4-ch relay board | Physically terrace hardware, but it *controls* the plant. It belongs after both phases are proven observing, on the same observe-then-act principle as §7.2 |
+| Cloud / push alerts | Optional. The local dashboard is the deliverable; cloud is convenience |
+
+> **Historical labels.** Earlier revisions of this document used phases A-D. The mapping: **A and B → Phase 1**, **C → Phase 2**, **D → §2.2**. Older "(Phase C)" tags elsewhere in the documents mean *deferred*, and where they sit on terrace hardware — the relay emulation rows — they now mean §2.2 rather than the ground floor.
 
 ---
 

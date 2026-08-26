@@ -126,7 +126,22 @@ The system telemetry directly visualizes the plant's water balance and environme
 
 ---
 
-## 4. Firmware
+## 4. Build Phases
+
+The project is built **by site**, terrace first, then ground floor. Each phase is a system that works on its own.
+
+| | Phase 1 — Terrace | Phase 2 — Ground floor |
+| :--- | :--- | :--- |
+| **Scope** | RO room, battery room, roof tanks | Sump, borewell, starter panel |
+| **Nodes** | Hub `0x00`, RWT `0x02`, TWT `0x03`, Battery Room `0x04` | Sump `0x05`, Starter panel `0x06` |
+| **Sensing** | 3 tank levels, 2 room climates, Aster contacts, HPP + RWP current | Sump level, sump + borewell current, borewell dry-run |
+| **Status** | Node firmware done and bench-tested; hub bring-up in progress | Not started; clamps in hand |
+
+**One exception crosses the line.** The sump **dry-run float** (`superpowers/specs/…-phase-b-design.md` §1.1) is ground-floor work that should be fitted during Phase 1. It needs no firmware and no node — a float, some cable, an afternoon — and until it exists the sump motor can still run dry, which is the failure this project was started to prevent. Terrace-first would otherwise leave that pump unprotected for the whole of Phase 1.
+
+---
+
+## 5. Firmware
 
 | Sketch | Board | Notes |
 | :--- | :--- | :--- |
@@ -175,7 +190,7 @@ for `ro_node` tells you that in one line instead of failing inside `SoftwareSeri
 
 ---
 
-## 5. Detailed Documentation Index
+## 6. Detailed Documentation Index
 
 For in-depth technical documentation, refer to the guides in the `docs/` folder:
 - **[Hardware Specifications & Pin Allocations](docs/HARDWARE.md)**
