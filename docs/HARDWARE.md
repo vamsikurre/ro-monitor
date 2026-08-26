@@ -88,10 +88,10 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` (RO Room) | Output | I2C SCL (100kHz standard) |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Optocoupler Module 1 `OUT` | Input | Active LOW when HPP 240V contactor active. **External 10 kΩ pull-up to 3V3 required** |
 | **GPIO 35** | `IN_RWP_AC` | 220V AC Optocoupler Module 2 `OUT` | Input | Active LOW when RWP 240V active. **External 10 kΩ pull-up to 3V3 required** |
-| **GPIO 32** | `IN_TWT_FLOT` | 4-Ch PC817 Board Ch 1 `V1` | Input | Aster `TWT FLOTY` loop. LOW = closed = tank not full |
-| **GPIO 26** | `IN_RL1_STAT` | 4-Ch PC817 Board Ch 2 `V2` | Input | Aster RL1 contact. LOW = closed = output active |
-| **GPIO 25** | `IN_RL2_STAT` | 4-Ch PC817 Board Ch 3 `V3` | Input | Aster RL2 contact. LOW = closed = output active |
-| **GPIO 33** | `IN_ALARM` | 4-Ch PC817 Board Ch 4 `V4` | Input | Aster `AUX OP` contact. **Confirmed 2026-08-26:** normally open, closes on a plant issue (`WIRING.md` 6.3) |
+| **GPIO 32** | `IN_TWT_FLOT` | 4-Ch PC817 Board Ch 4 `V4` | Input | Aster `TWT FLOTY` loop. LOW = closed = tank not full |
+| **GPIO 26** | `IN_RL1_STAT` | 4-Ch PC817 Board Ch 1 `V1` | Input | Aster RL1 contact. LOW = closed = output active |
+| **GPIO 25** | `IN_RL2_STAT` | 4-Ch PC817 Board Ch 2 `V2` | Input | Aster RL2 contact. LOW = closed = output active |
+| **GPIO 33** | `IN_ALARM` | 4-Ch PC817 Board Ch 3 `V3` | Input | Aster `AUX OP` contact. **Confirmed 2026-08-26:** normally open, closes on a plant issue (`WIRING.md` 6.3) |
 | **GPIO 36** | `IN_HPP_CT` | SCT-013-030 clamp (HPP) | Input | Analog, ADC1_CH0. Motor current for health trending — spec §7.3 |
 | **GPIO 39** | `IN_RWP_CT` | SCT-013-030 clamp (RWP) | Input | Analog, ADC1_CH3. Motor current for health trending — spec §7.3 |
 | **GPIO 27** | `OUT_RLY_TWT` | 4-Ch Relay Module IN1 | Output | TWT Float Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |

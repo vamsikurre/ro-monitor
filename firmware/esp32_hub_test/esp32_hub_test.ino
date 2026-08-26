@@ -47,6 +47,7 @@
 #define OPTO_TWT_FLOT    32
 #define OPTO_RL1_STAT    26
 #define OPTO_RL2_STAT    25
+#define OPTO_ALARM       33   // Aster AUX OP: NO, closes on a plant issue (WIRING.md 6.3)
 #define OPTO_HPP_AC      34
 #define OPTO_RWP_AC      35
 
@@ -527,6 +528,7 @@ void setup() {
   pinMode(OPTO_TWT_FLOT, INPUT_PULLUP);
   pinMode(OPTO_RL1_STAT, INPUT_PULLUP);
   pinMode(OPTO_RL2_STAT, INPUT_PULLUP);
+  pinMode(OPTO_ALARM,    INPUT_PULLUP);
   pinMode(OPTO_HPP_AC,   INPUT);
   pinMode(OPTO_RWP_AC,   INPUT);
 
@@ -606,15 +608,24 @@ void loop() {
   bool twtClosed = (digitalRead(OPTO_TWT_FLOT) == LOW);
   bool rl1Active = (digitalRead(OPTO_RL1_STAT) == LOW);
   bool rl2Active = (digitalRead(OPTO_RL2_STAT) == LOW);
+  bool alarmActive = (digitalRead(OPTO_ALARM) == LOW);
   bool hppActive = readACInputFiltered(OPTO_HPP_AC);
   bool rwpActive = readACInputFiltered(OPTO_RWP_AC);
 
-  Serial.printf("[Opto Inputs]   TWT Float: %s | RL1: %s | RL2: %s | 240V HPP: %s | 240V RWP: %s\n",
+  // GPIO 34/35 have no internal pull-up and the AC modules are open-collector, so
+  // those two read whatever the air decides until the external 10k to 3V3 is fitted
+  // (phase-B spec 3.5). Said on every cycle: a floating pin that happens to read OFF
+  // is indistinguishable from a working opto seeing no mains.
+  // ponytail: unconditional nag, delete the trailing string once the resistors
+  // are on the board - there is nothing to sense the pull-up with from software.
+  Serial.printf("[Opto Inputs]   TWT Float: %s | RL1: %s | RL2: %s | ALARM: %s | 240V HPP: %s | 240V RWP: %s%s\n",
                 twtClosed ? "CLOSED" : "OPEN",
                 rl1Active ? "ACTIVE" : "INACTIVE",
                 rl2Active ? "ACTIVE" : "INACTIVE",
+                alarmActive ? "ACTIVE" : "INACTIVE",
                 hppActive ? "240V ON" : "OFF",
-                rwpActive ? "240V ON" : "OFF");
+                rwpActive ? "240V ON" : "OFF",
+                "   (34/35 unverified: no pull-up fitted)");
 
   // 4. Relay Sequential Cycling
   Serial.println(F("[Relay Test]    Cycling Relay 1 -> 2 -> 3 -> 4 -> node 0x04 fan..."));

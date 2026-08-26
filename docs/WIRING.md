@@ -23,10 +23,10 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 17** | `RS485_TX` | XY-485 Auto-Flow RS485 Module | `TXD` | Output | UART2 Serial TX (3.3V TTL logic) |
 | **GPIO 21** | `I2C_SDA` | GY-SHT30-D Temp/Humidity Sensor | `SDA` | Bidirectional | I2C Data Line (4.7k pull-up to 3.3V) |
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D Temp/Humidity Sensor | `SCL` | Output | I2C Clock Line (Standard 100 kHz / Fast 400 kHz) |
-| **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` | Input | Active LOW when Aster `TWT FLOTY` loop is closed (`INPUT_PULLUP`) |
-| **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL1 / Multiport valve contact is closed (`INPUT_PULLUP`) |
-| **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
-| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when the Aster `AUX OP` contact is closed. **Confirmed 2026-08-26: normally open, closes on a plant issue — `AUX OP` behaves as `ALARM`** (Section 6.3, `INPUT_PULLUP`) |
+| **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when Aster `TWT FLOTY` loop is closed (`INPUT_PULLUP`) |
+| **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` | Input | Active LOW when Aster RL1 / Multiport valve contact is closed (`INPUT_PULLUP`) |
+| **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
+| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `AUX OP` contact is closed. **Confirmed 2026-08-26: normally open, closes on a plant issue — `AUX OP` behaves as `ALARM`** (Section 6.3, `INPUT_PULLUP`) |
 | **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
 | **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
@@ -120,7 +120,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 
 ## 5. 4-Channel PC817 Optoisolator Module (Sensor Inputs)
 
-Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part; three channels were in use and channel 4 is claimed by `IN_ALARM`, leaving **no spare channel**. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
+Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part; all four channels are in use — `IN_ALARM` landed on channel 3 and `TWT FLOTY` on channel 4, leaving **no spare channel**. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
 
 ### 5.1. Module Architecture & Jumpers
 * **Input Side (Left):** `IN1`..`IN4` (+) and `G` (Return) with onboard 3k ohm current-limiting resistors (compatible with 3.3V to 24V DC).
@@ -131,13 +131,23 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
 ```
             INPUT SIDE (Left)                            OUTPUT SIDE (Right)
     +---------------------------------+          +---------------------------------+
-    | [ IN1 ] (TWT FLOTY loop)        |          | [ V1 ] --> ESP32 GPIO 32        |
-    | [ IN2 ] (RL1 contact loop)      |          | [ V2 ] --> ESP32 GPIO 26        |
-    | [ IN3 ] (RL2 contact loop)      |          | [ V3 ] --> ESP32 GPIO 25        |
-    | [ IN4 ] (ALARM / AUX OP loop)   |          | [ V4 ] --> ESP32 GPIO 33        |
+    | [ IN1 ] (RL1 contact loop)      |          | [ V1 ] --> ESP32 GPIO 26        |
+    | [ IN2 ] (RL2 contact loop)      |          | [ V2 ] --> ESP32 GPIO 25        |
+    | [ IN3 ] (ALARM / AUX OP loop)   |          | [ V3 ] --> ESP32 GPIO 33        |
+    | [ IN4 ] (TWT FLOTY loop)        |          | [ V4 ] --> ESP32 GPIO 32        |
     | [  G  ] (Common input return)   |          | [  G ] --> ESP32 GND            |
     +---------------------------------+          +---------------------------------+
 ```
+
+**As-built 2026-08-27, verified by injection.** The channel order above is a
+one-place rotation of the order this document carried until now: `RL1` `RL2`
+`ALARM` `TWT` rather than `TWT` `RL1` `RL2` `ALARM`. It was checked by injecting
+5V into each input in turn and reading the hub's `[Opto Inputs]` line — all four
+report under the right label, so the `V1..V4` runs match the table. Verify this
+way after any rework, never by tracing the ribbon: a rotation still lights all
+four channels, and the label it would cross `ALARM` with is `RL2`. A silently
+mislabelled plant-fault flag is the one failure here that does not announce
+itself.
 
 ### 5.2. Wetting Loop for Volt-Free Contacts
 
@@ -238,7 +248,7 @@ If shorting `HPS` produces nothing, `HI PRESS SW` is `OFF` (bypassed); use `DOS 
 
 **Step 3 — wire the sense channel.**
 
-*Volt-free result (expected):* PC817 channel 4 per Section 5.2 — `+12V -> ALARM [C]`, `ALARM [NO] -> IN4`, `12V GND -> G`, `V4 -> GPIO 33`, `INPUT_PULLUP`, alarm = LOW. No new hardware: channel 4 was the spare on the board already fitted.
+*Volt-free result (expected):* PC817 channel 3 per Section 5.2 — `+12V -> ALARM [C]`, `ALARM [NO] -> IN3`, `12V GND -> G`, `V3 -> GPIO 33`, `INPUT_PULLUP`, alarm = LOW. No new hardware: the board already fitted had a spare channel.
 
 *Switched-mains result:* do **not** use the PC817. Add a 220V AC opto module wired as in Section 8 (`L` = switched leg, `N` = the other screw), `OUT` -> GPIO 33 **with a 10 kΩ pull-up to 3V3** (same open-collector caveat as GPIO 34/35). Note this is a **fifth** AC opto module; the BOM's four are already allocated.
 
@@ -389,8 +399,8 @@ Published here first; `firmware/ro_node/ro_node.ino` carries the same table and 
 bit0 = (digitalRead(A0) == HIGH) ? 1 : 0;   // INPUT_PULLUP: open = 1, jumpered to GND = 0
 bit1 = (digitalRead(A1) == HIGH) ? 1 : 0;
 raw  = (bit1 << 1) | bit0;
-if (raw == 0) return 0x04;                  // both grounded
-return raw;                                 // 0x01 / 0x02 / 0x03
+return ADDR_MAP[raw];                       // the table below is the lookup;
+                                            // 0b00 is UNASSIGNED, not 0x04
 ```
 
 | `A1` | `A0` | raw | Node ID | Role |
