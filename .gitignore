@@ -65,3 +65,7 @@ env/
 scratch/
 tmp/
 temp/
+.theia/
+build/
+*.hex
+*.elf
