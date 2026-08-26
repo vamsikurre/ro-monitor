@@ -645,3 +645,98 @@ The dosing tank sits roughly **100 cm** from the hub enclosure, well inside the 
 **Scheduling — do not read this sensor inside a poll window.** `pulseIn(GPIO4, HIGH, 35000UL)` blocks for up to 35 ms. Phase-B spec §4.1 documents this as fatal *on a Nano slave*, where a blocked `SoftwareSerial` silently drops ~15 % of incoming polls. On the hub the risk is different and milder: the hub is the master and slaves never transmit unbidden (`RS485_PROTOCOL.md` §1.1), so nothing is missed — but a 35 ms stall inside the poll/response sequence still eats into the turnaround guard time. Read it at a fixed point in the 1 s cycle, **after** the last slave response and before serving the dashboard. There is ~800 ms of idle cycle to put it in.
 
 **What this removes from the build:** one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.
+
+---
+
+## 14. Motor Current Clamps — Hub Wiring (HPP & RWP)
+
+Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last two free **ADC1** pins. Rationale, calibration and the four further channels at the ground panel are in phase-B spec §7.3.
+
+**Why the bias network exists at all:** the clamp's output is AC, swinging either side of zero. An ESP32 ADC reads 0-3.3 V only, so the whole waveform is lifted onto a 1.65 V pedestal and the firmware subtracts that offset again in software. **One pedestal serves both channels** — the divider is shared, not duplicated.
+
+```
+                            +3.3V (ESP32 3V3 pin)
+                                    |
+                                   [ ] R1  10k
+                                    |
+        BIAS RAIL  o-----------------+-------------------o  ( 1.65 V )
+        (1.65 V)   |                 |                   |
+                   |                [ ] R2  10k        --+--  C1  10uF
+                   |                 |                 --+--  C2  0.1uF
+                   |                GND                  |
+                   |                                    GND
+                   |
+      +------------+------------------------------+
+      |                                           |
+      |  CHANNEL 1 - HPP                          |  CHANNEL 2 - RWP
+      |                                           |
+  +---+----------------+                    +-----+--------------+
+  | 3.5 mm SOCKET  [S] |                    | 3.5 mm SOCKET  [S] |
+  | SCT-013-030    [T] |                    | SCT-013-030    [T] |
+  +----------------+---+                    +----------------+---+
+                   |                                         |
+                  [ ] R3 1k                                 [ ] R4 1k
+                   |                                         |
+                   +-----o GPIO 36 (ADC1_CH0)                +-----o GPIO 39 (ADC1_CH3)
+                   |                                         |
+                 --+-- C3 100nF                            --+-- C4 100nF
+                 --+--                                     --+--
+                   |                                         |
+                  GND                                       GND
+
+
+  Clamp jaws:   HPP  ->  around the  P  conductor only        (never P and N together)
+                RWP  ->  around the  P  conductor only
+```
+
+### 14.1. Bill of materials
+
+| Ref | Part | Qty | Note |
+| :--- | :--- | :---: | :--- |
+| — | SCT-013-**030** clamp (30 A, 1 V output) | 2 | Voltage output: burden resistor is **inside**. Do not add one |
+| R1, R2 | 10 kΩ 1/4 W | 2 | Bias divider. 1 % preferred, but only for stability — the offset is measured in firmware anyway |
+| C1 | 10 µF electrolytic | 1 | Holds the pedestal stiff against the CT's own current draw |
+| C2 | 0.1 µF ceramic | 1 | Across C1, for the high-frequency end |
+| R3, R4 | 1 kΩ 1/4 W | 2 | Series protection. Limits fault current into the ADC pad to ~3 mA |
+| C3, C4 | 100 nF ceramic | 2 | With R3/R4, a ~1.6 kHz low-pass. Well clear of 50 Hz, kills contactor hash |
+| — | 3.5 mm TRS panel-mount socket | 2 | Panel-mount, not a dangling in-line plug (§14.3) |
+
+Everything but the clamps fits on the same scrap of perfboard as the `GPIO 34` / `GPIO 35` pull-ups the hub already owes from §1 — one retrofit, not two.
+
+### 14.2. Two things to check with a meter before trusting the wiring
+
+1. **Which socket pins the clamp actually uses.** Clones differ: most SCT-013 leads use **tip and sleeve**, some use tip and ring. With the clamp unplugged and closed, measure resistance across the plug's contacts — the winding reads a few tens of ohms, the unused contact reads open. Wire the socket to match what you measured, not to what this diagram assumes.
+2. **The pedestal, before connecting any clamp.** Power the hub, measure `GPIO 36` and `GPIO 39` to GND: both should sit at **1.6-1.7 V**. If one reads 0 V or 3.3 V, the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault.
+
+### 14.3. Panel practice
+
+* **Fit the clamps with the supply isolated.** Split-core means no conductor is broken, but the panel is live when open.
+* **Panel-mount the sockets.** A 3.5 mm plug hanging inside a vibrating starter enclosure is a connector that will fail intermittently, which is the worst way for it to fail. Alternatively cut the plugs off and terminate into screw terminals.
+* **Route the clamp leads away from the mains bundles**, and twist each pair. These are millivolt signals sitting beside contactors.
+* **Small loads: use turns.** A ~5 A pump gives only ~170 mV from a 30 A clamp. Passing the conductor through the jaws 2-3 times multiplies the signal by that count; the 13 × 13 mm window takes three turns of 2.5 sqmm. **Write the turn count on the enclosure** — the calibration divides by it, and a future reader has no other way to know.
+
+### 14.4. Firmware outline
+
+```c
+// GPIO 36 / 39 are ADC1 - they keep working with Wi-Fi up, unlike ADC2.
+analogSetPinAttenuation(IN_HPP_CT, ADC_11db);   // full 0-3.3 V span
+
+// ~200 ms of samples, DC offset measured rather than assumed, then RMS.
+// Blocking: call it where the dosing read already sits - after the last RS485
+// reply, never between a poll and its response.
+float readAmpsRMS(uint8_t pin, float ampsPerVolt, uint8_t turns) {
+  const uint16_t N = 400;
+  uint32_t sum = 0;
+  uint16_t s[N];
+  for (uint16_t i = 0; i < N; i++) { s[i] = analogRead(pin); sum += s[i]; delayMicroseconds(500); }
+
+  float mean = (float)sum / N;                   // the live pedestal, not a constant
+  float acc = 0;
+  for (uint16_t i = 0; i < N; i++) { float d = s[i] - mean; acc += d * d; }
+
+  float counts = sqrtf(acc / N);
+  return counts * (3.3f / 4095.0f) * ampsPerVolt / turns;
+}
+```
+
+`ampsPerVolt` starts at 30.0 for a 30 A / 1 V clamp and is then **corrected by a two-point calibration against a clamp meter** — the ESP32's ADC is nonlinear enough that the nominal figure is a starting guess. Store it hub-side beside the tank calibration, so it is editable over the AP rather than compiled in.
