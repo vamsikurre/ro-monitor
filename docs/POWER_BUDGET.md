@@ -126,7 +126,7 @@ Because the HLK-20M12 operates at only ~21% of its rated capacity:
 ## 5. CAT5e Cable Voltage Drop Calculation
 
 - Standard solid-copper 24 AWG CAT5e wire resistance: $R_{\text{single}} \approx 0.084\ \Omega/\text{meter}$.
-- Using **2 conductors in parallel** for +12V (Orange pair) and **2 conductors in parallel** for GND (Green pair):
+- Using **2 conductors in parallel** for +12V and **2 conductors in parallel** for GND — the orange and green pairs respectively, per the colour code in `WIRING.md` §12.1, which is authoritative:
   $$R_{\text{effective}} = \frac{0.084\ \Omega/\text{m}}{2} = 0.042\ \Omega/\text{meter}$$
 
 ### Method — sum the segments, do not charge the whole run at one node's current

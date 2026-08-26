@@ -612,7 +612,26 @@ This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nano
 * **No return loopback, no junction-box splice.** Earlier revisions routed the bus up to a mid-chain RWT and back down through the brown pair to an RO room splice. With RWT last, every hop is a single outbound pair and both spare pairs stay free for the 12V rail.
 * **All cable lengths are TBM** and must be measured on site before re-running the power budget. The old 1.5 m `Cat5e 1` drop belonged to the deleted dosing node; the trunk now starts with the hub-to-battery-room run.
 
-### 12.1. Transceiver Count — Resolved
+### 12.1. Cat5e Conductor Colour Code (authoritative)
+
+**T568B pair colours, one assignment for every drop on the bus.** This table is the single source; `POWER_BUDGET.md` §5 assumes it for the drop calculation and the README's architecture diagram refers to it. Wire every drop the same way, including the spare pair, so any cable can be swapped for any other without a meter.
+
+| Pair | Conductors | Carries | Why this pair |
+| :---: | :--- | :--- | :--- |
+| **1** | **Blue** = `A+`<br>**White-Blue** = `B-` | RS485 differential | A twisted pair is not optional here — the whole noise immunity of RS485 comes from the two conductors sharing the same interference. Blue is the pair furthest from the power pairs in most cable layups |
+| **2** | **Orange + White-Orange**, both paralleled | **+12V** | Two conductors halve the resistance to 0.042 Ω/m, which is what `POWER_BUDGET.md` §5 assumes |
+| **3** | **Green + White-Green**, both paralleled | **GND** | Same, for the return |
+| **4** | **Brown + White-Brown** | **Spare — land it anyway** | Terminated at both ends, unused. It is the repair path when a conductor breaks, and the free run if a node ever grows a second sensor |
+
+**Rules that go with it:**
+
+* **`A+` is solid blue, `B-` is white-blue. Everywhere.** Swapped A/B is the single most common bus fault, and it presents as a node that simply never answers — indistinguishable from a dead node until you meter it. Consistency matters far more than which colour got which polarity.
+* **Power and signal deliberately do not share a pair.** +12V and GND each get a full pair, the same arrangement PoE uses. Splitting them across pair members would unbalance the run and couple supply noise straight into the differential.
+* **At a mid-chain node, both cables land on the same terminals** — incoming and outgoing on `A+`/`B-`/`+12V`/`GND` together. The bus stays one continuous line; **no stub longer than ~300 mm**, and no star.
+* **If STP is used**, ground the shield at the **hub end only**. Grounding both ends invites a loop current down the drain wire.
+* **Label both ends of every drop** with its segment (`HUB→0x04`, `0x04→0x03`, `0x03→0x02`) before it goes into a conduit.
+
+### 12.2. Transceiver Count — Resolved
 
 The bus needs **4** XY-485 modules: one at the hub and one per remaining slave (`0x04`, `0x03`, `0x02`). An earlier revision of this section described deferring the RWT node because the design then called for five. Deleting node `0x01` (Section 13) removed the fifth. **Build the whole bus in one pass — there is no interim state and the 120 Ω lives at RWT `0x02` from the start.**
 
