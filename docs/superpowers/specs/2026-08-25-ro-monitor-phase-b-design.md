@@ -444,12 +444,14 @@ The concern is real but unproven: 3.5 m against a 4.5 m specification, in a narr
 
 Reference part evaluated: DFRobot `KIT0139` — 0-5 m, 4-20 mA, 0.5 % accuracy (25 mm over range), 316L stainless, IP68, 12-36 V, 5 m cable. **₹6,071 inc. GST.**
 
+**Match the range to the tank.** Accuracy is % of full scale, so a 0-5 m unit on the 1.5 m TWT gives ±25 mm — ±1.7 % of the span actually used — and only ~245 counts of a Nano's 10-bit ADC across the whole tank. A 0-2 m or 0-3 m variant costs about the same and roughly triples the useful resolution. The 0-5 m figure above was quoted for the 3.5 m sump; it is the wrong part for TWT.
+
 > Corrects an earlier estimate of ~₹1500 in this document, which was wrong by roughly 4×.
 
 Three procurement constraints to verify **before** ordering:
 
 1. **Cable length.** 5 m of cable against a 3.5 m sump leaves 1.5 m to reach the node enclosure. Measure the actual run first. This cable generally **cannot be spliced** — see (2).
-2. **Vent tube.** 4-20 mA level transducers reference atmosphere through a vent running inside the cable. Splicing breaks it. The dry end must terminate somewhere genuinely dry; sealing the vent inside a damp junction box is the standard cause of unexplained ~100 mm drift.
+2. **Vent tube.** 4-20 mA level transducers reference atmosphere through a vent running inside the cable. Splicing breaks it. The dry end must terminate somewhere genuinely dry **and genuinely vented** — sealing it in an airtight box is worse than damp, because the reference volume then tracks temperature: `dP = P x dT/T` makes a 20 C swing 6.8 kPa, about **0.7 m of apparent water**. A membrane breather vent in the enclosure wall plus a desiccant sachet is the fix; `WIRING.md` 9.3 carries the detail.
 3. **Supply voltage.** 12-36 V. Node 0x05 is currently specced with an HLK-20M5 (5 V). Switching to this sensor means a 12 V supply plus a buck for the ESP32 — a BOM change, not a drop-in.
 
 **Signal conditioning.** The DFRobot kit includes a current-to-voltage converter board. Feed it to an **ADS1115** (16-bit I2C ADC, ~₹250) rather than the ESP32's internal ADC, which is nonlinear enough to discard the 0.5 % accuracy being paid for. On an AVR node (if an RS485 tank ever switches) the internal ADC is adequate instead: 4-20 mA across 250 Ω is 1-5 V, which is ~819 counts of the Nano's 10-bit range over 5 m — about 6 mm.

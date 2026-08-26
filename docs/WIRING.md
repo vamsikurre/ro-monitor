@@ -469,6 +469,18 @@ Three ways out, in cost order:
 
 **This reorders the procurement question in spec §7.1.** The sump has an open manhole and can take a stilling well with a sensor already owned; TWT cannot. If exactly one pressure transducer is bought, the evidence points at TWT for it, not the sump.
 
+#### If the TWT transducer is fitted — three requirements
+
+**1. The enclosure above the tank must breathe.** The node box on the tank roof is planned airtight, and a gauge transducer references atmosphere through a vent tube running inside its cable. Terminate that tube in a sealed box and its reference becomes a fixed volume of air in the sun:
+
+> `ΔP = P × ΔT/T` — a **20 °C swing is 6.8 kPa, which is ~0.7 m of apparent water** on a 1.5 m tank. Even 5 °C is 173 mm. The level appears to rise each morning and fall each evening, and nothing in the reading looks faulty.
+
+Fit a **membrane breather vent** (Gore-Tex / IP68 M12 type) in the enclosure wall — weatherproof, pressure-equalised — and add a replaceable desiccant sachet inside. At the terminal, **leave the vent tube open**: never crimp it into a gland, seal it in heat-shrink, or pot it in epoxy. This single detail is the difference between a transducer that holds calibration for years and one that drifts within a week.
+
+**2. Size the sensor to the tank, not to the catalogue.** TWT is **~1.5 m** deep. Accuracy is quoted as % of *full scale*, so a 0-5 m unit gives ±25 mm here — ±1.7 % of the span actually used — and on a Nano's 10-bit ADC the whole tank occupies only ~245 counts (~6 mm each). A **0-2 m or 0-3 m variant** of the same sensor costs about the same, gives ±10 mm, and ~2.4 mm per ADC count. Buy for the tank you have.
+
+**3. Hang it 50-100 mm off the floor.** Clear of sediment, and it means the bottom 50-100 mm is below the sensor and simply never measured — which the hub's calibration absorbs the moment you set *empty = now* at the working empty level.
+
 **Sump (concrete, deep, ground floor, `0x05`).** The hard one, and the reason phase-B spec §7.1 is still open. A 3.5 m shaft with a ladder, a riser pipe and rough walls is exactly the geometry that produces early echoes, and the borewell inflow foams the surface while it runs.
 
 Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, open at the bottom, vented at the top, sensor on the cap. The water inside follows the sump but stays still, and the pipe wall stops the beam ever seeing the shaft. A few hundred rupees, and it addresses turbulence and false echoes in one part.
