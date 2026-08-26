@@ -501,6 +501,8 @@ Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, 
 
 ## 10. Battery Room Node (0x04: SHT30 & Exhaust Fan)
 
+> **Who decides the fan:** the hub. Thresholds live in hub NVS and are set from the calibration AP (`RS485_PROTOCOL.md` §4.4), so changing them needs a phone, not a programmer on a ladder. The node keeps a hotter backstop — on 40.0 °C, off 37.0 °C — that takes over only if no command arrives for five minutes, plus a fail-safe that ventilates if the SHT30 goes unreadable. The relay is wired so that both of those, and a de-energised board, leave the room ventilated rather than sealed.
+
 **Mid-chain node — no termination resistor.** 0x04 sits between the Dosing node and the TWT node in the as-installed run (Section 12). If a 120 ohm resistor was fitted here under the earlier end-of-bus assumption, **remove it**: three terminators on one bus over-load the drivers and blunt the differential swing.
 
 ```

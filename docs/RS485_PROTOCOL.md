@@ -101,12 +101,27 @@ Commands the battery room exhaust fan state.
 - **Request Payload (1 Byte):** `uint8_t desired_state` (`0 = Turn OFF`, `1 = Turn ON`).
 - **Response Payload (1 Byte):** `uint8_t current_state` (`0 = OFF`, `1 = ON`).
 
-**The fan is normally the node's own decision, not the hub's.** `0x04` runs a local
-thermostat — on at 38.0 °C, off at 36.0 °C, and on regardless if the SHT30 has been
-unreadable for 30 s — so the battery room keeps ventilating when the bus, the hub or
-the Wi-Fi is down. `CMD_SET_FAN_RELAY` overrides that, but the override **lapses after
-5 minutes** and control returns to the thermostat. A hub that wants the fan held has to
-keep saying so; a hub that dies mid-override cannot leave the room unventilated.
+**The hub owns the thresholds; the node owns the backstop.** Fan policy is a setting
+people change — 38 °C in April is not 38 °C in December — so it lives on the hub, in
+NVS, editable from the calibration AP. The hub reads `CMD_READ_CLIMATE`, applies its
+own hysteresis, and drives the relay with this command. Same principle as tank
+calibration (§4.2): the node measures and actuates, the hub decides.
+
+Two safeguards make that safe on a battery room:
+
+1. **The hub re-asserts every 60 s**, even when nothing changes. Silence is not
+   "leave it as it is" — see below.
+2. **The node reverts to its own backstop after 5 minutes without a command**: on at
+   **40.0 °C**, off at **37.0 °C**. Deliberately hotter and wider than any hub setting,
+   so it never fights hub policy and only acts when the hub, the bus or the cable has
+   failed. A battery room keeps ventilating when the network does not.
+
+Independently of both, the node ventilates if its SHT30 has been unreadable for 30 s.
+That path can only ever turn the fan **on**, so it cannot be commanded into a
+dangerous state by a hub that is confused.
+
+**Threshold values are validated at the hub, not trusted:** 25.0–55.0 °C, with `ON` at
+least 1.0 °C above `OFF`. A typo on a phone must not be able to disable ventilation.
 
 ---
 

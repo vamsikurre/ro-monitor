@@ -94,6 +94,27 @@ TankCal tanks[] = {
 #define TANK_DOS 2
 #define TANK_COUNT (sizeof(tanks) / sizeof(tanks[0]))
 
+// Battery room fan policy. The NODE no longer decides this: the hub holds the
+// thresholds so they can be changed from a phone, and commands the relay over
+// CMD_SET_FAN_RELAY. The node keeps a deliberately hotter backstop for when this
+// hub goes quiet - see ro_node.ino. Tenths of degC, persisted in NVS.
+uint16_t fanOnDeciC  = 380;    // 38.0 C, the threshold the dashboard documents
+uint16_t fanOffDeciC = 360;    // 2.0 C of hysteresis stops the contactor chattering
+
+#define FAN_LIMIT_LOW_DECI   250   // refuse anything sillier than 25.0 C
+#define FAN_LIMIT_HIGH_DECI  550   // ...or 55.0 C
+#define FAN_MIN_HYST_DECI    10    // ON must exceed OFF by at least 1.0 C
+#define FAN_REFRESH_MS       60000UL  // re-assert even when unchanged, so the
+                                      // node's 5-minute backstop never fires
+
+// Last climate reading, kept for the web page and the fan decision
+int16_t  climateTempDeci = 0;
+uint16_t climateHumDeci  = 0;
+uint8_t  climateFanOn    = 0;
+uint8_t  climateFault    = 1;
+bool     climateOnline   = false;
+unsigned long lastFanCmdMs = 0;
+
 Preferences prefs;
 WebServer server(80);
 
@@ -166,6 +187,15 @@ void loadCal() {
     snprintf(k, sizeof(k), "%s_e", tanks[i].key);
     tanks[i].emptyMM = prefs.getUShort(k, tanks[i].emptyMM);
   }
+  fanOnDeciC  = prefs.getUShort("fan_on", fanOnDeciC);
+  fanOffDeciC = prefs.getUShort("fan_off", fanOffDeciC);
+  prefs.end();
+}
+
+void saveFan() {
+  prefs.begin("rocal", false);
+  prefs.putUShort("fan_on", fanOnDeciC);
+  prefs.putUShort("fan_off", fanOffDeciC);
   prefs.end();
 }
 
@@ -197,6 +227,11 @@ void handleCalJson() {
          ",\"level_pct\":" +
          String(levelPercent(tanks[i].lastMM, tanks[i].fullMM, tanks[i].emptyMM)) + "}";
   }
+  j += ",\"fan\":{\"on_deci_c\":" + String(fanOnDeciC) +
+       ",\"off_deci_c\":" + String(fanOffDeciC) +
+       ",\"relay_on\":" + String(climateFanOn ? 1 : 0) +
+       ",\"temp_deci_c\":" + String(climateTempDeci) +
+       ",\"node_online\":" + String(climateOnline ? 1 : 0) + "}";
   j += "}";
   server.send(200, "application/json", j);
 }
@@ -223,6 +258,36 @@ void handleCalSet() {
   server.send(303);
 }
 
+// Thresholds are clamped, not trusted. A typo on a phone must not be able to
+// disable ventilation in a battery room, so the accepted band is narrow and the
+// hysteresis is enforced rather than assumed.
+void handleFanSet() {
+  if (!server.hasArg("on") || !server.hasArg("off")) {
+    server.send(400, "text/plain", "need on and off");
+    return;
+  }
+  long on  = lroundf(server.arg("on").toFloat()  * 10.0f);
+  long off = lroundf(server.arg("off").toFloat() * 10.0f);
+
+  if (on < FAN_LIMIT_LOW_DECI || on > FAN_LIMIT_HIGH_DECI ||
+      off < FAN_LIMIT_LOW_DECI || off > FAN_LIMIT_HIGH_DECI) {
+    server.send(400, "text/plain", "thresholds must be between 25.0 and 55.0 C");
+    return;
+  }
+  if (on - off < FAN_MIN_HYST_DECI) {
+    server.send(400, "text/plain", "ON must be at least 1.0 C above OFF");
+    return;
+  }
+
+  fanOnDeciC  = (uint16_t)on;
+  fanOffDeciC = (uint16_t)off;
+  saveFan();
+  lastFanCmdMs = 0;          // re-assert to the node on the next cycle
+  Serial.printf("[Cal] fan: on %.1f C, off %.1f C (saved)\n", on / 10.0, off / 10.0);
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
 void handleRoot() {
   String h = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
              "<h2>RO Hub - tank calibration</h2>"
@@ -244,6 +309,20 @@ void handleRoot() {
          "<button name=full value=now>Set full = now</button> "
          "<button name=empty value=now>Set empty = now</button></form>";
   }
+  h += "<h3>Battery room fan</h3>";
+  if (climateOnline) {
+    h += "<p>now " + String(climateTempDeci / 10.0, 1) + " C, fan " +
+         String(climateFanOn ? "ON" : "OFF") + (climateFault ? " (SHT30 fault)" : "") + "</p>";
+  } else {
+    h += "<p>node 0x04 offline - it is running its own backstop</p>";
+  }
+  h += "<form action='/api/fan/set'>"
+       "on above <input name=on size=5 value='" + String(fanOnDeciC / 10.0, 1) + "'> C, "
+       "off below <input name=off size=5 value='" + String(fanOffDeciC / 10.0, 1) + "'> C "
+       "<button>Save</button></form>"
+       "<p><small>25.0-55.0 C, ON at least 1.0 C above OFF. If this hub goes quiet for "
+       "5 minutes the node falls back to its own 40.0/37.0 C backstop.</small></p>";
+
   h += "<p><a href='/api/cal'>JSON</a></p>";
   server.send(200, "text/html", h);
 }
@@ -365,20 +444,55 @@ void reportTankNode(uint8_t addr, uint8_t tank) {
                 median, raw, p[5], sensorStatusText(p[6]), uptime);
 }
 
-// Battery room. The fan is that node's own decision - the hub only reports it.
+// Battery room. Reads the climate, then applies THIS hub's fan policy to it.
 void reportClimateNode() {
   uint8_t p[MAX_PAYLOAD];
   int len = pollNode(0x04, CMD_READ_CLIMATE, NULL, 0, p);
-  if (len != 6) {
+  climateOnline = (len == 6);
+  if (!climateOnline) {
     Serial.printf("[Node 0x04 - %-13s] %s\n", "Battery Room",
                   len < 0 ? "TIMEOUT / NO RESPONSE" : "BAD PAYLOAD LENGTH");
     return;
   }
 
-  int16_t t = (int16_t)(((uint16_t)p[0] << 8) | p[1]);
-  uint16_t rh = ((uint16_t)p[2] << 8) | p[3];
-  Serial.printf("[Node 0x04 - %-13s] %.1f C  %.1f %%RH  Fan: %-3s%s\n", "Battery Room", t / 10.0, rh / 10.0, p[4] ? "ON" : "OFF",
-                p[5] ? "  (SHT30 FAULT)" : "");
+  climateTempDeci = (int16_t)(((uint16_t)p[0] << 8) | p[1]);
+  climateHumDeci  = ((uint16_t)p[2] << 8) | p[3];
+  climateFanOn    = p[4];
+  climateFault    = p[5];
+
+  Serial.printf("[Node 0x04 - %-13s] %.1f C  %.1f %%RH  Fan: %-3s%s\n",
+                "Battery Room", climateTempDeci / 10.0, climateHumDeci / 10.0,
+                climateFanOn ? "ON" : "OFF",
+                climateFault ? "  (SHT30 FAULT)" : "");
+}
+
+// Hysteresis lives here now, not in the node. Re-assert periodically even when
+// nothing changes: the node falls back to its own hotter backstop if it hears
+// no command for five minutes, and silence is not the same as "leave it as is".
+void commandFan() {
+  if (!climateOnline || climateFault) return;   // no trustworthy temperature; the
+                                                // node's own fail-safe covers this
+  bool want = climateFanOn;
+  if (!climateFanOn && climateTempDeci >= (int16_t)fanOnDeciC)  want = true;
+  if (climateFanOn  && climateTempDeci <= (int16_t)fanOffDeciC) want = false;
+
+  bool changed = (want != (bool)climateFanOn);
+  if (!changed && millis() - lastFanCmdMs < FAN_REFRESH_MS) return;
+
+  uint8_t req = want ? 1 : 0, ack[MAX_PAYLOAD];
+  int len = pollNode(0x04, CMD_SET_FAN_RELAY, &req, 1, ack);
+  lastFanCmdMs = millis();
+
+  if (len != 1) {
+    Serial.println(F("[Fan] command not acknowledged - node keeps its own backstop"));
+    return;
+  }
+  climateFanOn = ack[0];
+  if (changed) {
+    Serial.printf("[Fan] %.1f C -> commanded %s (on %.1f / off %.1f)\n",
+                  climateTempDeci / 10.0, ack[0] ? "ON" : "OFF",
+                  fanOnDeciC / 10.0, fanOffDeciC / 10.0);
+  }
 }
 
 // Debounced AC Detection (filters out noise / transient glitches)
@@ -446,6 +560,7 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/api/cal", handleCalJson);
   server.on("/api/cal/set", handleCalSet);
+  server.on("/api/fan/set", handleFanSet);
   server.begin();
   Serial.printf("%s -> http://%s/\n", CAL_AP_SSID, WiFi.softAPIP().toString().c_str());
 }
@@ -469,6 +584,7 @@ void loop() {
   reportTankNode(0x03, TANK_TWT);
   idle(40);
   reportClimateNode();
+  commandFan();
   idle(40);
 
   // 2b. Dosing tank, read here because the bus is now idle for the rest of the cycle

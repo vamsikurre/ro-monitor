@@ -147,6 +147,13 @@ captures whatever the sensor reads at that moment. Fill the tank, tap it; drain 
 `GET /api/cal` returns the same thing as JSON. Until a tank is calibrated its level
 reads `--`, never a plausible wrong number.
 
+**The battery room fan thresholds live on the same page.** The hub reads the room
+temperature from node `0x04`, applies its own hysteresis and commands the relay, so
+changing the setpoint is a phone, not a programmer on a ladder. Accepted range is
+25.0–55.0 °C with ON at least 1.0 °C above OFF. If the hub goes quiet for five
+minutes the node falls back to its own hotter backstop (40.0 / 37.0 °C) and keeps
+ventilating regardless.
+
 **Checks** (plain Python, run from the repo root — no framework, no CI):
 
 ```

@@ -74,12 +74,16 @@
 // re-calibrated, and climbing to a roof with a laptop to edit two numbers does not
 // scale. See esp32_hub_test.ino and RS485_PROTOCOL.md 4.2.
 
-// Battery room thermostat, tenths of degC. 38.0 C is the threshold the dashboard
-// documents; 2.0 C of hysteresis keeps the contactor from chattering.
-#define FAN_ON_DECI_C    380
-#define FAN_OFF_DECI_C   360
+// Fan policy lives on the HUB, where it can be changed from a phone instead of
+// with a programmer on a ladder (CMD_SET_FAN_RELAY, RS485_PROTOCOL.md 4.4).
+// What follows is the backstop for when the hub stops talking - deliberately
+// wider and hotter than any sane hub setting, so it never fights hub policy and
+// only acts when nothing else will. A battery room must keep ventilating when
+// the bus dies.
+#define BACKSTOP_ON_DECI_C   400
+#define BACKSTOP_OFF_DECI_C  370
+#define HUB_SILENT_MS    300000UL // no fan command for 5 min -> backstop takes over
 #define FAULT_VENT_MS    30000UL  // SHT30 dead this long -> ventilate blind
-#define FAN_OVERRIDE_MS  300000UL // hub override lapses back to the thermostat
 
 #define CYCLE_MS         1000UL   // sensing cadence when the hub is not polling
 #define BUS_QUIET_MS     5000UL   // no poll for this long -> free-run the sensor.
@@ -119,7 +123,7 @@ uint16_t humDeciPct  = 0;
 uint8_t  climateFault = 1;      // 0 OK, 1 SHT30 error
 bool     fanOn       = false;
 unsigned long lastGoodClimate = 0;
-unsigned long fanOverrideUntil = 0;
+unsigned long lastFanCommand = 0;   // 0 = the hub has never commanded the fan
 
 unsigned long lastCycle = 0;
 unsigned long lastPoll  = 0;
@@ -258,19 +262,27 @@ void setFan(bool on) {
   digitalWrite(PIN_FAN_RELAY, on ? LOW : HIGH); // relay board is ACTIVE LOW
 }
 
-// The thermostat is local on purpose: if the bus dies, the battery room still
-// ventilates. A hub override (CMD_SET_FAN_RELAY) wins, but only until it lapses.
-void updateFan() {
-  if (millis() < fanOverrideUntil) return;
-
-  if (climateFault != 0) {
-    // No trustworthy temperature. Ventilating blind is the safe failure;
-    // leaving the room sealed and hot is not.
-    if (!fanOn && millis() - lastGoodClimate > FAULT_VENT_MS) setFan(true);
-    return;
+// Fail-safe first, in both modes: no trustworthy temperature for long enough and
+// the fan goes on regardless of who is in charge. Ventilating a battery room
+// blind is the safe failure; leaving it sealed and hot is not. This can only
+// ever turn the fan ON, so it cannot fight the hub into a dangerous state.
+void ventOnSensorFault() {
+  if (climateFault != 0 && !fanOn && millis() - lastGoodClimate > FAULT_VENT_MS) {
+    setFan(true);
   }
-  if (!fanOn && tempDeciC >= FAN_ON_DECI_C)  setFan(true);
-  if (fanOn  && tempDeciC <= FAN_OFF_DECI_C) setFan(false);
+}
+
+// The hub owns the thresholds and commands the relay. If it goes quiet for five
+// minutes the backstop below takes over - hotter and wider than any hub setting,
+// so it is a floor under the policy rather than a competitor to it.
+void updateFan() {
+  ventOnSensorFault();
+
+  bool hubTalking = (lastFanCommand != 0) && (millis() - lastFanCommand < HUB_SILENT_MS);
+  if (hubTalking || climateFault != 0) return;
+
+  if (!fanOn && tempDeciC >= BACKSTOP_ON_DECI_C)  setFan(true);
+  if (fanOn  && tempDeciC <= BACKSTOP_OFF_DECI_C) setFan(false);
 }
 
 void sampleClimate() {
@@ -352,7 +364,7 @@ void handleCommand(uint8_t cmd, const uint8_t *payload, uint8_t len) {
     case CMD_SET_FAN_RELAY: {
       if (!isClimate || len < 1) return;
       setFan(payload[0] != 0);
-      fanOverrideUntil = millis() + FAN_OVERRIDE_MS;
+      lastFanCommand = millis();   // hub is alive and in charge; backstop stands down
       out[0] = (uint8_t)(fanOn ? 1 : 0);
       sendFrame(cmd, out, 1);
       break;
