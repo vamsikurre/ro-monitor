@@ -26,7 +26,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` | Input | Active LOW when Aster `TWT FLOTY` loop is closed (`INPUT_PULLUP`) |
 | **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL1 / Multiport valve contact is closed (`INPUT_PULLUP`) |
 | **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
-| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when Aster `ALARM` (AUX OP) contact is closed — **verify AUX OP config first, Section 6.3** (`INPUT_PULLUP`) |
+| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when the Aster `AUX OP` contact is closed. **Confirmed 2026-08-26: normally open, closes on a plant issue — `AUX OP` behaves as `ALARM`** (Section 6.3, `INPUT_PULLUP`) |
 | **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
 | **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. **External 10 kΩ pull-up to 3V3 required** |
@@ -207,11 +207,17 @@ Logically it is the panel's **AUX OP**, and its meaning is a software setting, n
 
 Read the current value under **password 678** (Input Configuration, manual §1.4): press `<` and `>` together, enter `678`, scroll to `AUX OP:`.
 
-> **Open risk — this plant may not be set to `ALARM`.** `RL1` / `RL2` are documented here as multiport-valve status, which implies `MPV CNTRL` is `ON`, and the manual states *"IF ON, one has to configure AUX OP as PMPON when there is AMPV in pretreatment."* If `AUX OP` is `PMP ON`, this terminal is a raw-water-pump run signal and every "controller trip" alert built on it is wrong. **Verify before wiring, and do not label the signal `alarm` in telemetry until confirmed.**
+> **Resolved 2026-08-26 — observed on the plant.** The pair sits **open in normal running and closes when there is an issue**, which stops the plant. That is `AUX OP` = `ALARM` behaving as this document assumed, on the `C` / `NO` pair, and it is the useful case: a genuine fault flag rather than a pump-run signal. The risk below was worth carrying and is now closed.
+>
+> *Original risk, kept for the reasoning:* `RL1` / `RL2` are documented here as multiport-valve status, which implies `MPV CNTRL` is `ON`, and the manual states *"IF ON, one has to configure AUX OP as PMPON when there is AMPV in pretreatment."* Had `AUX OP` been `PMP ON`, this terminal would be a pump run signal and every "controller trip" alert built on it would have been wrong.
+
+**What this buys, and its one limitation.** `IN_ALARM` LOW means the controller has faulted — actionable on its own, no inference needed, and the most valuable single bit the Aster offers. What it does *not* carry is **which** fault: the panel multiplexes every condition onto one contact, so the ESP32 knows something tripped but not whether it was high pressure, a level interlock or a sensor. Alert text must therefore say *"controller fault — check the panel"* rather than naming a cause it cannot know.
+
+Pairing it with the two AC optos does narrow things usefully: `IN_ALARM` closed while `IN_HPP_AC` reads stopped is a genuine trip, whereas the plant idling with `IN_ALARM` open is simply a satisfied TWT float and needs no alert at all.
 
 ### 6.4. Commissioning Procedure — Verify, Then Sense
 
-**Step 1 — confirm `AUX OP` = `ALARM`** (6.3). If it is `PMP ON` or `DOSING PUMP`, stop: rename the signal or reconfigure the panel with the plant owner's agreement.
+**Step 1 — ~~confirm `AUX OP` = `ALARM`~~ (6.3). Done 2026-08-26:** observed open in normal running, closed on a plant issue. Proceed to step 2.
 
 **Step 2 — trigger a fault and characterise the contact electrically.** The unwired `HPS` pair is the cheapest trigger: no wire is disturbed and no timer stands in the way.
 

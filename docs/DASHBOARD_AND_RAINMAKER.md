@@ -97,7 +97,7 @@ ESP RainMaker automatically dispatches native push notifications to all paired m
 | **Wi-Fi Node Disconnect** | `WARNING` | 📡 **Ground Floor Node Offline!** No telemetry received for > 10 seconds. | Plant interlocks revert to safe default state. |
 
 **Two constraints on the `alarm` field, both from `WIRING.md` Section 6:**
-1. The Aster `ALARM` terminal is the configurable `AUX OP`. Until it is confirmed set to `ALARM` (password 678), the signal may actually mean "RWP running" and must not be surfaced as a fault.
+1. ~~The Aster `ALARM` terminal is the configurable `AUX OP`. Until it is confirmed set to `ALARM` (password 678), the signal may actually mean "RWP running" and must not be surfaced as a fault.~~ **Closed 2026-08-26:** observed open in normal running and closed on a plant issue, so it is a genuine fault flag and may be surfaced as one. It does not say *which* fault — the panel multiplexes every condition onto the one contact — so alert text must read "controller fault, check the panel" rather than naming a cause (`WIRING.md` §6.3).
 2. `HPS` is unwired on this plant, so over-pressure can never be the cause of a trip and no `hps` state should be published. Low pressure additionally lags the display by up to the `LPS TRIP` time (factory 3 min), so alarm onset and fault onset are separate timestamps.
 
 ---

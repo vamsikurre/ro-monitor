@@ -155,7 +155,7 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 32 | `IN_TWT_FLOT` | PC817 ch1 | `INPUT_PULLUP` |
 | 26 | `IN_RL1_STAT` | PC817 ch2 | `INPUT_PULLUP` |
 | 25 | `IN_RL2_STAT` | PC817 ch3 | `INPUT_PULLUP` |
-| 33 | `IN_ALARM` | PC817 ch4 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact, `WIRING.md` §6 |
+| 33 | `IN_ALARM` | PC817 ch4 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact. **Confirmed 2026-08-26** as a genuine fault flag: normally open, closes on a plant issue (`WIRING.md` §6.3) |
 | 5 | `US_TRIG_DOS` | AJ-SR04M (dosing) | Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
 | 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
 | 34 | `IN_HPP_AC` | AC opto 1 | **External 10 kΩ pull-up to 3V3 required** |

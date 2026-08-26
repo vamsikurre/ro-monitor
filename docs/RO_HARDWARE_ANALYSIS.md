@@ -129,7 +129,7 @@ Based on direct inspection of `IMG_2836.JPG`, `IMG_3384.JPG`, `IMG_3385.JPG`, `I
 1. **Internal Logic Voltage on C (Common) terminals:** Determine whether `C` is tied to +5V, +12V, or GND through internal pull-up resistors. Gates whether our 12V wetting loop (`WIRING.md` 5.2) can be applied to a given pair.
 2. **PULSE O/P Electrical Characteristics:** Verify if open-collector NPN or 5V logic pulse.
 3. **Communication Header `J16`:** Header pins near CPU marked J16 may be factory programming / UART; currently unverified.
-4. **`AUX OP` current setting:** is it `ALARM`, `DOSING PUMP`, or `PMP ON`? Read under password 678. Blocks the alarm telemetry channel — the manual directs `PMP ON` when an auto-MPV is fitted in pretreatment, which this plant has.
+4. ~~**`AUX OP` current setting:** is it `ALARM`, `DOSING PUMP`, or `PMP ON`?~~ **Answered 2026-08-26 by observation:** the pair is open while the plant runs and closes on a plant issue, i.e. `ALARM`. Despite the manual directing `PMP ON` where an auto-MPV is fitted in pretreatment, this panel is not set that way. Unblocks the alarm telemetry channel (`WIRING.md` §6.3).
 5. **`HI PRESS SW` enabled or bypassed:** with `HPS` unwired, `ON` means an input watching a switch that can never close; `OFF` means the input is bypassed. Determines whether shorting `HPS` is usable as a commissioning test trigger.
 
 ---
