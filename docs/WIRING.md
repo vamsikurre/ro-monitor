@@ -436,6 +436,35 @@ Confirm by boot print before bussing: each node prints its detected ID at startu
 
 ---
 
+### 9.3. Ultrasonic Mounting, Per Location
+
+Four tanks, four different problems. The sensor is the same part in each; the mounting is what decides whether it works.
+
+**Rules that apply everywhere:**
+
+| Rule | Why |
+| :--- | :--- |
+| Transducer face at least **200 mm above the highest water level** | That is the blind zone. Water inside it returns nothing, and the node reports `sensor_status = 1` rather than a number — safe, but you have lost the top of the scale exactly where "is it full" matters. |
+| Mount **perpendicular** to the surface, pointing straight down | A tilted transducer reflects the pulse away from itself. A few degrees is tolerable; ten is not. |
+| Keep the **beam cone clear** — ladders, pipes, ropes, wall seams | The beam is 45–75° wide, so at 3 m it lights up a cone over a metre across. Anything it clips answers *earlier* than the water does, and an early echo reads as a **shorter distance, which the dashboard shows as a fuller tank**. Wrong in the dangerous direction. |
+| Mount **away from the inflow** | Broken surface and foam scatter the pulse. Put the sensor over still water, opposite the fill point. |
+| Fit a **hood or shade** over the face in closed tanks | Condensation forming on, or dripping onto, the transducer kills echoes. This is the most common cause of a sensor that worked for a month and then stopped. |
+| Strain-relieve the captive lead at the tank wall | The transducer hangs on its own cable otherwise, and it will eventually hang crooked — see rule 2. |
+
+**Dosing barrel (~50 L, wired direct to the hub, §13).** The blind zone *is* the design problem here: a 50 L drum is only ~550–600 mm deep, so a sensor sitting on the barrel mouth cannot read the top third — the range you care about when deciding whether to top up. **Mount it on a bracket 250–300 mm above the open top**, not on the rim. That is the geometry the hub's `250 mm full / 900 mm empty` defaults assume.
+
+**RWT (plastic, roof, `0x02`).** The straightforward one. Standard rules, no special measures.
+
+**TWT (concrete, wide, roof, `0x03`).** Wide is an advantage, not a risk: the beam never approaches a wall, and a large flat surface is the best reflector this sensor can get. The two real risks are condensation (hood it) and mounting over the fill point (don't). Expect bench-quality readings.
+
+**Sump (concrete, deep, ground floor, `0x05`).** The hard one, and the reason phase-B spec §7.1 is still open. A 3.5 m shaft with a ladder, a riser pipe and rough walls is exactly the geometry that produces early echoes, and the borewell inflow foams the surface while it runs.
+
+Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, open at the bottom, vented at the top, sensor on the cap. The water inside follows the sump but stays still, and the pipe wall stops the beam ever seeing the shaft. A few hundred rupees, and it addresses turbulence and false echoes in one part.
+
+**Judging any of these from the data, not by argument:** the node reports `raw` alongside the filtered `median`, plus an echo-quality figure. Clean tracking is a median that moves smoothly with quality at 100. False echoes look like a median stepping between two values with quality stuck below 100. Log a day of it before concluding anything about a sensor.
+
+---
+
 ## 10. Battery Room Node (0x04: SHT30 & Exhaust Fan)
 
 **Mid-chain node — no termination resistor.** 0x04 sits between the Dosing node and the TWT node in the as-installed run (Section 12). If a 120 ohm resistor was fitted here under the earlier end-of-bus assumption, **remove it**: three terminators on one bus over-load the drivers and blunt the differential swing.

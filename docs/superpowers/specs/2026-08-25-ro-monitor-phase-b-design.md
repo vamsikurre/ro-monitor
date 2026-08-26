@@ -107,6 +107,8 @@ PlatformIO is chosen over the Arduino IDE specifically because the IDE cannot sh
 
 CRC is computed over bytes 2 … 4+N (address through payload). Preamble excluded.
 
+> **Superseded 2026-08-26 by the shipped firmware.** `ro_node` and `esp32_hub_test` compute the CRC over **every byte before it, preamble included** (`RS485_PROTOCOL.md` §2). Both ends agree and `docs/check_frame.py` compiles the two implementations together and fails if they ever diverge — but a third implementation written from this line would not interoperate, so the line is corrected rather than left to be discovered on a bus. Including the preamble costs two bytes of CRC input and removes an offset that has to be right in two places.
+
 ### 3.4 Commands
 
 | Code | Name | Direction | Applies to |
@@ -129,6 +131,14 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 `level_percent` is **removed from the node payload.** See §4.3.
 
 `sensor_status`: `0 = OK`, `1 = BLIND_ZONE`, `2 = ECHO_TIMEOUT`, `3 = OUT_OF_RANGE`, `4 = HW_FAULT`.
+
+> **Superseded 2026-08-26 by the shipped firmware.** This section's instinct was right — the node must not compute a level — but the implementation kept `RS485_PROTOCOL.md` §4.2's **10-byte layout** rather than shrinking to 8. The node sends `level_percent = 255` always, and the hub scales millimetres against its own per-tank calibration (§4.3's conclusion, reached the same way for the same reason).
+>
+> Keeping the wider layout was deliberate, and two bytes is a cheap price:
+> - The frame layout stays fixed, so nodes and hub of different vintages stay mutually parseable — a value other than `255` in that byte identifies old firmware instead of silently shifting every subsequent field.
+> - The `reserved` byte survives, and it is where the sensor-type flag goes if a tank ever moves to a 4-20 mA pressure transducer (§7.1). Shrinking the payload would delete the slot that migration path depends on.
+>
+> `sensor_status` as shipped uses `0 = OK`, `1 = BLIND_ZONE`, `2 = ECHO_TIMEOUT`, `3 = HW_FAULT` (no distinct `OUT_OF_RANGE` — a reading past the calibrated empty distance is a hub-side judgement now, not a node-side one).
 
 **`CMD_READ_CLIMATE` response payload (6 bytes)** — unchanged from `RS485_PROTOCOL.md` §4.3.
 
@@ -424,7 +434,11 @@ Specified here for continuity; detailed design belongs to its own document.
 
 The concern is real but unproven: 3.5 m against a 4.5 m specification, in a narrow shaft that produces wall echoes, in an atmosphere that fogs transducer faces. This remains the single most likely component in the project to simply not work — but "likely to fail" is not "known to fail".
 
-**Step 2 — if it fails, the fallback is a submersible 4-20 mA pressure transducer.**
+**Judge step 1 from the data.** The node reports `raw` beside the filtered `median` and an echo-quality figure (`WIRING.md` §9.3). Clean tracking is a smoothly moving median at quality 100. False echoes are a median stepping between two values with quality stuck below 100. Note which way the error runs: an object clipped by the beam answers *earlier* than the water, so a false echo reads **short, which presents as a fuller sump** — the direction that hides a problem rather than announcing one.
+
+**Step 1b — before spending ₹6,071, fit a stilling well.** A ~100 mm PVC pipe hung vertically in the shaft, open at the bottom, vented at the top, sensor on the cap. The water inside follows the sump but stays still, and the pipe wall stops the beam ever seeing the ladder, the riser or the walls. A few hundred rupees, and it removes both failure mechanisms at once. **A bare AJ-SR04M failing in an open shaft is not evidence that ultrasonic measurement fails here** — it is evidence the shaft is a bad acoustic environment, which is what a stilling well is for. Only a sensor that misbehaves *inside a stilling well* justifies step 2.
+
+**Step 2 — if it still fails, the fallback is a submersible 4-20 mA pressure transducer.**
 
 Reference part evaluated: DFRobot `KIT0139` — 0-5 m, 4-20 mA, 0.5 % accuracy (25 mm over range), 316L stainless, IP68, 12-36 V, 5 m cable. **₹6,071 inc. GST.**
 
@@ -436,7 +450,15 @@ Three procurement constraints to verify **before** ordering:
 2. **Vent tube.** 4-20 mA level transducers reference atmosphere through a vent running inside the cable. Splicing breaks it. The dry end must terminate somewhere genuinely dry; sealing the vent inside a damp junction box is the standard cause of unexplained ~100 mm drift.
 3. **Supply voltage.** 12-36 V. Node 0x05 is currently specced with an HLK-20M5 (5 V). Switching to this sensor means a 12 V supply plus a buck for the ESP32 — a BOM change, not a drop-in.
 
-**Signal conditioning.** The DFRobot kit includes a current-to-voltage converter board. Feed it to an **ADS1115** (16-bit I2C ADC, ~₹250) rather than the ESP32's internal ADC, which is nonlinear enough to discard the 0.5 % accuracy being paid for.
+**Signal conditioning.** The DFRobot kit includes a current-to-voltage converter board. Feed it to an **ADS1115** (16-bit I2C ADC, ~₹250) rather than the ESP32's internal ADC, which is nonlinear enough to discard the 0.5 % accuracy being paid for. On an AVR node (if an RS485 tank ever switches) the internal ADC is adequate instead: 4-20 mA across 250 Ω is 1-5 V, which is ~819 counts of the Nano's 10-bit range over 5 m — about 6 mm.
+
+**What the switch costs in firmware — deliberately small.** Since tank calibration moved to the hub, a node reports only millimetres, so a sensor swap is node-local:
+
+1. **Node:** replace the `pulseIn` ranging and its median window with an averaged ADC read. Framing, addressing, poll scheduling and the personality switch are untouched. It gets *simpler* — the 35 ms `pulseIn` block that shaped the node's whole timing design disappears.
+2. **Hub:** a pressure sensor reports **depth above the sensor**, the inverse of distance-down-to-surface, so full becomes the *larger* number. `levelPercent()` currently rejects `full > empty` as inverted calibration; allowing either direction is a two-line change and the same calibration page then serves both sensor types.
+3. **Protocol:** the `reserved` byte in the `CMD_READ_LEVEL` payload is where a sensor-type flag goes when the hub needs to know which semantic it is receiving. The slot exists; nothing to change until then.
+
+**Density, for any pressure sensor.** These read head pressure, so the reading scales with fluid density. Water is 1.0. Anything else (the dosing chemical, were this ever fitted there) needs a density factor — though calibrating by filling to a known level and using **set full = now** absorbs it without a separate constant.
 
 **Trade-off summary.** Ultrasonic: ~₹500, already owned, may not work in this environment, no immersion fouling. Pressure transducer: ~₹6,300 all-in including ADS1115 and PSU change, 25 mm accuracy, immune to wall echoes and fogging, but sits permanently in the water and will need periodic diaphragm cleaning and eventual attention if the sump silts up.
 
@@ -479,7 +501,7 @@ None of these block the start of implementation.
 2. **Tank dimensions.** `empty_distance_mm` / `full_distance_mm` per tank, measured on site. Configuration, not code — the system runs with placeholder values.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
-5. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole. Decide before ordering the ₹6,071 transducer, not after. Phase C only.
+5. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
 
 ---
 
