@@ -375,7 +375,7 @@ Range: 20–600 cm nominal, realistically dependable to ~4–4.5 m on a flat wat
 
 ### 9.1. Address Jumper Truth Table (authoritative)
 
-Derived from the firmware that actually runs — `firmware/nano_node_test/nano_node_test.ino:39-44`:
+Published here first; `firmware/ro_node/ro_node.ino` carries the same table and `docs/check_addrmap.py` fails the build if the two ever diverge:
 
 ```c
 bit0 = (digitalRead(A0) == HIGH) ? 1 : 0;   // INPUT_PULLUP: open = 1, jumpered to GND = 0
@@ -410,7 +410,7 @@ uint8_t nodeIdFromJumpers(bool a0_high, bool a1_high) {
 
 A node decoding `0x00` must **not** transmit — hold in a fault state and blink the LED. Guessing an address is how you get two boards answering the same poll. Grounding both jumpers is therefore also the deliberate way to bench a spare board while it is physically on the bus.
 
-> The table previously published here had `0x01`/`0x02` swapped, labelled both-grounded `0x03`, and omitted `0x04`. The bringup sketch's own decoder (`nano_node_test.ino:39-44`) returned `raw` directly with a special case for zero, which no longer matches any assignment. Both are superseded by `ADDR_MAP` above. Phase-B spec §3.7 is closed by this.
+> The table previously published here had `0x01`/`0x02` swapped, labelled both-grounded `0x03`, and omitted `0x04`. The original bringup decoder returned `raw` directly with a special case for zero, which matched no assignment. Both are superseded by `ADDR_MAP` above. Phase-B spec §3.7 is closed by this.
 
 **Address `0x01` no longer exists in any form** — the dosing sensor moved onto the hub (§13), and no jumper combination produces it.
 
@@ -487,6 +487,8 @@ This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nano
 | **Programming** | FTDI / CP2102 adapter set to 5V, **`DTR` wired** (auto-reset). IDE: board *Arduino Pro or Pro Mini*, processor *ATmega328P (5V, 16 MHz)*. | Without `DTR` every upload times out. |
 | **During programming** | **Disconnect the buck's 5V** while the adapter is plugged in. | Two supplies fighting on `VCC` kills adapters. |
 | **RS485 on `D2`/`D3`** | Unchanged — SoftwareSerial, not the hardware UART. | On a Pro Mini `D0`/`D1` *are* the FTDI header. Keeping RS485 off them leaves the debug port usable without desoldering, which is the same reasoning as phase-B spec §199 and matters more here. |
+
+**As-built 2026-08-26:** the bench FTDI adapter in use has **`DTR` unconnected**. Uploads to this board therefore need the reset button tapped the instant the IDE switches from *Compiling* to *Uploading*, and opening the Serial Monitor does not restart the sketch. Symptom when mistimed: `not in sync: resp=0x00`, ten attempts. One wire from the adapter's `DTR` (or `RTS`) to the `DTR`/`GRN` pad ends it — the 100 nF cap is already on the board.
 
 ---
 

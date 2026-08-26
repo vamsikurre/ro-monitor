@@ -42,11 +42,14 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 > **Frame Overhead:** 6 bytes (2 Preamble + 1 Addr + 1 Cmd + 1 Length + 2 CRC16).  
 > A standard 6-byte payload frame total length is 12 bytes ($\approx 10\text{ ms}$ transmission time at 9600 baud).
 
-> **Bringup sketches speak a reduced frame.** `esp32_hub_test`, `nano_node_test` and
-> `promini_battery_node_test` use `[0xAA][0x55][ADDR][CMD]` requests and
-> `[0xAA][0x55][ADDR][CMD|0x80][payload...][XOR]` responses — no `PAYLOAD_LEN`, XOR in
-> place of CRC-16. Enough to prove wiring and addressing on the bench; the framing above
-> is what phase-B firmware implements, and both ends change together when it does.
+> **Two details the table above leaves open, fixed here:** the CRC-16 covers **every
+> byte before it, preamble included**, and multi-byte payload fields are **big-endian**
+> (the CRC itself is low byte first, as the table says).
+
+> **Implemented by** `firmware/ro_node/ro_node.ino` (all three Arduino nodes, one
+> binary) and `firmware/esp32_hub_test/esp32_hub_test.ino` (master). `docs/check_frame.py`
+> compiles the CRC out of both and fails if they ever disagree — a master and a slave
+> that differ on the CRC talk past each other with no symptom except silence.
 
 ---
 
@@ -78,7 +81,7 @@ Requests processed, filtered water level and telemetry from tank nodes (`0x02`, 
 - **Response Payload (10 Bytes):**
   - `uint16_t distance_mm`: Median-filtered distance from sensor transducer to liquid surface in millimeters.
   - `uint16_t raw_distance_mm`: Unfiltered instantaneous reading in millimeters.
-  - `uint8_t level_percent`: Calculated level percentage ($0$ to $100\%$, $255 = \text{Invalid/Error}$).
+  - `uint8_t level_percent`: **Always `255` from a node.** Tank geometry is hub-side calibration, not node firmware — a node has no idea how tall its tank is, and re-scaling a tank must not mean climbing to a roof with a laptop. The hub scales `distance_mm` against per-tank full/empty values held in its NVS and editable over its calibration AP. The byte stays in the frame so the layout is fixed; any other value means a node running old firmware.
   - `uint8_t signal_quality`: Quality indicator ($0$ to $100\%$, based on echo stability).
   - `uint8_t sensor_status`: Bitfield ($0 = \text{OK}$, $1 = \text{Blind Zone Overflow}$, $2 = \text{Echo Timeout}$, $3 = \text{Hardware Fault}$).
   - `uint8_t reserved`: Reserved byte.
@@ -97,6 +100,13 @@ Requests temperature, humidity, and exhaust fan status from Node `0x04`.
 Commands the battery room exhaust fan state.
 - **Request Payload (1 Byte):** `uint8_t desired_state` (`0 = Turn OFF`, `1 = Turn ON`).
 - **Response Payload (1 Byte):** `uint8_t current_state` (`0 = OFF`, `1 = ON`).
+
+**The fan is normally the node's own decision, not the hub's.** `0x04` runs a local
+thermostat — on at 38.0 °C, off at 36.0 °C, and on regardless if the SHT30 has been
+unreadable for 30 s — so the battery room keeps ventilating when the bus, the hub or
+the Wi-Fi is down. `CMD_SET_FAN_RELAY` overrides that, but the override **lapses after
+5 minutes** and control returns to the thermostat. A hub that wants the fan held has to
+keep saying so; a hub that dies mid-override cannot leave the room unventilated.
 
 ---
 

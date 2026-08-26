@@ -126,7 +126,38 @@ The system telemetry directly visualizes the plant's water balance and environme
 
 ---
 
-## 4. Detailed Documentation Index
+## 4. Firmware
+
+| Sketch | Board | Notes |
+| :--- | :--- | :--- |
+| `firmware/ro_node/` | Nano ×2, Pro Mini ×1 | **One binary for all three RS485 nodes.** The `A0`/`A1` jumpers pick the address *and* the personality: `0x02`/`0x03` ultrasonic, `0x04` climate + fan. Nothing to edit per board. |
+| `firmware/esp32_hub_test/` | ESP32-S hub | Master. Polls the three nodes, reads the dosing sensor and the optos directly, prints a diagnostic block per cycle over USB at 115200, and serves the tank-calibration page on its own Wi-Fi AP. |
+
+**Flashing the nodes:** jumper first, flash second, then confirm the boot print
+(`Node ID: 0x02 … role: RWT ultrasonic`) before putting the board on the bus. Both
+jumpers grounded is the deliberate "unassigned" code — the node blinks and stays off the
+bus rather than guessing an address. Pro Mini: `Arduino Pro or Pro Mini` / *ATmega328P
+(5V, 16 MHz)*, `DTR` wired, and pull the buck's 5 V while the FTDI adapter is connected.
+
+**Calibration is hub-side and needs no cable.** Nodes report millimetres; the hub turns
+them into percentages. Join the hub's Wi-Fi AP (`RO-HUB`) and open `http://192.168.4.1/`
+— every tank has a full and an empty distance, and a **Set full = now** button that
+captures whatever the sensor reads at that moment. Fill the tank, tap it; drain it, tap
+**Set empty = now**. Values persist in NVS across reboots and reflashes of the nodes.
+`GET /api/cal` returns the same thing as JSON. Until a tank is calibrated its level
+reads `--`, never a plausible wrong number.
+
+**Checks** (plain Python, run from the repo root — no framework, no CI):
+
+```
+python docs/check_addrmap.py   # jumper table agrees across docs and firmware
+python docs/check_pinmap.py    # GPIO allocation agrees across the documents
+python docs/check_frame.py     # node and hub agree on CRC-16, framing, level maths
+```
+
+---
+
+## 5. Detailed Documentation Index
 
 For in-depth technical documentation, refer to the guides in the `docs/` folder:
 - **[Hardware Specifications & Pin Allocations](docs/HARDWARE.md)**
