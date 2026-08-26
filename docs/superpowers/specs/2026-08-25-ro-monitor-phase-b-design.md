@@ -511,10 +511,19 @@ Decided 2026-08-26, and it is the right shape for anything that can stop a pump:
 | :--- | :--- | :--- | :--- | :--- |
 | HPP | 1-phase (`P`/`N` per panel label) | RO skid | Hub `0x00` | `GPIO 36` — ADC1_CH0 |
 | RWP | 1-phase | RO skid | Hub `0x00` | `GPIO 39` — ADC1_CH3 |
-| Sump motor | 1-phase | Ground starter | Node `0x06` | ADC1, Phase C |
-| Borewell L1 / L2 / L3 | 3-phase | Ground starter | Node `0x06` | ADC1 ×3, Phase C |
+| Sump motor L1 / L2 | **3-phase** (confirmed 2026-08-26) | Ground starter | Node `0x06` | ADC1 ×2, Phase C |
+| Borewell L1 / L2 | 3-phase | Ground starter | Node `0x06` | ADC1 ×2, Phase C |
 
-Six clamps, **₹2,094** at ₹349 each. The split matters: only two land on the hub, and `GPIO 36`/`39` were the last free **ADC1** pins on it. Everything still free there (12/13/14/15) is ADC2, which is dead whenever Wi-Fi is up — so the hub is now full for analog, and any further current channel has to go on a node.
+**Two clamps per 3-phase motor, not three.** Both ground-floor motors turned out to be 3-phase (the sump motor was documented as single-phase until 2026-08-26). Three clamps per motor is the obvious reading of "monitor a 3-phase motor", and it is one more than the fault actually requires:
+
+| Which phase fails | With 2 clamps fitted, what is seen |
+| :--- | :--- |
+| A measured phase | That channel collapses to ~0 while the other rises hard |
+| The unmeasured phase | **Both** measured channels rise ~1.7-2× |
+
+Single-phasing is detectable in every case, because a motor that loses a phase while running does not stop — it draws far more current through what remains, which is exactly how it burns out. The third clamp adds which-phase-precisely, and nothing about whether to trip. Spend it on a spare instead.
+
+Six channels, **₹2,094** at ₹349 each — one on each single-phase pump, two on each 3-phase motor. The split matters: only two land on the hub, and `GPIO 36`/`39` were the last free **ADC1** pins on it. Everything still free there (12/13/14/15) is ADC2, which is dead whenever Wi-Fi is up — so the hub is now full for analog, and any further current channel has to go on a node.
 
 #### Interface — the "off-the-shelf board" question, answered
 
@@ -541,6 +550,7 @@ So a hub interface board is **two resistors, one capacitor, and one 3.5 mm socke
 - **Clamp one conductor, never the cable.** The panel label lists `P` and `N` per circuit; a clamp around both reads zero, because the currents cancel. This is the most common first-time failure.
 - **Use the turns multiplier on small loads.** A 1 HP RWP at ~5 A gives only ~170 mV from a 30 A clamp. Passing the conductor through the window **2-3 times** multiplies the signal by that factor — the 13 × 13 mm window takes three turns of 2.5 sqmm easily. Record turns per channel; calibration divides by it.
 - **Sample properly.** ~2 kHz for 200 ms, subtract the measured DC offset, then RMS. That is a 200 ms blocking read, so it belongs where the dosing read already sits: after the last RS485 reply, in the idle part of the cycle — never between a poll and its response.
+- **Round-robin the channels on node `0x06`.** Four channels × 200 ms is 800 ms of blocking per cycle, which is most of a second spent not listening. Sample **one channel per cycle** instead: every channel refreshes every ~4 s, which is far faster than any thermal failure develops, and the node stays responsive. Motor start and stop are caught by the contactor optos, which are instant.
 - **Two-point calibrate against a clamp meter**, and store the scale factor hub-side with the tank calibration. The ESP32 ADC is nonlinear enough that raw counts are not worth trusting, and this is a trend instrument: consistency matters more than absolute accuracy.
 - **Set ADC attenuation to 11 dB** for the full 0-3.3 V range.
 
@@ -591,7 +601,7 @@ None of these block the start of implementation.
 3. **Aster `C` terminal reference.** `RO_HARDWARE_ANALYSIS.md` §5.3 flags this as unverified. Only matters for Phase C relay emulation; monitoring via PC817 is unaffected.
 4. **Ground floor photographs.** `images/` has 19 photographs of the RO skid and **none of the ground floor starter panel**. Required before Phase C wiring can be designed.
 5. **Borewell dry-run detection (§7.2).** Three options costed: ₹1,828 flow sensor, ~₹400 current clamp, or ₹0 by inference once node 0x05 exists. Stage 1 is monitoring only; nothing enters a motor control circuit until the detection has run without false positives. Phase C.
-6. **Motor current monitoring (§7.3).** Six SCT-013-030 clamps, ₹2,094 total: HPP and RWP on hub `GPIO 36`/`39`, sump and three borewell phases on node `0x06` in Phase C. Needs one shared bias network per node and a two-point calibration. Instruments only — nothing derived from them controls a motor.
+6. **Motor current monitoring (§7.3).** Six SCT-013-030 clamps, ₹2,094 total: one each on the single-phase HPP and RWP (hub `GPIO 36`/`39`), two each on the 3-phase sump and borewell motors (node `0x06`, Phase C) — two per motor detects single-phasing in every case, the third only names the phase. Needs one shared bias network per node and a two-point calibration. Instruments only — nothing derived from them controls a motor.
 7. **Sump sensor choice (§7.1).** Settled by lowering the AJ-SR04M already owned down the actual manhole, and — if it misbehaves — by fitting a ~₹300 stilling well before concluding anything. Only a sensor that fails *inside* a stilling well justifies the ₹6,071 transducer. Decide before ordering, not after. Phase C only.
 
 ---
