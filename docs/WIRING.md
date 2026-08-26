@@ -455,7 +455,19 @@ Four tanks, four different problems. The sensor is the same part in each; the mo
 
 **RWT (plastic, roof, `0x02`).** The straightforward one. Standard rules, no special measures.
 
-**TWT (concrete, wide, roof, `0x03`).** Wide is an advantage, not a risk: the beam never approaches a wall, and a large flat surface is the best reflector this sensor can get. The two real risks are condensation (hood it) and mounting over the fill point (don't). Expect bench-quality readings.
+**TWT (concrete, wide, roof, `0x03`) — the wide tank an ultrasonic sensor cannot use.**
+
+On paper this is the easiest tank: a large flat surface, walls far from the beam. **As built it is the hardest**, because the only penetration is a small wire pass-through in the roof slab, **hard against the wall**.
+
+The arithmetic rules it out. The beam is ~45° total, so its radius grows ~0.41 m per metre of depth. A transducer 100 mm from a wall has that wall inside its beam from **0.24 m down**, and from there on the wall answers at a fixed ~260 mm regardless of where the water is. The tank reads permanently near-full — and *stably*, with quality at 100 and no jitter, so nothing in the telemetry looks wrong. A confidently wrong treated-water level is worse than no reading at all.
+
+Three ways out, in cost order:
+
+1. **Core a new penetration away from the wall.** Clearance must exceed `0.41 × (depth from transducer to the lowest working surface)` — for a 1.5 m drop, **≥ 0.6 m from any wall**. Cheapest in parts, most invasive in a concrete roof slab.
+2. **Submersible pressure transducer through the existing hole** (phase-B spec §7.1). Geometry stops mattering: it hangs on its cable and reads head. The cable passes a wire hole, but the **22 mm stainless body does not** — budget on opening that hole to ~30 mm with a masonry bit, which is a far smaller job than coring 90 mm. The 12 V the loop needs is already at the node.
+3. **Leave TWT on the Aster float alone** and accept no continuous level here. It is, after all, the tank whose float already drives the controller.
+
+**This reorders the procurement question in spec §7.1.** The sump has an open manhole and can take a stilling well with a sensor already owned; TWT cannot. If exactly one pressure transducer is bought, the evidence points at TWT for it, not the sump.
 
 **Sump (concrete, deep, ground floor, `0x05`).** The hard one, and the reason phase-B spec §7.1 is still open. A 3.5 m shaft with a ladder, a riser pipe and rough walls is exactly the geometry that produces early echoes, and the borewell inflow foams the surface while it runs.
 

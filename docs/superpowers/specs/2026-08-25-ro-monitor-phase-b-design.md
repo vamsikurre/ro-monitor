@@ -438,6 +438,8 @@ The concern is real but unproven: 3.5 m against a 4.5 m specification, in a narr
 
 **Step 1b — before spending ₹6,071, fit a stilling well.** A ~100 mm PVC pipe hung vertically in the shaft, open at the bottom, vented at the top, sensor on the cap. The water inside follows the sump but stays still, and the pipe wall stops the beam ever seeing the ladder, the riser or the walls. A few hundred rupees, and it removes both failure mechanisms at once. **A bare AJ-SR04M failing in an open shaft is not evidence that ultrasonic measurement fails here** — it is evidence the shaft is a bad acoustic environment, which is what a stilling well is for. Only a sensor that misbehaves *inside a stilling well* justifies step 2.
 
+**Amended 2026-08-26 — TWT may need this sensor before the sump does.** TWT's only penetration is a small wire pass-through in the roof slab, hard against the wall (`WIRING.md` §9.3). An ultrasonic sensor there sees the wall from 0.24 m down and reads permanently near-full, stably and without any quality warning. TWT cannot take a stilling well through that hole; the sump, with its open manhole, can. So the first transducer bought should probably go to TWT, and the sump should first be tried with the AJ-SR04M already owned inside a stilling well. That is the opposite of the order this section assumed.
+
 **Step 2 — if it still fails, the fallback is a submersible 4-20 mA pressure transducer.**
 
 Reference part evaluated: DFRobot `KIT0139` — 0-5 m, 4-20 mA, 0.5 % accuracy (25 mm over range), 316L stainless, IP68, 12-36 V, 5 m cable. **₹6,071 inc. GST.**
