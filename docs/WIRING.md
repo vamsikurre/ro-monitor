@@ -697,17 +697,17 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
 | :--- | :--- | :---: | :--- |
 | — | SCT-013-**030** clamp (30 A, 1 V output) | 2 | Voltage output: burden resistor is **inside**. Do not add one |
 | R1, R2 | 10 kΩ 1/4 W | 2 | Bias divider. 1 % preferred, but only for stability — the offset is measured in firmware anyway |
-| C1 | 10 µF electrolytic | 1 | Holds the pedestal stiff against the CT's own current draw |
+| C1 | 10 µF monolithic ceramic (106) | 1 | Holds the pedestal stiff against the CT's own current draw. Ceramic over electrolytic on purpose: no polarity to reverse, and nothing to dry out in a warm panel |
 | C2 | 0.1 µF ceramic | 1 | Across C1, for the high-frequency end |
 | R3, R4 | 1 kΩ 1/4 W | 2 | Series protection. Limits fault current into the ADC pad to ~3 mA |
 | C3, C4 | 100 nF ceramic | 2 | With R3/R4, a ~1.6 kHz low-pass. Well clear of 50 Hz, kills contactor hash |
-| — | 3.5 mm TRS panel-mount socket | 2 | Panel-mount, not a dangling in-line plug (§14.3) |
+| — | 3.5 mm socket breakout (TRRS module, ~₹19) | 2 | One per channel. A labelled breakout is easier than a bare jack — but see the pad warning below. Panel-mount sockets are the alternative if the connector must sit on the enclosure face (§14.3) |
 
 Everything but the clamps fits on the same scrap of perfboard as the `GPIO 34` / `GPIO 35` pull-ups the hub already owes from §1 — one retrofit, not two.
 
 ### 14.2. Two things to check with a meter before trusting the wiring
 
-1. **Which socket pins the clamp actually uses.** Clones differ: most SCT-013 leads use **tip and sleeve**, some use tip and ring. With the clamp unplugged and closed, measure resistance across the plug's contacts — the winding reads a few tens of ohms, the unused contact reads open. Wire the socket to match what you measured, not to what this diagram assumes.
+1. **Which socket pads the clamp actually reaches — measure, do not read the silkscreen.** Two things conspire here. Clones differ: most SCT-013 leads use **tip and sleeve**, some tip and ring. And a 3-conductor **TRS plug in a 4-contact TRRS socket** lands its sleeve on the socket's **`RING2`** pad, not on `SLEEVE`. So the pad marked `SLEEVE` may read open while an unlabelled-looking one carries the winding. Plug a clamp in, close its jaws, and meter between pads: the winding reads a few tens of ohms, everything else reads open. Wire the two that show the winding.
 2. **The pedestal, before connecting any clamp.** Power the hub, measure `GPIO 36` and `GPIO 39` to GND: both should sit at **1.6-1.7 V**. If one reads 0 V or 3.3 V, the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault.
 
 ### 14.3. Panel practice
