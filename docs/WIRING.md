@@ -351,6 +351,8 @@ not a bare optocoupler. Its output side carries a **47 k pull-up from `OUT` to
   present, not a 100 Hz pulse train. Phase-B spec §5.4 assumed a pulse train;
   that is re-opened pending measurement.
 
+**Validated 2026-08-27.** Both channels read correctly against live contactors, with the sketch's existing 5 ms filter — which also retires the 25 ms rewrite proposed in phase-B spec §5.4 (see that section). The earlier floating reading was the broken wire at the module, not this design.
+
 **Verify with `probeACInput()`**, which the hub sketch runs every cycle. GPIO 34
 and 35 are `ADC1_CH6`/`CH7`, so it reads actual millivolts and prints the min/max
 spread over a full mains cycle — the only way to tell the three states apart:

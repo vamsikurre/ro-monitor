@@ -60,7 +60,7 @@ Every added element is **normally closed** and can only ever *stop* the motor, n
 | Dosing tank AJ-SR04M wired direct to hub (§13 of `WIRING.md`) | Built, needs calibration |
 | Node `0x02` RWT, node `0x03` TWT — Arduino Nano, one shared binary | **Firmware done, on the bench** |
 | Node `0x04` battery room — Pro Mini, SHT30 + fan relay | **Firmware done, on the bench** |
-| ~~`GPIO 34` / `GPIO 35` external 10 kΩ pull-ups — outstanding hub defect (§3.5)~~ | **Not a defect — withdrawn 2026-08-27.** Module has an onboard 47 k pull-up (§3.5) |
+| ~~`GPIO 34` / `GPIO 35` external 10 kΩ pull-ups — outstanding hub defect (§3.5)~~ | **Not a defect — withdrawn 2026-08-27.** Module has an onboard 47 k pull-up (§3.5). Both channels **validated against live contactors 2026-08-27** |
 | HPP + RWP current clamps on `GPIO 36` / `GPIO 39` (§7.3, `WIRING.md` §14) | Parts ordered |
 | TWT level sensor — ultrasonic ruled out by the wall-adjacent hole (`WIRING.md` §9.3) | **Decision open** |
 | Local dashboard served by the hub | To build |
@@ -332,7 +332,9 @@ The current `readACInputFiltered` samples 10 × 500 µs = **5 ms** and requires 
 
 **Fix:** sample across a **25 ms window** (more than one full mains cycle) and latch ON if *any* sample is active.
 
-**Re-opened 2026-08-27, premise unverified.** The fitted module rectifies (MB6S bridge), clamps (5.1 V zener) and **smooths (100 µF)** ahead of the opto LED, so `OUT` may be steady rather than a pulse train — in which case the existing 5 ms / 8-of-10 filter is adequate and this fix is unnecessary. `probeACInput()` reports the min/max spread over a full mains cycle and settles it: a steady low reads near `0-0 mV`, a pulse train swings the full rail. Measure with a contactor energised before rewriting the filter.
+**Closed 2026-08-27 — fix not needed, premise was wrong.** Both AC channels were validated against live contactors and `readACInputFiltered` reports correctly with its existing 5 ms / 8-of-10 window. So `OUT` is not the 100 Hz pulse train this section assumed: the fitted module rectifies (MB6S bridge), clamps (5.1 V zener) and **smooths (100 µF)** ahead of the opto LED, holding the output steady for as long as mains is present. The 25 ms window is therefore unnecessary and `readACInputFiltered` stays as written.
+
+The mechanism is inferred from the board and from the filter working, not from a scope trace. If a future batch of modules omits the 100 µF, `probeACInput()` names the failure directly — a full-rail swing instead of a steady low — and this section is the fix to apply.
 
 ### 5.5 Web server and concurrency
 
