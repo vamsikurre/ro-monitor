@@ -251,7 +251,22 @@ uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)
 {
     if (distanceMM == 0) return 255;                 /* no echo */
     if (emptyMM <= fullMM) return 255;               /* uncalibrated, or inverted */
-    if (distanceMM < fullMM) return 255;             /* blind zone, or over-full */
+
+    /* Genuinely blind: below the transducer's minimum range there is nothing to
+     * trust. It is also where FOULING shows up - crystallised anti-scalant on the
+     * face of a dosing sensor, condensation, splash, or the sensor knocked round
+     * to look at a wall 170 mm away. Reporting "full" here would let a fouled
+     * sensor suppress the replenish alert, which is the one failure direction
+     * that costs membranes. So: no level, and the caller shows a fault. */
+    if (distanceMM < BLIND_ZONE_MM) return 255;
+
+    /* Over-full, and a perfectly good measurement. Closer than the calibrated
+     * full mark but still inside the sensor's range means the vessel is fuller
+     * than whoever calibrated it expected - a topped-up dosing barrel, or a tank
+     * above its float. That is 100%, not an error. These two cases used to share
+     * one branch, which is why an over-filled barrel read as no-level. */
+    if (distanceMM < fullMM) return 100;
+
     if (distanceMM >= emptyMM) return 0;
 
     long span = (long)emptyMM - (long)fullMM;

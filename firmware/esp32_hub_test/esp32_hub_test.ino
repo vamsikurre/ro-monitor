@@ -176,7 +176,12 @@ uint16_t measureDosingMM() {
 uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM) {
   if (distanceMM == 0) return 255;                 // no echo
   if (emptyMM <= fullMM) return 255;               // calibration not set, or inverted
-  if (distanceMM < fullMM) return 255;             // blind zone, or over-full
+  // Below the sensor's minimum range nothing is trustworthy, and it is also where
+  // fouling lands. No level - see app_cal.c for the full reasoning.
+  if (distanceMM < BLIND_ZONE_MM) return 255;
+  // Closer than the calibrated full mark but still in range: over-full, and a
+  // real measurement. 100%, not an error.
+  if (distanceMM < fullMM) return 100;
   if (distanceMM >= emptyMM) return 0;
 
   long span = (long)emptyMM - (long)fullMM;

@@ -34,6 +34,10 @@ HARNESS = """
 #include <stdio.h>
 #include <string.h>
 
+/* Both copies of levelPercent() reference this, so the harness must define it.
+   It is the AJ-SR04M's minimum usable range - WIRING.md section 9.0. */
+#define BLIND_ZONE_MM 200
+
 /* --- lifted from ro_node.ino --- */
 %s
 
@@ -103,7 +107,19 @@ int main(void) {
 
     /* the hub's level maths, per tank, with calibration passed in */
     if (levelPercent(0, 300, 1500) != 255)     fail("no echo should be invalid, not a level");
-    if (levelPercent(299, 300, 1500) != 255)   fail("inside the blind zone should be invalid");
+    /* 299 mm against full=300 is NOT the blind zone - it is 1 mm over-full, and a
+       real measurement. This assertion used to demand 255 and its own name gave
+       the confusion away: the two cases shared a branch. */
+    if (levelPercent(299, 300, 1500) != 100)   fail("1mm over-full should read 100, not invalid");
+    if (levelPercent(201, 300, 1500) != 100)   fail("just outside the blind zone should read 100");
+    if (levelPercent(199, 300, 1500) != 255)   fail("inside the blind zone must stay invalid");
+    if (levelPercent(1, 300, 1500) != 255)     fail("hard against the transducer must stay invalid");
+    /* The dosing barrel is the case that prompted this: full 250 against a 200 mm
+       blind zone leaves only 50 mm in which "over-full" can be distinguished from
+       "fouled", so both edges of that narrow band are pinned here. */
+    if (levelPercent(249, 250, 900) != 100)    fail("over-filled dosing barrel should read 100");
+    if (levelPercent(200, 250, 900) != 100)    fail("dosing at the blind-zone edge should read 100");
+    if (levelPercent(199, 250, 900) != 255)    fail("dosing inside the blind zone must be invalid");
     if (levelPercent(300, 300, 1500) != 100)   fail("full should read 100");
     if (levelPercent(1500, 300, 1500) != 0)    fail("empty should read 0");
     if (levelPercent(3000, 300, 1500) != 0)    fail("past empty should clamp to 0, not wrap");
@@ -114,7 +130,7 @@ int main(void) {
 
     /* a short dosing tank and a deep water tank must both behave */
     int prev = 101;
-    for (uint16_t mm = 300; mm <= 1500; mm++) {
+    for (uint16_t mm = BLIND_ZONE_MM; mm <= 1500; mm++) {
         int pct = levelPercent(mm, 300, 1500);
         if (pct > prev || pct > 100) { fail("level is not monotonic in distance"); break; }
         prev = pct;
