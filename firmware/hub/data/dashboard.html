@@ -25,6 +25,8 @@
   --raw:#3E8F5F; --treated:#2B8FD4; --additive:#9A7B3C;
   /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
   --warn:#B08F1A; --fault:#D93E68; --offline:#6B7787;
+  /* --fault at low alpha, for washing a whole region rather than a chip */
+  --fault-wash:rgba(217,62,104,.06); --fault-wash-2:rgba(217,62,104,.19);
   --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,"Liberation Mono",monospace;
   --r:3px;
@@ -121,6 +123,35 @@ h1 span{color:var(--ink-3); font-weight:400}
 /* the RO room, with both roof tanks resting on it */
 .room{grid-row:2; border:1px solid var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px -12px -21px; position:relative; z-index:1}
 .room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
+
+/* Controller fault: the whole room reads as faulted, not just one row in the
+   alert list. The Aster multiplexes every condition onto a single contact, so
+   this says "something in here has tripped" and the panel says which.
+
+   The static state already carries the fault colour and the pulse is only
+   emphasis on top of it. That ordering matters: the reduced-motion rule further
+   down switches every animation off, and a fault that was visible ONLY as a
+   flash would silently stop being visible for anyone who set that preference.
+
+   ~0.9 Hz, deliberately under the 3 Hz photosensitivity threshold. */
+.room.alarm{
+  border-color:var(--fault); background:var(--fault-wash);
+  animation:roomalarm 1.1s ease-in-out infinite;
+}
+.room.alarm > .tag{color:var(--fault)}
+@keyframes roomalarm{
+  0%,100%{background:var(--fault-wash)}
+  50%{background:var(--fault-wash-2)}
+}
+
+/* Current draw, under a pump that has a clamp fitted. Mono and small: it is a
+   secondary reading, not the unit's identity. */
+.amps{
+  font-family:var(--mono); font-size:12px; font-weight:600;
+  color:var(--ink-2); margin-top:3px; letter-spacing:-.01em;
+}
+.amps u{text-decoration:none; font-size:10px; color:var(--ink-3); font-weight:600; margin-left:2px}
+.amps.over{color:var(--fault)}
 .room > .roomenv,.annex > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
   background:var(--ground-c); padding:4px 9px; border-radius:3px;
@@ -208,6 +239,40 @@ h1 span{color:var(--ink-3); font-weight:400}
 .unit .sub{font-size:11px; color:var(--ink-2); font-family:var(--mono); text-align:center;
   background:var(--ground-c); padding:1px 8px; border-radius:2px}
 .vessel{position:relative}
+
+/* A roof tank stands ON the slab.
+   .cell.bottom aligns the whole UNIT to the row bottom, and the unit is vessel +
+   name + distance + chip - so the caption block was propping both roof tanks
+   about 80px into the air above their own roof. Lifting the caption out of the
+   vertical flow drops the vessel onto the slab and hangs the labels below the
+   roof line, which is already how the sump reads against grade.
+   The labels then sit over the room interior and over the riser that leaves the
+   tank, so they get the same solid ground-coloured patch .roomenv uses for
+   exactly this reason. */
+.cell.onslab > .unit{position:relative}
+.cell.onslab > .unit > .caption{
+  position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  margin-top:9px; white-space:nowrap; z-index:3;
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  background:var(--ground-c); padding:4px 9px; border-radius:3px;
+}
+.caption{display:flex; flex-direction:column; align-items:center; gap:8px}
+
+/* A vessel that fills its grid span rather than sitting centred in it. The TWT is
+   a poured concrete tank running to the end of the roof slab, so it is drawn to
+   the edge instead of as a centred object with air either side.
+   The SVG keeps its designed HEIGHT and stretches only horizontally
+   (preserveAspectRatio="none" on the element). For a box that is nearly free:
+   the corner arcs widen slightly and the surface wave gets a longer wavelength,
+   which is what a bigger tank should look like anyway. It would be wrong on a
+   cylinder, where the end ellipses would go visibly oval - hence the flag rather
+   than making every vessel stretch. */
+/* .cell is a flex container, so justify-content:stretch would be ignored - it is
+   not a valid value there. Width on the item is what actually fills the span. */
+.cell.wide > .unit{width:100%}
+.cell.wide .vessel{width:100%}
+.cell.wide .glyph{width:100%}
+.cell.wide .glyph > svg{width:100%}
 .vessel .pct{
   position:absolute; left:0; right:0; top:9%; text-align:center;
   font-family:var(--mono); font-weight:700; font-size:22px; letter-spacing:-.02em;
@@ -370,21 +435,30 @@ const dur = s => {
    A real container with a living surface: two sine layers drifting at
    different speeds. OFFLINE draws hatch and no liquid — an offline tank
    is not an empty tank (plan.txt §15).                       */
-function vessel({ w, h, shape, fluid, pct, state, id }) {
+function vessel({ w, h, shape, fluid, pct, state, id, stretch, corner }) {
   const AMP = 4.6, LEN = 26, pad = 2;
   const iw = w - pad * 2, ih = h - pad * 2, ry = shape === "cyl" ? Math.min(13, iw * 0.17) : 0;
+  // Box corner radius. Poured concrete has sharp corners, and on a stretched
+  // vessel the arc widens with the stretch factor - 7 became a visible oval and
+  // the tank read as a swimming pool. Per-vessel so the moulded sump keeps its 7.
+  const cr = (corner === undefined) ? 7 : corner;
   const silhouette = shape === "cyl"
     ? `M ${pad} ${pad + ry} A ${iw / 2} ${ry} 0 0 1 ${pad + iw} ${pad + ry}
        L ${pad + iw} ${pad + ih - ry} A ${iw / 2} ${ry} 0 0 1 ${pad} ${pad + ih - ry} Z`
-    : `M ${pad + 7} ${pad} L ${pad + iw - 7} ${pad} Q ${pad + iw} ${pad} ${pad + iw} ${pad + 7}
-       L ${pad + iw} ${pad + ih - 7} Q ${pad + iw} ${pad + ih} ${pad + iw - 7} ${pad + ih}
-       L ${pad + 7} ${pad + ih} Q ${pad} ${pad + ih} ${pad} ${pad + ih - 7}
-       L ${pad} ${pad + 7} Q ${pad} ${pad} ${pad + 7} ${pad} Z`;
+    : `M ${pad + cr} ${pad} L ${pad + iw - cr} ${pad} Q ${pad + iw} ${pad} ${pad + iw} ${pad + cr}
+       L ${pad + iw} ${pad + ih - cr} Q ${pad + iw} ${pad + ih} ${pad + iw - cr} ${pad + ih}
+       L ${pad + cr} ${pad + ih} Q ${pad} ${pad + ih} ${pad} ${pad + ih - cr}
+       L ${pad} ${pad + cr} Q ${pad} ${pad} ${pad + cr} ${pad} Z`;
 
   const cid = "clip-" + id;
   const svg = el("svg", {
     width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true",
     "data-pad": pad, "data-ih": ih, "data-amp": AMP,
+    /* Horizontal-only stretch for a vessel that fills its span. The level maths
+       is entirely vertical - setLevel() translates the wave group on Y using
+       data-pad/data-ih - so widening the viewport mapping cannot affect what
+       percentage the tank appears to hold. */
+    ...(stretch ? { preserveAspectRatio: "none" } : {}),
   });
   const defs = el("defs");
   defs.appendChild(el("clipPath", { id: cid }, [el("path", { d: silhouette })]));
@@ -426,6 +500,7 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
       drift.appendChild(el("path", {
         d, fill: "none", stroke: "rgba(255,255,255,.42)", "stroke-width": 1.7,
         transform: `translate(${off} 0)`,
+        ...(stretch ? { "vector-effect": "non-scaling-stroke" } : {}),
       }));
       drift.style.animation = `wave${i} ${sec}s ease-in-out infinite`;
       level.appendChild(drift);
@@ -433,7 +508,10 @@ function vessel({ w, h, shape, fluid, pct, state, id }) {
     body.appendChild(level);
   }
   svg.appendChild(body);
-  svg.appendChild(el("path", { d: silhouette, fill: "none", stroke: "var(--line-2)", "stroke-width": 1.5 }));
+  svg.appendChild(el("path", {
+    d: silhouette, fill: "none", stroke: "var(--line-2)", "stroke-width": 1.5,
+    ...(stretch ? { "vector-effect": "non-scaling-stroke" } : {}),
+  }));
   if (shape === "cyl")
     svg.appendChild(el("ellipse", { cx: w / 2, cy: pad + ry, rx: iw / 2, ry, fill: "none", stroke: "var(--line-2)", "stroke-width": 1.5 }));
   return svg;
@@ -565,10 +643,13 @@ function solarRow(cls) {
   const u = node("solar " + cls);
   u.appendChild(svg);
   // 10% and 90% across; tops are the panel underside at those points
-  [[10, 49], [90, 21]].forEach(([pc, t]) => {
+  [[10, 49, "left"], [90, 21, "right"]].forEach(([pc, t, side]) => {
     const post = node("post");
     post.style.left = `calc(${pc}% - 3.5px)`;
     post.style.top = t + "px";
+    // rowB's right post does not reach the slab - it stands on the TWT roof.
+    // seatSolarLeg() measures where that is once the row has laid out.
+    post.dataset.foot = side;
     u.appendChild(post);
   });
   u.appendChild(node("tie"));
@@ -718,6 +799,8 @@ function tankUnit(t, cfg) {
   v.dataset.a = cfg.id;
   const g = node("glyph");
   g.dataset.g = cfg.id;
+  // where the feed pipe lands across this vessel, as a fraction of its width
+  if (cfg.portx !== undefined) g.dataset.portx = cfg.portx;
   g.appendChild(vessel({ ...cfg, pct: t.pct, state: t.state }));
   v.appendChild(g);
   const dead = t.state === "OFFLINE" || t.state === "SENSOR_ERROR";
@@ -729,16 +812,26 @@ function tankUnit(t, cfg) {
     g.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
   }
   u.appendChild(v);
-  u.appendChild(txt("name", cfg.label));
-  u.appendChild(txt("sub", dead ? "—" : `${t.distance_mm} mm`));
+  const cap = node("caption");
+  cap.appendChild(txt("name", cfg.label));
+  cap.appendChild(txt("sub", dead ? "—" : `${t.distance_mm} mm`));
   let label = t.state, kind = "fault";
   if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : "warn"; }
   else if (t.state === "STALE") { kind = "warn"; }
-  u.appendChild(chip(label, kind));
+  cap.appendChild(chip(label, kind));
+  u.appendChild(cap);
   return u;
 }
 
-function machineUnit(m, label, id, r, draw) {
+/* A clamp that is not fitted, or a bias rail that is not there, reports null
+   rather than zero: the hub refuses to invent a current, for the same reason an
+   uncalibrated tank shows no percentage instead of a plausible wrong one. Render
+   that absence as a dash. */
+function ampsText(a) {
+  return (a === null || a === undefined) ? "\u2014" : `${a.toFixed(1)}<u>A</u>`;
+}
+
+function machineUnit(m, label, id, r, draw, ct) {
   const u = node("unit");
   u.dataset.u = id;
   const dead = m.state && m.state !== "ONLINE";
@@ -754,6 +847,15 @@ function machineUnit(m, label, id, r, draw) {
   if (dead) { s = "Offline"; kind = "fault"; }
   else if (m.on) { s = "Running"; kind = "on"; }
   u.appendChild(chip(s, kind));
+
+  /* Only HPP and RWP carry clamps; the ground-floor motors are Phase 2, so they
+     are passed no ct and grow no readout rather than showing a permanent dash. */
+  if (ct) {
+    const a = node("amps");
+    a.dataset.amps = id;
+    a.innerHTML = ampsText(ct.amps);
+    u.appendChild(a);
+  }
   return u;
 }
 
@@ -784,8 +886,13 @@ function anchorPt(id, side, host) {
   const vert = side === "t" || side === "b";
   const e = vert ? (document.querySelector(`[data-g="${id}"]`) || box) : box;
   const b = layoutBox(e, host), S = 2;   // pipes meet the equipment
-  if (side === "t") return { x: b.x + b.w / 2, y: b.y - S };
-  if (side === "b") return { x: b.x + b.w / 2, y: b.y + b.h + S };
+  // A wide vessel does not have to be entered at its midpoint. data-portx is the
+  // fraction across the glyph where the pipe lands, so a tank spanning half the
+  // roof can be fed near one end instead of dragging the riser to its centre.
+  const fx = parseFloat(e.dataset.portx);
+  const px = isNaN(fx) ? b.w / 2 : b.w * fx;
+  if (side === "t") return { x: b.x + px, y: b.y - S };
+  if (side === "b") return { x: b.x + px, y: b.y + b.h + S };
   if (side === "l") return { x: b.x - S, y: b.y + b.h / 2 };
   return { x: b.x + b.w + S, y: b.y + b.h / 2 };
 }
@@ -863,11 +970,14 @@ function buildPlant(s) {
 
   const build = {
     rwt:    () => tankUnit(T.rwt,    { w: 118, h: 142, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
-    twt:    () => tankUnit(T.twt,    { w: 126, h: 154, shape: "cyl", fluid: "treated",  label: "Treated Water", id: "twt" }),
+    /* Concrete, not a moulded cylinder: a rectangular poured tank spanning the
+       end of the roof slab. Bigger than the others because it is the biggest
+       vessel on the roof, and box-shaped because that is what is up there. */
+    twt:    () => tankUnit(T.twt,    { w: 300, h: 186, shape: "box", fluid: "treated",  label: "Treated Water", id: "twt", stretch: true, corner: 2, portx: 0.08 }),
     dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
     sump:   () => tankUnit(T.sump,   { w: 176, h: 146, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
-    rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25),
-    hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 25, hppGlyph),
+    rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25, null, s.motors && s.motors.rwp),
+    hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 25, hppGlyph, s.motors && s.motors.hpp),
     smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 26, subPumpGlyph),
     bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 26),
     filter: () => equipUnit(equipFilter, "Filter", "filter", 58, 126),
@@ -884,6 +994,7 @@ function buildPlant(s) {
 
   const roomBox = () => {
     const r = node("room");
+    if (s.aster.alarm) r.classList.add("alarm");
     r.appendChild(txt("tag legend", "RO Room"));
     const e = s.env.ro_room, env = node("roomenv");
     env.appendChild(txt("legend", "Room air"));
@@ -944,7 +1055,7 @@ function buildPlant(s) {
     cell("mf", "main", 8);
     cell("hpp", "main", 9);
     cell("memb", "main", 10);
-    cell("twt", "main", 11);
+    cell("twt", "main", 11).classList.add("wide");
     add(annexBox(), "1 / -1", 12);
 
     TEE_AXIS = "v";
@@ -982,8 +1093,10 @@ function buildPlant(s) {
     earth.appendChild(txt("legend", "Ground level"));
     add(earth, "1 / -1", 5);
 
-    cell("rwt", "c3", 1).classList.add("bottom");
-    cell("twt", "c7", 1).classList.add("bottom");
+    cell("rwt", "c3", 1).classList.add("bottom", "onslab");
+    /* c7 to the end: the tank runs to the right edge of the slab. Nothing else
+       occupies c8 in this row - the battery room annex is row 2. */
+    cell("twt", "c7 / -1", 1).classList.add("bottom", "wide", "onslab");
     ["rwp c3", "filter c4", "mf c5", "hpp c6", "memb c7"].forEach(spec => {
       const [k, col] = spec.split(" ");
       const c = cell(k, col, 2);
@@ -1123,7 +1236,21 @@ function updatePlant(s) {
       c.textContent = label;
       c.className = "chip " + kind;
     }
+
+    const aEl = u.querySelector(".amps");
+    if (aEl) {
+      const ct = s.motors && s.motors[id];
+      aEl.innerHTML = ampsText(ct ? ct.amps : null);
+      /* Over-current is published per plant, not per channel, so both readouts
+         redden together. The notification text names both figures. */
+      aEl.className = "amps" + (s.motors && s.motors.overcurrent ? " over" : "");
+    }
   });
+
+  /* Toggled here rather than in the structural rebuild: the alarm flips on a
+     poll and structSig deliberately does not rebuild for it. */
+  const room = document.querySelector(".room");
+  if (room) room.classList.toggle("alarm", !!s.aster.alarm);
 
   const e = s.env.ro_room;
   const vt = document.querySelector('[data-env="t"]'), vh = document.querySelector('[data-env="rh"]');
@@ -1328,10 +1455,36 @@ function fitPlant() {
   pl.style.transform = `translateX(${dx.toFixed(1)}px) scale(${sc})`;
   wrap.style.height = Math.ceil(pl.offsetHeight * sc + padT + padB) + "px";
 }
+/* Stand rowB's right-hand PV post on the TWT roof instead of running it down to
+   the slab. It already LOOKED seated, because a tank that tall simply hides the
+   post behind it - but that is coincidence, not construction, and it would come
+   apart the moment the tank got shorter. This makes the foot real.
+
+   Measured, not hardcoded: the tank's top edge is its own height plus the caption
+   block underneath it in the same unit, and both move when the layout reflows.
+   layoutBox() walks offsetParents and so reports the plant's own UNSCALED
+   coordinates - the same space post.style.top is written in. Reading
+   getBoundingClientRect() here would mix scaled pixels with unscaled ones and the
+   foot would drift as fitPlant() scales the drawing. */
+function seatSolarLeg() {
+  const host = $("#plant");
+  const row = document.querySelector(".solar.rowB");
+  const post = row && row.querySelector('[data-foot="right"]');
+  const tank = document.querySelector('[data-g="twt"]');
+  if (!host || !row || !post || !tank) return;      // narrow layout has no PV rows
+
+  const r = layoutBox(row, host), t = layoutBox(tank, host);
+  const bottom = (r.y + r.h) - t.y;
+  // Negative would mean the tank top is below the slab line; leave the post on
+  // the slab rather than drawing it upside down.
+  post.style.bottom = (bottom > 0 ? bottom : 0).toFixed(1) + "px";
+}
+
 function relayout() {
   const hdr = document.querySelector("header");
   if (hdr) document.documentElement.style.setProperty("--hdr", hdr.offsetHeight + "px");
   fitPlant();
+  seatSolarLeg();
   drawPipes();
   PIPE_SIG = ROUTES.map(r => r.flow ? "1" : "0").join("");
 }
@@ -1342,6 +1495,14 @@ window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LA
    Runs until /api/telemetry answers. Models the failure this project
    exists to fix: the borewell goes dry, the sump drains, and the sump
    motor keeps lifting because RWT is still below its float.    */
+/* Demo overrides, for eyeballing states that are rare on a real plant:
+     ?alarm=1   holds the controller fault on, so the RO room keeps flashing
+     ?oc=1      holds over-current on, so both amp readouts stay red
+   Deliberately NOT the defaults. This simulator is also what the page falls back
+   to whenever the hub is unreachable, and a permanently red flashing room there
+   would read as a genuine plant fault to whoever opened it next. */
+const DEMO_FORCE = new URLSearchParams(location.search);
+
 const demo = {
   sys: { uptime_s: 267340, rssi: -58, fw: "0.4.0-dev", reset_reason: "Power on" },
   rs485: { online: 4, total: 4, errors: 3, last_poll_ms: 412 },
@@ -1358,6 +1519,7 @@ const demo = {
     hpp:        { on: true, state: "ONLINE" },
   },
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false },
+  motors: { hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false },
   env: {
     ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
     battery_room: { t: 36.2, rh: 48, fan: false, state: "ONLINE", src: "SHT30 · Node 0x04", age_s: 1 },
@@ -1386,6 +1548,14 @@ function stepDemo() {
 
   if (tick === 22) d.pumps.borewell.on = false;        // the borewell runs dry
   if (tick === 70) { d.pumps.borewell.on = true; T.dosing.pct = 84; tick = 0; }
+
+  /* The demo trips the controller alarm and an over-current for a few ticks so
+     both of those states can be seen without a plant attached - which is the
+     only way to check them before the panel is live. */
+  d.aster.alarm = DEMO_FORCE.has("alarm") || (tick >= 40 && tick < 48);
+  d.motors.overcurrent = DEMO_FORCE.has("oc") || (tick >= 56 && tick < 62);
+  d.motors.hpp.amps = d.pumps.hpp.on ? 8.2 + Math.sin(tick / 6) * 0.6 + (d.motors.overcurrent ? 4.6 : 0) : 0;
+  d.motors.rwp.amps = d.pumps.rwp.on ? 5.0 + Math.sin(tick / 7) * 0.4 : 0;
 
   d.pumps.sump_motor.on = T.rwt.pct < 72;              // driven by the RWT float, as wired today
   d.pumps.rwp.on = T.rwt.pct > 8 && T.twt.pct < 94;

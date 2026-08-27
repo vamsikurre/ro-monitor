@@ -170,6 +170,23 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     hub_state_lock();
     const hub_state_t *s = hub_state();
 
+    /* A clamp that is not fitted, or a bias pedestal that is not there, gives
+     * deci_amps < 0. That has to reach the page as null, not as 0.0: zero amps
+     * is what an idle pump reads, so conflating "idle" with "not measured" would
+     * make a missing clamp look like a stopped motor. Same rule as an
+     * uncalibrated tank refusing to report a percentage. */
+    char hpp_amps[12], rwp_amps[12];
+    if (s->hpp.deci_amps < 0) {
+        snprintf(hpp_amps, sizeof(hpp_amps), "null");
+    } else {
+        snprintf(hpp_amps, sizeof(hpp_amps), "%d.%d", s->hpp.deci_amps / 10, s->hpp.deci_amps % 10);
+    }
+    if (s->rwp.deci_amps < 0) {
+        snprintf(rwp_amps, sizeof(rwp_amps), "null");
+    } else {
+        snprintf(rwp_amps, sizeof(rwp_amps), "%d.%d", s->rwp.deci_amps / 10, s->rwp.deci_amps % 10);
+    }
+
     int n = snprintf(json, sizeof(json),
         "{"
         "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\"},"
@@ -193,8 +210,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d}"
         "},"
         "\"motors\":{"
-          "\"hpp\":{\"amps\":%d.%d,\"mv_lo\":%lu,\"mv_hi\":%lu},"
-          "\"rwp\":{\"amps\":%d.%d,\"mv_lo\":%lu,\"mv_hi\":%lu},"
+          "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
+          "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"overcurrent\":%s"
         "},"
         "\"nodes\":["
@@ -235,12 +252,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->battery_room.fault ? "SENSOR_ERROR" : link_word(s->battery_room.last_ok_us, s->battery_online),
         age_s(s->battery_room.last_ok_us),
 
-        s->hpp.deci_amps < 0 ? 0 : s->hpp.deci_amps / 10,
-        s->hpp.deci_amps < 0 ? 0 : s->hpp.deci_amps % 10,
-        (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
-        s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps / 10,
-        s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps % 10,
-        (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
+        hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
+        rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
         s->overcurrent ? "true" : "false",
 
         link_word(s->rwt.last_ok_us, s->rwt_online), age_s(s->rwt.last_ok_us),

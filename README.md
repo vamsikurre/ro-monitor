@@ -190,6 +190,10 @@ python docs/check_addrmap.py   # jumper table agrees across docs and firmware
 python docs/check_pinmap.py    # GPIO allocation agrees across 3 docs AND app_priv.h
 python docs/check_frame.py     # node, bench hub and production hub agree on
                                # CRC-16, framing and level maths
+python docs/check_telemetry.py # /api/telemetry is valid JSON and carries every
+                               # key the dashboard reads - it falls back to its
+                               # demo simulator on any error, so a broken
+                               # contract looks like a working page
 ```
 
 **Compile both before flashing** — `arduino-cli` ships inside the Arduino IDE install
