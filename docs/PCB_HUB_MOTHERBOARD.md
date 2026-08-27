@@ -129,6 +129,16 @@ All JST-XH, 2.54 mm, keyed. **Pin 1 of every connector points to the board edge*
 | `J_RELAY` | 6 | 4-ch relay board | `+5V`, `IN1`, `IN2`, `IN3`, `IN4`, `GND` |
 | `J_CT1` / `J_CT2` | — | 3.5 mm sockets, on-board | See §7 |
 | `J_SPARE` | 3 | `GPIO 14` | `3V3`, `GPIO14`, `GND` |
+| `J_PROG` | 6 | FTDI programming header | `GND`, `3V3`, `RX0`, `TX0`, `EN`, `GPIO0` |
+
+**`J_PROG` exists because the module's USB cannot be relied on.** On the current
+hub it is already gone (`WIRING.md` §0.3.1), and a board that can only be
+programmed through a chip that has died once should not be built. Bringing `EN` and
+`GPIO 0` out as well as `RX`/`TX` means an adapter with `DTR`/`RTS` can enter boot
+mode on its own, which removes the hold-BOOT-tap-EN dance the present build needs
+for every flash. **Label the header `3V3 ONLY`** in the silkscreen — a 5 V adapter
+on `RX0` is out of spec for the ESP32 and is the other half of how the current
+board got damaged.
 
 `J_OPTO` carries `GND` at both ends deliberately: it is the widest signal
 connector and the return sits beside the signals rather than across the board.
@@ -155,6 +165,13 @@ connector and the return sits beside the signals rather than across the board.
 - **100 nF ceramic** at each module's supply pin.
 - **Do not draw the relay board's 5 V through the ESP32.** It goes straight from
   the buck to `J_RELAY`.
+- **Reverse-polarity protection on `J_PWR`, mandatory.** A **P-channel MOSFET ideal
+  diode** on the 12 V input: source to `+12V` in, drain to the rail, gate to `GND`
+  through a 100 kΩ, with a 12 V zener gate clamp. Roughly 20 mV of drop, versus
+  ~400 mV for a series Schottky, and it protects against exactly the event that has
+  already happened on this project — **the hub's onboard CP2102 was destroyed by
+  reverse polarity on the `5V` pin** (`WIRING.md` §0.3.1). This is not a
+  hypothetical failure being guarded against; it is a repeat being prevented.
 
 > **The 3V3 budget is the one thing to check with a meter before ordering.** The
 > ESP32 module's onboard regulator now feeds two AC opto modules, the SHT30, the

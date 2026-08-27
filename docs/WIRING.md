@@ -53,6 +53,37 @@ expects both, so doing one without the other misreports a fault as low pressure.
 - [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
 - [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
 
+### 0.3.1. Programming the hub — the onboard USB is dead
+
+**As-built 2026-08-28.** The hub ESP32's onboard **CP2102 USB-serial chip is
+destroyed** — killed by reverse polarity applied to the `5V` pin. The USB socket on
+the module enumerates nothing and never will. **The only serial path to this board
+is an external FTDI adapter wired to `TX0` / `RX0`.**
+
+| | |
+| :--- | :--- |
+| Adapter | FTDI `FT232R`, `VID_0403/PID_6001` — the same one used for the Pro Mini nodes (§10.1) |
+| Wiring | FTDI `TX` → ESP32 `RX0`, FTDI `RX` → ESP32 `TX0`, `GND` → `GND` |
+| **Voltage jumper** | **3.3 V. NOT the 5 V used for the Pro Minis.** ESP32 pins are not 5 V tolerant; at 5 V the adapter's TX idles above `GPIO 3`'s rating |
+| Auto-reset | `RTS` → `EN` **works** — esptool reports `Hard resetting via RTS pin` |
+| Boot mode | **Manual, every flash.** `GPIO 0` is not driven by the adapter: hold `BOOT`, tap `EN`, release `BOOT`, then run esptool |
+
+**Symptom if you forget the boot button:** `Failed to connect to ESP32: No serial
+data received`. Identical wording to a wrong-port error, which is what makes it
+confusing — the port is right, the chip is simply not listening.
+
+**Do not go looking for a CP210x port.** There is no `VID_10C4` device on this
+build; searching for one wastes time, as it did on 2026-08-28. `COM6` — the FTDI —
+is the correct and only port.
+
+**Keep the Arduino IDE closed while flashing.** Its Serial Monitor holds the port
+and produces `PermissionError(13, 'Access is denied')`.
+
+**The lesson worth carrying to the PCB:** one reversed supply took out the
+programming interface of the board that runs the plant, and the board still works
+only because the ESP32 core survived. `PCB_HUB_MOTHERBOARD.md` §6 now specifies
+reverse-polarity protection and a dedicated programming header for exactly this.
+
 ### 0.4. Known open, not blocking
 
 - **An 8-channel PC817 board is owned and unused.** The 4-channel part was fitted
