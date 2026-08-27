@@ -512,6 +512,28 @@ not a bare optocoupler. Its output side carries a **47 k pull-up from `OUT` to
   present, not a 100 Hz pulse train. Phase-B spec §5.4 assumed a pulse train;
   that is re-opened pending measurement.
 
+> **Measured 2026-08-28, and the withdrawn resistor is half-rehabilitated.**
+> `probeACInput()` on real hardware reports **HPP 2693-3134 mV** and
+> **RWP 2924-3134 mV** at idle, not the ~3300 mV steady that a 3.3 V pull-up
+> implies. The cause is source impedance: the module's 47 k is too stiff to
+> replenish the ESP32 ADC's sampling capacitor, so the reading sags and jitters.
+> Espressif's guidance is to keep ADC source impedance under about 10 k.
+>
+> **This does not restore the "defect".** §1 is still right that no external
+> pull-up is *needed* for the optocoupler — the module supplies its own, and
+> nothing about that was wrong. What is new is a different and unrelated reason
+> to want a part there: ADC accuracy, not contact wetting.
+>
+> **It works as-is.** 2693 mV clears the 2500 mV idle threshold, and with mains
+> present the pin sits near 0 V so active detection has enormous margin. But the
+> idle margin is ~190 mV rather than the ~800 mV intended.
+>
+> **Cheapest hardening, if these channels ever read erratically: one 100 nF from
+> each of `GPIO 34` / `35` to GND.** A capacitor is the better fix than a stronger
+> pull-up here because it supplies the sampling charge without shifting the DC
+> level — the thresholds stay where they are. A parallel 10 k would also work and
+> would firm up the level, at the cost of re-tuning `AC_IDLE_ABOVE_MV`.
+
 **Validated 2026-08-27.** Both channels read correctly against live contactors, with the sketch's existing 5 ms filter — which also retires the 25 ms rewrite proposed in phase-B spec §5.4 (see that section). The earlier floating reading was the broken wire at the module, not this design.
 
 **Verify with `probeACInput()`**, which the hub sketch runs every cycle. GPIO 34
