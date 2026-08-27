@@ -51,6 +51,11 @@
 #define OPTO_HPP_AC      34
 #define OPTO_RWP_AC      35
 
+// SCT-013-030 current clamps, on the last two free ADC1 pins. Header is fitted
+// now; the bias breakout and the clamps themselves come later (WIRING.md 14.0).
+#define IN_HPP_CT        36   // ADC1_CH0
+#define IN_RWP_CT        39   // ADC1_CH3
+
 #define LED_STATUS       2
 
 // Dosing tank AJ-SR04M, wired straight to the hub (WIRING.md 13). ECHO is 5V logic
@@ -508,20 +513,53 @@ void commandFan() {
 //
 // The min/max spread over one full mains cycle is what tells them apart, so
 // sample across 30 ms rather than reporting a single instantaneous reading.
-void probeACInput(const char *label, int pin) {
-  uint32_t lo = 5000, hi = 0;
+// Min and max millivolts across one full mains cycle. Both the AC opto channels
+// and the CT inputs ask the same question - not "what level is the pin at" but
+// "how far does it move" - so the sampling is shared and only the verdicts differ.
+void sampleMinMaxMV(int pin, uint32_t *lo, uint32_t *hi) {
+  *lo = 5000;
+  *hi = 0;
   unsigned long start = millis();
   while (millis() - start < 30) {
     uint32_t mv = analogReadMilliVolts(pin);
-    if (mv < lo) lo = mv;
-    if (mv > hi) hi = mv;
+    if (mv < *lo) *lo = mv;
+    if (mv > *hi) *hi = mv;
   }
+}
+
+void probeACInput(const char *label, int pin) {
+  uint32_t lo, hi;
+  sampleMinMaxMV(pin, &lo, &hi);
 
   const char *verdict;
   if (lo > 2500)                      verdict = "idle, pull-up OK";
   else if (hi < 500)                  verdict = "MAINS PRESENT (steady)";
   else if (hi > 2500 && lo < 500)     verdict = "MAINS PRESENT (pulsing - see spec 5.4)";
   else                                verdict = "FLOATING - check VCC and OUT continuity";
+
+  Serial.printf("  %-8s %4u-%4u mV   %s\n", label, lo, hi, verdict);
+}
+
+// CT channels, before any clamp exists. The bias network puts both pins on a
+// shared 1.65 V pedestal so the clamp's AC output has room to swing either way;
+// that pedestal is the thing worth checking now, because it is what proves the
+// breakout and the GPIO 36/39 header are wired right (WIRING.md 14.0). An empty
+// header floats these pins - input-only, no internal pull-up - so "wandering"
+// is a real and expected state, not a fault to hide.
+//
+// No amps here on purpose: the clamps have not arrived, the scale factor is
+// uncalibrated, and WIRING.md 14.4 already carries the RMS outline for when
+// they do. Reporting a number nobody has calibrated is worse than reporting mV.
+void probeCTInput(const char *label, int pin) {
+  uint32_t lo, hi;
+  sampleMinMaxMV(pin, &lo, &hi);
+
+  const char *verdict;
+  if (lo > 1550 && hi < 1750)       verdict = "pedestal OK, no current";
+  else if (lo > 1400 && hi > 1750)  verdict = "current flowing";
+  else if (hi < 300)                verdict = "pedestal at 0 V - check R1 / 3V3";
+  else if (lo > 3000)               verdict = "pedestal at 3V3 - check R2 / GND";
+  else                              verdict = "no breakout - pin floating";
 
   Serial.printf("  %-8s %4u-%4u mV   %s\n", label, lo, hi, verdict);
 }
@@ -565,6 +603,13 @@ void setup() {
   pinMode(US_TRIG_DOS, OUTPUT);
   pinMode(US_ECHO_DOS, INPUT);
   digitalWrite(US_TRIG_DOS, LOW);
+
+  // 11 dB gives the full 0-3.3 V span on the CT pins and on the AC opto pins,
+  // which probeACInput reads as analog. ADC1 only - ADC2 is dead with Wi-Fi up.
+  analogSetPinAttenuation(IN_HPP_CT, ADC_11db);
+  analogSetPinAttenuation(IN_RWP_CT, ADC_11db);
+  analogSetPinAttenuation(OPTO_HPP_AC, ADC_11db);
+  analogSetPinAttenuation(OPTO_RWP_AC, ADC_11db);
 
   pinMode(LED_STATUS, OUTPUT);
   digitalWrite(LED_STATUS, LOW);
@@ -653,6 +698,10 @@ void loop() {
   // The two AC channels get measured, not just sampled - see probeACInput.
   probeACInput("HPP AC", OPTO_HPP_AC);
   probeACInput("RWP AC", OPTO_RWP_AC);
+
+  // Current clamps: header fitted, breakout and clamps still to come (14.0).
+  probeCTInput("HPP CT", IN_HPP_CT);
+  probeCTInput("RWP CT", IN_RWP_CT);
 
   // 4. Relay Sequential Cycling
   Serial.println(F("[Relay Test]    Cycling Relay 1 -> 2 -> 3 -> 4 -> node 0x04 fan..."));

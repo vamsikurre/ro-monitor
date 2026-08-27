@@ -748,6 +748,58 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
                 RWP  ->  around the  P  conductor only
 ```
 
+### 14.0. Hub-side header — fit this now, breakout later
+
+The clamps and their bias network live on a small breakout board built when the
+sensors arrive. All the hub needs today is the connector that board will plug
+into: **one 1×5 0.1" pin header**, carrying 3V3, both ADC pins, and two grounds.
+
+```
+     ESP32 HUB BOARD                                CT BREAKOUT (built later)
+  +---------------------+
+  | 1  GND             -|---------------------> R2 bottom, C1 / C2, C3 / C4
+  | 2  GPIO 36  ADC1_CH0|---------------------> HPP channel, after R3 / C3
+  | 3  3V3             -|---------------------> R1 top  (bias divider supply)
+  | 4  GPIO 39  ADC1_CH3|---------------------> RWP channel, after R4 / C4
+  | 5  GND             -|---------------------> second ground return
+  +---------------------+
+        ^
+        +-- mark pin 1 on the board. Nothing else identifies this header.
+```
+
+**Why this pin order, and not 3V3-GND-A-A-GND.** Three properties, all free:
+
+1. **3V3 sits between the two analog pins**, so the channels are never adjacent.
+   The rail is AC-ground through `C1`/`C2`, so it screens one channel from the
+   other — worth having when both carry millivolt signals derived from the same
+   panel.
+2. **A ground flanks each analog pin**, giving both a return path alongside the
+   signal rather than somewhere across the board.
+3. **It is reversal-safe.** The order is a palindrome except for pins 2 and 4:
+   plug the breakout in backwards and `GND` meets `GND`, `3V3` meets `3V3`, and
+   the *only* consequence is HPP and RWP swapping labels. The obvious ordering
+   `3V3-GND-A-A-GND` puts 3V3 onto a ground pin when reversed, which shorts the
+   rail. A header that cannot be plugged in destructively does not need a key.
+
+**Leave `GPIO 36` and `GPIO 39` unconnected until the breakout exists.** They are
+input-only pins with no internal pull-up, so an empty header floats them and the
+ADC reads noise. Harmless — nothing acts on a current reading yet — and the
+firmware reports it as `breakout not fitted` rather than as a plausible number.
+
+**What the log should say at each stage** (`probeCTInput()` runs every cycle):
+
+| Stage | Reading | Verdict |
+| :--- | :--- | :--- |
+| Header fitted, no breakout | wanders | `no breakout - pin floating` |
+| Breakout fitted, no clamp | `~1650-1650 mV` | `pedestal OK, no current` |
+| Clamp fitted, motor idle | `~1650-1650 mV` | `pedestal OK, no current` |
+| Clamp fitted, motor running | swings past `1750` | `current flowing` |
+| Divider wired wrong | `~0` or `~3300` steady | `pedestal at rail - check R1/R2` |
+
+That second row is §14.2's meter check, available from the serial log instead of
+a multimeter — so the breakout can be built and proven correct **before** any
+clamp arrives.
+
 ### 14.1. Bill of materials
 
 | Ref | Part | Qty | Note |
@@ -758,14 +810,15 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
 | C2 | 0.1 µF ceramic | 1 | Across C1, for the high-frequency end |
 | R3, R4 | 1 kΩ 1/4 W | 2 | Series protection. Limits fault current into the ADC pad to ~3 mA |
 | C3, C4 | 100 nF ceramic | 2 | With R3/R4, a ~1.6 kHz low-pass. Well clear of 50 Hz, kills contactor hash |
+| — | 1×5 0.1" pin header (hub side) | 1 | The connector in §14.0. Fit now; snap 5 pins off a strip |
 | — | 3.5 mm socket breakout (TRRS module, ~₹19) | 2 | One per channel. A labelled breakout is easier than a bare jack — but see the pad warning below. Panel-mount sockets are the alternative if the connector must sit on the enclosure face (§14.3) |
 
-Everything but the clamps fits on the same scrap of perfboard as the `GPIO 34` / `GPIO 35` pull-ups the hub already owes from §1 — one retrofit, not two.
+Everything but the clamps fits on one scrap of perfboard, plugging into the §14.0 header. (This previously paired the job with a `GPIO 34`/`GPIO 35` pull-up retrofit; that turned out not to be needed — §1, §8.)
 
 ### 14.2. Two things to check with a meter before trusting the wiring
 
 1. **Which socket pads the clamp actually reaches — measure, do not read the silkscreen.** Two things conspire here. Clones differ: most SCT-013 leads use **tip and sleeve**, some tip and ring. And a 3-conductor **TRS plug in a 4-contact TRRS socket** lands its sleeve on the socket's **`RING2`** pad, not on `SLEEVE`. So the pad marked `SLEEVE` may read open while an unlabelled-looking one carries the winding. Plug a clamp in, close its jaws, and meter between pads: the winding reads a few tens of ohms, everything else reads open. Wire the two that show the winding.
-2. **The pedestal, before connecting any clamp.** Power the hub, measure `GPIO 36` and `GPIO 39` to GND: both should sit at **1.6-1.7 V**. If one reads 0 V or 3.3 V, the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault.
+2. **The pedestal, before connecting any clamp.** Power the hub, measure `GPIO 36` and `GPIO 39` to GND: both should sit at **1.6-1.7 V**. `probeCTInput()` prints the same figure every cycle (§14.0), so the meter is a cross-check rather than the only way to see it. If one reads 0 V or 3.3 V, the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault.
 
 ### 14.3. Panel practice
 
