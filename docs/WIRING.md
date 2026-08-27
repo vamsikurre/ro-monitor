@@ -672,35 +672,44 @@ measurements they were derived from, so if a sensor is ever remounted or replace
 nobody can recompute them without going back up to the tank. Write the raw numbers
 here instead.
 
-**Measure two heights per tank, both from the inside floor:**
+**Three heights per tank, and take all three from the inside floor.** One datum
+means every value is a subtraction and no gap goes unrecorded. Mixing references —
+"bottom outlet to overflow" plus "floor to face" — leaves the height of the bottom
+outlet above the floor unmeasured, and the two figures then cannot be combined.
 
 ```
-   S = floor -> transducer FACE          (not the roof slab, not the bracket)
-   W = floor -> overflow outlet          (the true maximum water level)
+   S = floor -> transducer FACE      (not the roof slab, not the bracket)
+   B = floor -> bottom outlet        (the level below which there is no usable water)
+   W = floor -> overflow outlet      (the maximum water level)
 
-   empty = S
-   full  = S - W
+   empty = S - B        0% when the bottom outlet runs dry
+   full  = S - W        100% at the overflow
 ```
 
-Measuring to the face rather than to the roof means the transducer's protrusion is
+Measuring to the FACE rather than to the roof means the transducer's protrusion is
 already accounted for — one fewer number to record and to get wrong.
 
-| Tank | S: floor → face | W: floor → overflow | `full` = S−W | `empty` = S | Draw-off height | Measured |
-| :--- | ---: | ---: | ---: | ---: | ---: | :--- |
-| RWT `0x02` | | | | | | |
-| TWT `0x03` | | | | | | |
-| Dosing (hub) | | | | | | |
-| Sump `0x05` | | | | | | Phase 2 |
+**`W - B` is the usable depth**, and it is a free cross-check: if it does not match
+the tank's nominal capacity, one of the three measurements is wrong.
+
+| Tank | S: floor → face | B: floor → bottom outlet | W: floor → overflow | `full` = S−W | `empty` = S−B | Usable depth W−B | Measured |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| RWT `0x02` | | | | | | | |
+| TWT `0x03` | | | | | | | |
+| Dosing (hub) | | | | | | | |
+| Sump `0x05` | | | | | | | Phase 2 |
 
 **Check before saving: `full` must be at least 200 mm.** That is the blind zone, so
 the face has to sit at least 200 mm above the overflow outlet. If it does not, the
 top of the scale is unusable and the fix is a stand-off that raises the sensor, not
 a number typed into `/cal`.
 
-**The draw-off column is optional and changes what 0% means.** `empty = S` puts 0%
-at a dry floor. If you know the height below which the pump sucks air, use that as
-the effective floor instead and 0% comes to mean "no *usable* water", which is the
-more useful zero — particularly for RWT, which feeds the RWP.
+**Why zero is the bottom outlet and not the floor.** `empty = S` would put 0% at a
+bone-dry floor, which reports usable-looking water that the pump cannot actually
+reach. Referencing zero to the bottom outlet instead makes 0% mean "no *usable*
+water", which is the number that matters — particularly for RWT, which feeds the
+RWP, and for anything that ever informs dry-run detection (§7.2). If a tank's
+bottom outlet is level with its floor, `B = 0` and the two definitions coincide.
 
 **Refine opportunistically.** These figures only need to be close enough that the
 gauge is not nonsense. `/cal` shows the percentage the current calibration produces
