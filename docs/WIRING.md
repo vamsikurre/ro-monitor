@@ -34,9 +34,10 @@ firmware for a day (§6.6, `docs/check_pinmap.py`).
 Three jobs, in this order. The first two go together: the firmware already
 expects both, so doing one without the other misreports a fault as low pressure.
 
-- [ ] **Move PC817 `IN3` from the Aster `AUX OP` pair to the Aster `LPS` `C`/`NO` pair.** The output side (`V3` → `GPIO 33`) does **not** move. §6.6
-- [ ] **Fit the two `IN_ALARM` wires:** hub `GND` → Aster `AUX OP` `C`, and `GPIO 13` → `AUX OP` `NO`. No optocoupler, no resistor, no module. §6.6
-- [ ] **Fit the 1×5 CT header** — `GND` / `GPIO 36` / `3V3` / `GPIO 39` / `GND`, and **mark pin 1**. Leave 36 and 39 otherwise unconnected until the breakout exists. §14.0
+- [ ] **Move PC817 `IN3` from the Aster `AUX OP` pair to the Aster `LPS` `C`/`NO` pair.** The output side (`V3` → `GPIO 33`) does **not** move. §6.6 — **the only hub-board job still outstanding**
+- [x] **`IN_ALARM` header fitted 2026-08-27** — 2-pin: hub `GND` and `GPIO 13`, to the Aster `AUX OP` `C`/`NO` pair. No optocoupler, no resistor, no module. §6.6
+- [x] **CT header fitted 2026-08-27** — **4-pin as built: `3V3` / `SP` / `SN` / `GND`**, not the 5-pin order in §14.0. Leave `SP`/`SN` otherwise unconnected until the breakout exists.
+- [ ] **Key or mark that CT header before first use.** In this pin order a reversed plug shorts 3V3 to GND — §14.0. Paint pin 1 on the header and on the breakout.
 
 **Then verify, before trusting any of it:**
 
@@ -951,7 +952,30 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
                 RWP  ->  around the  P  conductor only
 ```
 
-### 14.0. Hub-side header — fit this now, breakout later
+### 14.0. Hub-side header — AS BUILT
+
+> **Built 2026-08-27 as a 4-pin header, `3V3` / `SP` / `SN` / `GND`.** That is not
+> the 5-pin arrangement designed below, and the difference has one consequence
+> that needs a physical guard rather than a document note:
+>
+> **Plugging the breakout in backwards shorts 3V3 to GND.** With supply and ground
+> at opposite ends of the connector, a reversed plug puts them straight onto each
+> other. Nothing else in this project has that property — the 5-pin order below was
+> chosen specifically to avoid it. So before the breakout is ever plugged in:
+> **key the connector, or mark pin 1 on the header AND on the breakout.** A dab of
+> paint on both is enough. Do not rely on remembering which way round it goes.
+>
+> **Second, smaller consequence:** `SP` and `SN` sit adjacent with no screened pin
+> between them, where the 5-pin order put `3V3` in the gap. Two millivolt channels
+> side by side on a shared bias rail can couple. The per-channel 100 nF at each ADC
+> pin (`C3`/`C4`, §14.1) covers most of it and the runs are short, so this is not
+> worth resoldering — but **if HPP and RWP current ever look suspiciously
+> correlated, this is the first thing to suspect.**
+>
+> The 5-pin design is kept below unchanged, because it is what a second board
+> should use and because it explains what the built one gave up.
+
+### 14.0.1. The 5-pin design (use this on any future board)
 
 The clamps and their bias network live on a small breakout board built when the
 sensors arrive. All the hub needs today is the connector that board will plug
