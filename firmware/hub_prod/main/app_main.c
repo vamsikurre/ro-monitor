@@ -173,11 +173,26 @@ static void alert_eval(alert_t *a, bool tripped, const char *msg)
         a->latched = false;
         return;
     }
-    if (a->latched && (now - a->last_fired_us) < (int64_t)ALERT_REARM_MS * 1000) {
+    /* One notification per trip. While the condition stays true this returns
+     * here and never fires again - deliberately. Re-notifying about a fault
+     * somebody already knows about is how people learn to mute the app, and the
+     * dashboard and the app's own parameter both still show the live state.
+     *
+     * ALERT_REARM_MS is NOT a repeat interval - there are no repeats. */
+    if (a->latched) {
         return;
     }
-    if (a->latched) {
-        return;   /* still tripped, already told them */
+
+    /* A floor between separate TRIPS, which is what ALERT_REARM_MS is actually
+     * for. The latch alone cannot damp a flapping sensor: the condition going
+     * false clears the latch, so the next trip notifies immediately. Observed
+     * 2026-08-28 - an unmounted dosing sensor bouncing 0 -> 86 -> 0 raised the
+     * same "chemical low" twice inside ninety seconds. Latch it here without
+     * notifying, so the flap is remembered and silent. */
+    if (a->last_fired_us != 0 &&
+        (now - a->last_fired_us) < (int64_t)ALERT_REARM_MS * 1000) {
+        a->latched = true;
+        return;
     }
 
     ESP_LOGW(TAG, "ALERT: %s", msg);
@@ -315,14 +330,32 @@ static void command_fan(hub_state_t *s)
 
 /* ------------------------------------------------------------- node reading */
 
+/*
+ * Log a node's state only when it CHANGES. The bench sketch printed a line per
+ * node per cycle, which was right for a thing you sit and watch; this runs for
+ * months and a per-cycle line is noise that hides everything else. But logging
+ * nothing was worse: a node that stops answering produced total silence, and the
+ * only symptom was a parameter that quietly stopped being reported. That is how
+ * "why am I not getting RWT readings" became a question with no answer in the log
+ * (2026-08-28).
+ */
 static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank_t which)
 {
+    bool was_online = *online;
     uint8_t p[RS485_MAX_PAYLOAD];
     int len = rs485_poll(addr, CMD_READ_LEVEL, NULL, 0, p);
 
     if (len != LEN_LEVEL_REPLY) {
+        if (was_online) {
+            ESP_LOGW(TAG, "node 0x%02X stopped answering (%s) - check the bus, the "
+                          "terminators and its power", addr,
+                     len < 0 ? "timeout" : "bad payload length");
+        }
         *online = false;
         return;
+    }
+    if (!was_online) {
+        ESP_LOGI(TAG, "node 0x%02X answering again", addr);
     }
     *online = true;
 
@@ -336,7 +369,20 @@ static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank
 
     const cal_tank_cfg_t *c = cal_tank(which);
     uint8_t pct = levelPercent(t->distance_mm, c->full_mm, c->empty_mm);
+    int16_t was = t->pct;
     t->pct = (pct == 255) ? -1 : (int16_t)pct;
+
+    /* A node that answers but cannot yield a level is the confusing case: the
+     * bus is healthy, the parameter simply never appears. Say why, once, on the
+     * transition - the distance is the diagnostic, not the percentage. */
+    if (t->pct < 0 && was >= 0) {
+        ESP_LOGW(TAG, "node 0x%02X answers but gives no level: %u mm is outside "
+                      "its calibration (full %u / empty %u), sensor status %d",
+                 addr, t->distance_mm, c->full_mm, c->empty_mm, (int)t->sensor);
+    } else if (t->pct >= 0 && was < 0) {
+        ESP_LOGI(TAG, "node 0x%02X level readable again: %u mm -> %d%%",
+                 addr, t->distance_mm, t->pct);
+    }
 }
 
 static void read_climate_node(hub_state_t *s)
