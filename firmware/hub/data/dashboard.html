@@ -1399,7 +1399,8 @@ function render(s) {
     ["DOS LVL", A.dos_lvl ? "Closed" : "Open", A.dos_lvl ? "on" : "off"],
     ["RL1", A.rl1 ? "Active" : "Inactive", A.rl1 ? "on" : "off"],
     ["RL2", A.rl2 ? "Active" : "Inactive", A.rl2 ? "on" : "off"],
-    ["ALARM", A.alarm ? "Active" : "Clear", A.alarm ? "fault" : "off"],
+    ["LPS", A.lps ? "Low pressure" : "Normal", A.lps ? "warn" : "off"],
+    ["ALARM", A.alarm ? (A.lps ? "Low pressure" : "Active") : "Clear", A.alarm ? "fault" : "off"],
   ]);
   rows($("#cNodes"), s.nodes.map(n => {
     let label = "Offline", kind = "fault";
@@ -1518,7 +1519,7 @@ const demo = {
     rwp:        { on: true, state: "ONLINE" },
     hpp:        { on: true, state: "ONLINE" },
   },
-  aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false },
+  aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false, lps: false },
   motors: { hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false },
   env: {
     ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
@@ -1553,6 +1554,9 @@ function stepDemo() {
      both of those states can be seen without a plant attached - which is the
      only way to check them before the panel is live. */
   d.aster.alarm = DEMO_FORCE.has("alarm") || (tick >= 40 && tick < 48);
+  /* ?lps=1 puts the fault down to low feed pressure - the one cause the hub can
+     actually name, since ALARM alone never says which fault tripped. */
+  d.aster.lps = DEMO_FORCE.has("lps") || (tick >= 42 && tick < 48);
   d.motors.overcurrent = DEMO_FORCE.has("oc") || (tick >= 56 && tick < 62);
   d.motors.hpp.amps = d.pumps.hpp.on ? 8.2 + Math.sin(tick / 6) * 0.6 + (d.motors.overcurrent ? 4.6 : 0) : 0;
   d.motors.rwp.amps = d.pumps.rwp.on ? 5.0 + Math.sin(tick / 7) * 0.4 : 0;

@@ -210,10 +210,19 @@ static void evaluate_alerts(const hub_state_t *s)
     }
 
     /* The Aster multiplexes every fault condition onto the one AUX OP contact, so
-     * this can say that something tripped but never which — WIRING.md §6.3. Text
-     * that names a cause would be a guess. */
-    alert_eval(&s_al_fault, s->alarm_active,
-               "RO controller fault. Check the panel: feed pressure, dosing level, pump overload.");
+     * on its own this can say something tripped but never which — WIRING.md §6.3.
+     * LPS is tapped separately for exactly that reason: closed at the same time,
+     * low feed pressure IS the cause and the alert can name it instead of sending
+     * someone to read the panel. That is what the channel was spent on. */
+    if (s->alarm_active && s->lps_active) {
+        alert_eval(&s_al_fault, true,
+                   "RO controller fault: LOW FEED PRESSURE. Check the feed pump, "
+                   "the filters and the LPS setting.");
+    } else {
+        alert_eval(&s_al_fault, s->alarm_active,
+                   "RO controller fault, cause not identified. Check the panel: "
+                   "dosing level, pump overload, level interlocks.");
+    }
 
     if (s->overcurrent) {
         snprintf(msg, sizeof(msg), "Motor over-current. HPP %d.%d A, RWP %d.%d A. Check for a seized pump or lost phase.",
@@ -334,6 +343,7 @@ static void poll_task(void *arg)
     /* Deadbands, remembered per parameter so report_*() can skip no-op updates. */
     int   last_rwt = INT32_MIN, last_twt = INT32_MIN, last_dos = INT32_MIN;
     int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
+    int   last_lps = -1;
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
     float last_hpp_a = -9999, last_rwp_a = -9999;
 
@@ -383,7 +393,8 @@ static void poll_task(void *arg)
         local.twt_float_closed = opto_twt_float_closed();
         local.rl1_active = opto_rl1_active();
         local.rl2_active = opto_rl2_active();
-        local.alarm_active = opto_alarm_active();
+        local.alarm_active = alarm_active();
+        local.lps_active = opto_lps_active();
 
         bool floating = false;
         ac_probe(GPIO_IN_HPP_AC, &local.hpp.running, &floating, &local.hpp.mv_lo, &local.hpp.mv_hi);
@@ -449,11 +460,13 @@ static void poll_task(void *arg)
         }
         report_bool(s_dev_vent, PARAM_FAN_ON, local.fan_on, &last_fan);
         report_bool(s_dev_plant, PARAM_ALARM, local.alarm_active, &last_alarm);
+        report_bool(s_dev_plant, PARAM_LPS, local.lps_active, &last_lps);
 
         /* A one-line summary is what the app shows without opening anything. */
         char status[64];
         if (local.alarm_active) {
-            snprintf(status, sizeof(status), "Controller fault");
+            snprintf(status, sizeof(status), local.lps_active ? "Fault - low pressure"
+                                                              : "Controller fault");
         } else if (local.overcurrent) {
             snprintf(status, sizeof(status), "Over-current");
         } else if (!local.rwt_online || !local.twt_online || !local.battery_online) {
@@ -575,6 +588,8 @@ static void build_node(esp_rmaker_node_t *node)
     esp_rmaker_device_add_param(s_dev_plant, st);
     esp_rmaker_device_assign_primary_param(s_dev_plant, st);
     esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_ALARM, "esp.param.alert",
+                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_LPS, "esp.param.alert",
                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
     esp_rmaker_node_add_device(node, s_dev_plant);
 }

@@ -42,7 +42,7 @@ REQUIRED = [
     'pumps.rwp.on', 'pumps.rwp.state',
     'pumps.hpp.on', 'pumps.hpp.state',
     'aster.twt_floty', 'aster.rwt_floty', 'aster.sump_floty',
-    'aster.dos_lvl', 'aster.rl1', 'aster.rl2', 'aster.alarm',
+    'aster.dos_lvl', 'aster.rl1', 'aster.rl2', 'aster.alarm', 'aster.lps',
     'env.ro_room.t', 'env.ro_room.rh', 'env.ro_room.state', 'env.ro_room.src', 'env.ro_room.age_s',
     'env.battery_room.t', 'env.battery_room.rh', 'env.battery_room.fan',
     'env.battery_room.state', 'env.battery_room.src', 'env.battery_room.age_s',

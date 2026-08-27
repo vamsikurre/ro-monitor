@@ -66,7 +66,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **RS485 Transceiver** | `XY-485` (Auto-Flow Control) | 4 | Hardware auto TX/RX direction switching (1x Hub, 3x slave nodes) |
 | **Current Clamp** | `SCT-013-030` split-core CT, 30 A / 1 V output | 8 | 1x HPP + 1x RWP on the hub (`WIRING.md` §14), then **3 phases each** on the ground-floor sump and borewell motors (§11.3). Voltage-output variant: burden resistor is inside, do not add one. Sump and borewell have **no readable nameplate** (submersible, confirmed 2026-08-27) — size from the starter overload dial and a clamp meter, and expect to need 2-3 turns for resolution (`WIRING.md` §11.3.1) |
 | **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 4 | 2x RO Room (HPP/RWP) + 2x Ground Floor (Sump/Borewell). **A 5th is needed only if the Aster `ALARM` output measures as switched mains** — see `WIRING.md` 6.4 |
-| **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used once `IN_ALARM` is fitted. An 8-channel board is needed only to add `RWT FLOTY` / `DOS LVL` taps, which Phase B does not require |
+| **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. `IN_ALARM` needed no optocoupler and moved to a direct input on GPIO 13, which freed channel 3 for `LPS` without buying an 8-channel board (`WIRING.md` §6.6) |
 | **Relay Modules** | 4-Channel 5V Relay Board | 2 | 1x RO Room (Aster Float Emulation) + 1x Ground Floor (Starter Control) |
 | **Relay Module (Single)** | 1-Channel 5V Relay Board | 1 | Battery Room (Exhaust Fan Switching) |
 | **Ultrasonic Sensors** | Waterproof Ultrasonic (**AJ-SR04M**) | 4 | **Dosing (wired direct to hub)**, RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`). Confirm `R19` mode pad is empty (Trig/Echo mode) — `WIRING.md` §9.0 |
@@ -92,7 +92,8 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 32** | `IN_TWT_FLOT` | 4-Ch PC817 Board Ch 4 `V4` | Input | Aster `TWT FLOTY` loop. LOW = closed = tank not full |
 | **GPIO 26** | `IN_RL1_STAT` | 4-Ch PC817 Board Ch 1 `V1` | Input | Aster RL1 contact. LOW = closed = output active |
 | **GPIO 25** | `IN_RL2_STAT` | 4-Ch PC817 Board Ch 2 `V2` | Input | Aster RL2 contact. LOW = closed = output active |
-| **GPIO 33** | `IN_ALARM` | 4-Ch PC817 Board Ch 3 `V3` | Input | Aster `AUX OP` contact. **Confirmed 2026-08-26:** normally open, closes on a plant issue (`WIRING.md` 6.3) |
+| **GPIO 33** | `IN_LPS` | 4-Ch PC817 Board Ch 3 `V3` | Input | Aster `LPS` low-pressure contact, `C`/`NO`. Took this channel from `IN_ALARM` on 2026-08-27 |
+| **GPIO 13** | `IN_ALARM` | Aster `AUX OP` relay `C`/`NO`, **direct** | Input | No optocoupler, no external parts — the relay contact is already the isolation barrier and the relay is enclosed. `INPUT_PULLUP`, debounced 6-of-8 in firmware (`WIRING.md` §6.6) |
 | **GPIO 36** | `IN_HPP_CT` | SCT-013-030 clamp (HPP) | Input | Analog, ADC1_CH0. Motor current for health trending — spec §7.3 |
 | **GPIO 39** | `IN_RWP_CT` | SCT-013-030 clamp (RWP) | Input | Analog, ADC1_CH3. Motor current for health trending — spec §7.3 |
 | **GPIO 27** | `OUT_RLY_TWT` | 4-Ch Relay Module IN1 | Output | TWT Float Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
@@ -104,7 +105,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 2** | `LED_STATUS` | System Heartbeat LED | Output | Active HIGH onboard LED |
 | **GPIO 0** | `BTN_BOOT` | Onboard BOOT Button | Input | Factory reset / provisioning trigger |
 
-**Constraints:** GPIO 34-39 have no internal pull-up, but the AC opto module supplies a 47 k pull-up from `OUT` to `VCC` (**corrected 2026-08-27** — `WIRING.md` §1), so 34 and 35 need no external resistor, only `VCC` on 3V3. The four open-collector PC817 channels sit on pull-up-capable pins (25/26/32/33). GPIO 6-11 are flash, 1/3 are the serial console; 4/5/12/13/14/15 are free, with 13 reserved for a fifth opto channel if one is added.
+**Constraints:** GPIO 34-39 have no internal pull-up, but the AC opto module supplies a 47 k pull-up from `OUT` to `VCC` (**corrected 2026-08-27** — `WIRING.md` §1), so 34 and 35 need no external resistor, only `VCC` on 3V3. The four open-collector PC817 channels sit on pull-up-capable pins (25/26/32/33). GPIO 6-11 are flash, 1/3 are the serial console. **Updated 2026-08-27:** 4/5 went to the dosing ultrasonic and **13 now carries `IN_ALARM` directly** (§6.6), so of what is left **12 and 15 are strapping pins** — 12 selects flash voltage at boot — which leaves **GPIO 14 as the last comfortable spare on this board**.
 
 ---
 

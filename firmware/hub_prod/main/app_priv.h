@@ -41,8 +41,35 @@ extern "C" {
  * injecting 5V into each input and reading the label back. */
 #define GPIO_IN_RL1_STAT        26   /* PC817 ch1 — Aster RL1 / multiport valve */
 #define GPIO_IN_RL2_STAT        25   /* PC817 ch2 — Aster RL2                   */
-#define GPIO_IN_ALARM           33   /* PC817 ch3 — Aster AUX OP, NO, closes on fault */
+#define GPIO_IN_LPS             33   /* PC817 ch3 — Aster LPS, C/NO             */
 #define GPIO_IN_TWT_FLOT        32   /* PC817 ch4 — Aster TWT FLOTY loop        */
+
+/*
+ * Aster AUX OP (= ALARM), read WITHOUT an optocoupler — the only such input here.
+ *
+ * That terminal is the volt-free C/NO pair of the panel's third HF3FF relay
+ * (WIRING.md §6.3). The relay contact IS the isolation barrier: its coil is the
+ * Aster's, its contacts float, so a PC817 behind it would isolate something
+ * already isolated. GND to the relay common, this pin to NO, internal pull-up on
+ * — a self-contained switch and no added parts.
+ *
+ * Two things the opto path was quietly providing, and how each is handled here:
+ *
+ *   Wetting current. §5.2 wets the opto channels at ~4 mA from the 12 V rail
+ *   through the board's 3k. The internal pull-up gives ~73 uA, which is below
+ *   the HF3FF's datasheet minimum switching load. Accepted, on three grounds:
+ *   3.3 V is above the fritting voltage of a sulphide film so closure punches
+ *   through it, an alarm contact operates a few times a year rather than
+ *   hourly, and the relay sits INSIDE the Aster enclosure rather than breathing
+ *   RO-room air (observed 2026-08-27) — which is what makes film formation a
+ *   non-issue here rather than merely a slow one. If this input ever does
+ *   misbehave, one 1k resistor to 3V3 settles it: WIRING.md §6.6.
+ *
+ *   Noise immunity. A 45k node on a run past contactors is the highest-impedance
+ *   input on this board. Handled in firmware instead of hardware: alarm_active()
+ *   debounces 6-of-8. That part is free, so it is not left as a maybe.
+ */
+#define GPIO_IN_ALARM           13
 
 /* 240 V opto modules. Read as ANALOG, not digital — see app_sensors.c. Both are
  * ADC1, so they keep working with Wi-Fi up. The module's own 47k pull-up to VCC
@@ -179,6 +206,7 @@ extern "C" {
 #define PARAM_FAN_ON            "Exhaust Fan"
 #define PARAM_FAN_THRESHOLD     "Fan On Above"
 #define PARAM_ALARM             "Controller Fault"
+#define PARAM_LPS               "Low Pressure"
 #define PARAM_STATUS            "Status"
 
 /* ------------------------------------------------------------------ web server */
@@ -241,6 +269,7 @@ typedef struct {
     bool     rl1_active;
     bool     rl2_active;
     bool     alarm_active;
+    bool     lps_active;
 
     bool     rwt_online, twt_online, battery_online;
     uint32_t rs485_errors;

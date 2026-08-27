@@ -188,7 +188,8 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 32 | `IN_TWT_FLOT` | PC817 ch4 | `INPUT_PULLUP` |
 | 26 | `IN_RL1_STAT` | PC817 ch1 | `INPUT_PULLUP` |
 | 25 | `IN_RL2_STAT` | PC817 ch2 | `INPUT_PULLUP` |
-| 33 | `IN_ALARM` | PC817 ch3 | `INPUT_PULLUP`. Added 2026-08-25 — Aster `AUX OP` contact. **Confirmed 2026-08-26** as a genuine fault flag: normally open, closes on a plant issue (`WIRING.md` §6.3) |
+| 33 | `IN_LPS` | PC817 ch3 | `INPUT_PULLUP`. **Reassigned 2026-08-27** — Aster `LPS`, `C`/`NO`. Tapped to demultiplex `AUX OP`, which reports that something faulted without saying what (`WIRING.md` §6.6) |
+| 13 | `IN_ALARM` | Aster `AUX OP` relay, **direct** | `INPUT_PULLUP`, debounced 6-of-8. No optocoupler: the relay contact is already the isolation barrier, and the relay is enclosed, so the internal pull-up's ~73 µA is acceptable wetting. Moved off PC817 ch3 on 2026-08-27 — `WIRING.md` §6.6 |
 | 5 | `US_TRIG_DOS` | AJ-SR04M (dosing) | Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
 | 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
 | 34 | `IN_HPP_AC` | AC opto 1 | ADC1_CH6. **Corrected 2026-08-27:** module has its own 47 k pull-up to `VCC`; no external resistor — §3.5 |
@@ -636,7 +637,7 @@ Split-core clamps break no conductor, but the panel is live and must be opened. 
 
 | Document | Correction |
 | :--- | :--- |
-| `docs/HARDWARE.md` §3.1 | ~~GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document.~~ **Applied 2026-08-25.** GPIO 33 now carries `IN_ALARM` on PC817 ch3 as built (§3.5), and the BOM records the 4-channel board. |
+| `docs/HARDWARE.md` §3.1 | ~~GPIO table is wrong. GPIO 27 is listed as `IN_RL2_STAT` but is physically a relay output. Also lists GPIO 33 `IN_RWT_FLOT` and an 8-channel PC817 board that are not present. Replace with §3.5 of this document.~~ **Applied 2026-08-25.** GPIO 33 carried `IN_ALARM` on PC817 ch3, and the BOM records the 4-channel board. **Superseded 2026-08-27:** ch3 is now `IN_LPS` and `IN_ALARM` moved to a direct input on GPIO 13 (§3.5, `WIRING.md` §6.6). |
 | `docs/RO_HARDWARE_ANALYSIS.md` §4, §5.1 | ~~`LPS` recorded as `C`/`NC`.~~ **Corrected 2026-08-25** to `C`/`NO` from the board silkscreen and manual p.12. `HPS` reads open as normal and is unwired on this plant. `ALARM` is the configurable `AUX OP`, not a dedicated alarm relay. Polarity now specified once, in `WIRING.md` §6. |
 | `docs/RS485_PROTOCOL.md` §4.2 | `level_percent` removed from node payload; geometry moves to the hub (§4.3). Payload shrinks 10 to 8 bytes. |
 | `docs/WIRING.md` §9 | ~~Address jumper truth table contradicts `nano_node_test.ino`. Both to be corrected from observed hardware (§3.7).~~ **Applied 2026-08-25.** Firmware's decoder is authoritative; the table is now published once, in `WIRING.md` §9.1, with the as-built audit in §9.2. (Section renumbered §8 → §9 when the contact-polarity section was inserted.) |

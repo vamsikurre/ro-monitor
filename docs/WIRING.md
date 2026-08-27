@@ -1,16 +1,67 @@
 # Wiring & Interconnection Specifications
 
-**Document Version:** 2.4  
-**Date:** 2026-08-25  
+**Document Version:** 2.5  
+**Date:** 2026-08-27  
 **Scope:** Complete Pinout Mappings, CAT5e Drop Schedules, RS485 Daisy-Chain, 240V AC Isolation, 4-Channel Opto-Isolation (Inputs), Aster Terminal Contact Polarity & Alarm Output, 4-Channel Relay Module (Future Asterro Float/Level Emulation), I2C Environmental Sensor, and Tank Node Power & Wiring.
 
-> **Pin allocation authority:** Section 1 below describes the hub **as physically built** and is the single source of truth, per `superpowers/specs/2026-08-25-ro-monitor-phase-b-design.md` §3.5. It equals that spec's table plus `IN_ALARM`, added 2026-08-25. `HARDWARE.md` Section 3.1 is kept identical to it and is corrected — not reconciled — whenever the two diverge.
+> **Pin allocation authority:** Section 1 below describes the hub **as physically built** and is the single source of truth, per `superpowers/specs/2026-08-25-ro-monitor-phase-b-design.md` §3.5. `HARDWARE.md` Section 3.1 is kept identical to it and is corrected — not reconciled — whenever the two diverge.
+
+---
+
+## 0. Build State — What Is Verified, What Is Still To Do
+
+Kept at the top because it is the first thing anyone opening this document in the
+RO room needs. **Last updated 2026-08-27.**
+
+"Verified" below means *observed working on the hardware*, not *designed* and not
+*compiled* — the distinction that let `IN_ALARM` sit in three documents and no
+firmware for a day (§6.6, `docs/check_pinmap.py`).
+
+### 0.1. Hub `0x00` — verified on the bench, 2026-08-27
+
+| Subsystem | How it was verified |
+| :--- | :--- |
+| RS485 bus, nodes `0x02` / `0x03` / `0x04` | All three answering every poll cycle |
+| Hub SHT30 (RO room) | Live temperature and humidity |
+| Dosing ultrasonic (`GPIO 5` / `4`) | Echoing after a wiring fix |
+| PC817 ch1-ch4 (`GPIO 26` / `25` / `33` / `32`) | **5 V injected into each input in turn**, each reporting under the right label — which is how the one-place channel rotation in §5 was found |
+| 240 V AC optos (`GPIO 34` / `35`) | Validated against live contactors; the earlier "floating" reading was a broken wire at the module, since repaired |
+| Hub relays ×4 (`GPIO 27` / `23` / `18` / `19`) | Cycled in sequence |
+| Battery-room fan relay (node `0x04`, `D9`) | Clicks on command over RS485 |
+
+### 0.2. Hub board — still to solder
+
+Three jobs, in this order. The first two go together: the firmware already
+expects both, so doing one without the other misreports a fault as low pressure.
+
+- [ ] **Move PC817 `IN3` from the Aster `AUX OP` pair to the Aster `LPS` `C`/`NO` pair.** The output side (`V3` → `GPIO 33`) does **not** move. §6.6
+- [ ] **Fit the two `IN_ALARM` wires:** hub `GND` → Aster `AUX OP` `C`, and `GPIO 13` → `AUX OP` `NO`. No optocoupler, no resistor, no module. §6.6
+- [ ] **Fit the 1×5 CT header** — `GND` / `GPIO 36` / `3V3` / `GPIO 39` / `GND`, and **mark pin 1**. Leave 36 and 39 otherwise unconnected until the breakout exists. §14.0
+
+**Then verify, before trusting any of it:**
+
+- [ ] Touch the two `IN_ALARM` wires together → alarm latches within one poll, the RO room flashes on the dashboard, a notification arrives
+- [ ] Short PC817 `IN3` to `G` → `LPS` reads *Low pressure*; with the alarm also active the alert should name low feed pressure rather than saying "check the panel"
+- [ ] Confirm the RS485 terminators: **120 Ω at the hub and at node `0x02` only**. `0x03` and `0x04` are mid-chain and must have none — three terminators blunt the differential swing (§10, §12)
+
+### 0.3. Off-board, in order of what blocks what
+
+- [ ] **CT breakout board** — two resistors and two capacitors once, then 1 kΩ + 100 nF + socket per channel. §14.1. Provable with no clamp attached: the pedestal should read ~1650 mV (§14.0)
+- [ ] **2 × SCT-013-030** for HPP and RWP. Measure which socket pads the clamp actually reaches — meter it, do not read the silkscreen (§14.2)
+- [ ] **6 × SCT-013-030** for the ground floor: three phases each on the sump and borewell motors (§11.3). Neither motor has a readable nameplate, so size from the starter's overload dial and a clamp meter (§11.3.1)
+- [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
+- [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
+
+### 0.4. Known open, not blocking
+
+- **Node `0x03` sample quality** sat at `q=60` on the bench. Leave `US_TRIG_WIDTH_US` at 10 until the sensor is over water; only widen to 20 if it stays low there (§9.0)
+- **Production firmware has never run on hardware.** It compiles and the ported CRC and level maths are proven identical to the field-verified sketch, but BLE pairing and AP+STA coexistence are untested (`firmware/hub_prod/README.md`)
 
 ---
 
 ## 1. ESP32-S Central Master Hub Complete Pin Allocation
 
-The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the local SHT30 environmental sensor **and the directly-attached dosing tank ultrasonic sensor**, isolates and reads the Aster controller status lines via a 4-channel PC817 optoisolator (all 4 channels used once `IN_ALARM` is fitted), controls a 4-channel relay module for future float/level emulation, and acts as the RS485 Modbus Master for three remote slaves.
+The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the local SHT30 environmental sensor **and the directly-attached dosing tank ultrasonic sensor**, isolates and reads the Aster controller status lines via a 4-channel PC817 optoisolator (all 4 channels used: `RL1`, `RL2`, `LPS`, `TWT FLOTY` — `IN_ALARM` is a direct input, §6.6), controls a 4-channel relay module for future float/level emulation, and acts as the RS485 Modbus Master for three remote slaves.
 
 ### Master Pin Mapping Table
 
@@ -26,7 +77,8 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 32** | `IN_TWT_FLOT`| 4-Ch PC817 Opto Board (Channel 4) | `V4` | Input | Active LOW when Aster `TWT FLOTY` loop is closed (`INPUT_PULLUP`) |
 | **GPIO 26** | `IN_RL1_STAT`| 4-Ch PC817 Opto Board (Channel 1) | `V1` | Input | Active LOW when Aster RL1 / Multiport valve contact is closed (`INPUT_PULLUP`) |
 | **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
-| **GPIO 33** | `IN_ALARM`   | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `AUX OP` contact is closed. **Confirmed 2026-08-26: normally open, closes on a plant issue — `AUX OP` behaves as `ALARM`** (Section 6.3, `INPUT_PULLUP`) |
+| **GPIO 33** | `IN_LPS`     | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `LPS` low-pressure contact (`C`/`NO`) is closed. **Took this channel from `IN_ALARM` on 2026-08-27** — §6.6 (`INPUT_PULLUP`) |
+| **GPIO 13** | `IN_ALARM`   | Aster `AUX OP` relay `C` / `NO` | **direct** | Input | Active LOW when the Aster `AUX OP` contact closes. **No optocoupler and no external parts** — two wires and `INPUT_PULLUP`, debounced in firmware. §6.6 |
 | **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
 | **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. Module carries its own **47 k pull-up to `VCC`** (silkscreen `47K VCC`); wire `VCC` to 3V3 and no external resistor is needed — see §8 |
@@ -43,6 +95,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 **Pin selection constraints — re-check these before any reshuffle:**
 * **GPIO 34-39 have no internal pull-up** — but the AC opto modules supply their own. **Corrected 2026-08-27:** the fitted module has a **47 k pull-up from `OUT` to `VCC`**, printed on the silkscreen as `47K VCC`, which is why it has a `VCC` terminal at all (§8). With `VCC` on 3V3 the pin idles high and `pinMode(pin, INPUT)` is correct. No external resistor is required, and the "outstanding hub defect" recorded in phase-B spec §3.5 was a misreading of this part. What *does* float the pin is `VCC` or `OUT` losing continuity — observed once on this build, from a broken wire at the module. 47 k is a weak pull-up, so a parallel 10 k remains available as noise-hardening on a long `OUT` run; that is a tuning choice, not a fix.
 * PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
+* **`GPIO 13` carries `IN_ALARM` directly, with no optocoupler** (§6.6). Of the four pins left free — 12, 13, 14, 15 — **12 and 15 are strapping pins** (12 selects flash voltage at boot), so 13 was taken and **14 is the last comfortable spare on this board**.
 * GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added. **They are all ADC2 and therefore useless for analog while Wi-Fi is up**, which is why the two CT channels take `GPIO 36` and `GPIO 39` (ADC1) instead. Those were the last two free ADC1 pins on this hub.
 * `GPIO 4` is `ADC2_CH0`. ADC2 is unusable while Wi-Fi is active, but this pin is used as a **digital** input, which is unaffected. Do not repurpose it for analog.
 * `GPIO 5` emits a brief pulse at boot (strapping pin). On a `TRIG` line that costs one spurious ranging cycle at power-up and nothing else.
@@ -120,7 +173,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 
 ## 5. 4-Channel PC817 Optoisolator Module (Sensor Inputs)
 
-Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part; all four channels are in use — `IN_ALARM` landed on channel 3 and `TWT FLOTY` on channel 4, leaving **no spare channel**. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
+Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part and all four are in use: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. **`LPS` took channel 3 from `IN_ALARM` on 2026-08-27** — that signal needed no optocoupler and moved to a direct input (§6.6), which is what made room for `LPS` without an 8-channel board. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
 
 ### 5.1. Module Architecture & Jumpers
 * **Input Side (Left):** `IN1`..`IN4` (+) and `G` (Return) with onboard 3k ohm current-limiting resistors (compatible with 3.3V to 24V DC).
@@ -133,7 +186,7 @@ Provides galvanic isolation for reading dry contacts and low-voltage status line
     +---------------------------------+          +---------------------------------+
     | [ IN1 ] (RL1 contact loop)      |          | [ V1 ] --> ESP32 GPIO 26        |
     | [ IN2 ] (RL2 contact loop)      |          | [ V2 ] --> ESP32 GPIO 25        |
-    | [ IN3 ] (ALARM / AUX OP loop)   |          | [ V3 ] --> ESP32 GPIO 33        |
+    | [ IN3 ] (LPS loop, see 6.6)     |          | [ V3 ] --> ESP32 GPIO 33        |
     | [ IN4 ] (TWT FLOTY loop)        |          | [ V4 ] --> ESP32 GPIO 32        |
     | [  G  ] (Common input return)   |          | [  G ] --> ESP32 GND            |
     +---------------------------------+          +---------------------------------+
@@ -225,6 +278,8 @@ Read the current value under **password 678** (Input Configuration, manual §1.4
 
 **What this buys, and its one limitation.** `IN_ALARM` LOW means the controller has faulted — actionable on its own, no inference needed, and the most valuable single bit the Aster offers. What it does *not* carry is **which** fault: the panel multiplexes every condition onto one contact, so the ESP32 knows something tripped but not whether it was high pressure, a level interlock or a sensor. Alert text must therefore say *"controller fault — check the panel"* rather than naming a cause it cannot know.
 
+> **Amended 2026-08-27 — partly solved.** `LPS` is now tapped on its own channel (§6.6), which demultiplexes the commonest cause. `IN_ALARM` closed *with* `IN_LPS` closed is low feed pressure and the alert names it; `IN_ALARM` closed with `IN_LPS` open still has to say "check the panel". So the limitation above holds for every other condition, and no longer for the one that trips most often.
+
 Pairing it with the two AC optos does narrow things usefully: `IN_ALARM` closed while `IN_HPP_AC` reads stopped is a genuine trip, whereas the plant idling with `IN_ALARM` open is simply a satisfied TWT float and needs no alert at all.
 
 ### 6.4. Commissioning Procedure — Verify, Then Sense
@@ -255,7 +310,9 @@ If shorting `HPS` produces nothing, `HI PRESS SW` is `OFF` (bypassed); use `DOS 
 **Step 4 — debounce in firmware.** The contact bounces and the HPP contactor induces blips on the loop. Require a sustained state:
 
 ```c
-// IN_ALARM on GPIO 33, INPUT_PULLUP, active LOW. Latch after 200 ms sustained.
+// IN_ALARM on GPIO 13 (moved off PC817 ch3 2026-08-27, section 6.6),
+// INPUT_PULLUP, active LOW. Latch after 200 ms sustained. The shipped
+// firmware debounces 6-of-8 inside alarm_active() instead - same intent.
 static uint32_t t_edge;
 static bool raw, alarm;
 bool now = !digitalRead(PIN_IN_ALARM);
@@ -274,6 +331,66 @@ Configured delays sit between a physical fault and the AUX OP relay picking up. 
 | Pump overload | trips, then **auto-restarts after 15 min** and re-checks current | password 123 (overload current) |
 
 A `LOW PRESSURE!!` message on the display therefore precedes the alarm contact by up to three minutes. Treat display state and alarm contact as two separate observations.
+
+---
+
+### 6.6. Reading `ALARM` Without an Optocoupler — and What That Freed
+
+**Decided 2026-08-27.** `IN_ALARM` moved off PC817 channel 3 to a direct input on
+`GPIO 13`, and `LPS` took the vacated channel. Two wires:
+
+```
+   ESP32 GND    ----------------- Aster  AUX OP  [ C  ]
+   ESP32 GPIO13 ----------------- Aster  AUX OP  [ NO ]
+
+   contact open   -> internal pull-up holds the pin HIGH -> clear
+   contact closed -> the two wires are joined           -> fault
+```
+
+**Why no optocoupler is needed here.** That terminal is the volt-free `C`/`NO` pair
+of the panel's third `HF3FF-012-1ZST` (§6.3). **The relay contact is already the
+isolation barrier** — its coil belongs to the Aster, its contacts float free of
+the Aster's electronics — so a PC817 behind it would isolate something that is
+isolated. Unlike the other four taps, there is no second circuit to keep apart.
+
+**Why the internal pull-up is enough.** It is the one thing the opto path was
+genuinely providing that a bare pin does not: §5.2 wets the opto channels at
+~4 mA from the 12 V rail through the board's 3 k, where an internal pull-up
+manages about **73 µA** — below the `HF3FF`'s datasheet minimum switching load.
+Accepted, on three grounds, in increasing order of how much they settle it:
+
+1. **3.3 V is above the fritting voltage** of a sulphide film, so contact closure
+   punches through one rather than being blocked by it.
+2. **An alarm contact operates a few times a year.** Contact degradation tracks
+   operation count; this is not a relay cycling hourly.
+3. **The relay sits inside the Aster enclosure** — observed 2026-08-27 — not
+   breathing RO-room air. This is the decisive one. Dosing chemistry (sodium
+   metabisulphite off-gasses SO₂) is exactly what sulphides silver, and an
+   enclosed contact is not exposed to it.
+
+If this input ever does misbehave, the fix is **one 1 kΩ resistor from `GPIO 13`
+to 3V3** — ~3.3 mA, which brackets what the opto channels get. It is not fitted,
+and it is not needed; it is recorded so nobody has to re-derive it at 2 a.m.
+
+**Noise is handled in firmware, not hardware.** At 45 kΩ this is the
+highest-impedance input on the board, on a run that passes contactors. `alarm_active()`
+in `app_sensors.c` samples **8 times over ~1.6 ms and requires 6 to agree** — the
+same shape the bench sketch used for its AC inputs. Ample against coupled noise,
+and nowhere near slow enough to miss a contact that stays closed for minutes.
+That mitigation is free, so it is not left as an option.
+
+**Commissioning test, before the Aster is involved at all:** touch the two wires
+together. `ALARM` should latch within one poll cycle, the RO room should start
+flashing on the dashboard, and a push notification should arrive. That proves the
+whole chain — pin, debounce, telemetry, alert — without waiting for a real fault.
+
+**What `LPS` buys on the freed channel.** §6.3's one complaint about `AUX OP` is
+that the panel multiplexes every fault onto it: the hub learns that something
+tripped, never what. `LPS` **demultiplexes the commonest case**. `ALARM` closed
+with `LPS` closed means low feed pressure and the alert says so; `ALARM` closed
+with `LPS` open means look at the panel. The firmware sends two different
+notifications on exactly that test. Note §6.5's timing caveat still applies — the
+display leads the alarm contact by up to the `LPS TRIP` time, factory 3 min.
 
 ---
 

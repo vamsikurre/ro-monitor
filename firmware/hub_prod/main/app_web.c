@@ -204,7 +204,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"hpp\":{\"on\":%s,\"state\":\"ONLINE\"}"
         "},"
         "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":false,\"sump_floty\":false,"
-                   "\"dos_lvl\":false,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s},"
+                   "\"dos_lvl\":false,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s,\"lps\":%s},"
         "\"env\":{"
           "\"ro_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"state\":\"%s\",\"src\":\"SHT30 . I2C 0x44\",\"age_s\":%d},"
           "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d}"
@@ -240,6 +240,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->rl1_active ? "true" : "false",
         s->rl2_active ? "true" : "false",
         s->alarm_active ? "true" : "false",
+        s->lps_active ? "true" : "false",
 
         s->ro_room.temp_deci_c / 10, abs(s->ro_room.temp_deci_c % 10),
         s->ro_room.hum_deci_pct / 10, s->ro_room.hum_deci_pct % 10,

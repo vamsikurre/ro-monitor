@@ -88,13 +88,29 @@ esp_err_t sensors_init(void)
     /* --- dry-contact optos: active LOW, pulled up internally --- */
     gpio_config_t in_cfg = {
         .pin_bit_mask = (1ULL << GPIO_IN_TWT_FLOT) | (1ULL << GPIO_IN_RL1_STAT) |
-                        (1ULL << GPIO_IN_RL2_STAT) | (1ULL << GPIO_IN_ALARM),
+                        (1ULL << GPIO_IN_RL2_STAT) | (1ULL << GPIO_IN_LPS),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&in_cfg));
+
+    /* ALARM comes straight off the Aster's relay contact with no optocoupler and
+     * no external parts, so it rides the internal pull-up like the opto channels
+     * do — see the note in app_priv.h for what that costs and why it is accepted.
+     * It is configured separately from them only to keep that reasoning attached
+     * to the one input it applies to. If an external pull-up is ever fitted
+     * (§6.6), this stays as it is: the two in parallel simply wet the contact
+     * harder, which is the direction that helps. */
+    gpio_config_t alarm_cfg = {
+        .pin_bit_mask = 1ULL << GPIO_IN_ALARM,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&alarm_cfg));
 
     /* --- relays: de-energised before the pin becomes an output, or every reset
      *     clicks the whole bank. Float emulation is Phase C; nothing drives
@@ -271,7 +287,25 @@ uint16_t dosing_read_mm(void)
 bool opto_twt_float_closed(void) { return gpio_get_level(GPIO_IN_TWT_FLOT) == 0; }
 bool opto_rl1_active(void)       { return gpio_get_level(GPIO_IN_RL1_STAT) == 0; }
 bool opto_rl2_active(void)       { return gpio_get_level(GPIO_IN_RL2_STAT) == 0; }
-bool opto_alarm_active(void)     { return gpio_get_level(GPIO_IN_ALARM) == 0; }
+bool opto_lps_active(void)       { return gpio_get_level(GPIO_IN_LPS) == 0; }
+
+/* ALARM has no optocoupler and sits on a 45k internal pull-up, which makes it the
+ * highest-impedance input on the board and the one most exposed to a contactor
+ * switching a metre away. Eight reads over ~1.6 ms, six must agree: ample to
+ * reject coupled noise, and nowhere near slow enough to miss a real contact that
+ * stays closed for minutes. The same 6-of-8 shape the bench sketch used for its
+ * AC inputs, for the same reason. */
+bool alarm_active(void)
+{
+    uint8_t low = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+        if (gpio_get_level(GPIO_IN_ALARM) == 0) {
+            low++;
+        }
+        esp_rom_delay_us(200);
+    }
+    return low >= 6;
+}
 
 /* ------------------------------------------------------------ 240 V channels */
 

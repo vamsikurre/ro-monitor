@@ -33,7 +33,13 @@ uint16_t dosing_read_mm(void);
 bool opto_twt_float_closed(void);
 bool opto_rl1_active(void);
 bool opto_rl2_active(void);
-bool opto_alarm_active(void);
+bool opto_lps_active(void);
+
+/* ALARM is the exception: read straight off the Aster's volt-free relay contact,
+ * with no optocoupler and no external parts. Active LOW on the internal pull-up,
+ * and DEBOUNCED - it is the highest-impedance input on the board, so a single
+ * sample is not trustworthy. See app_priv.h and WIRING.md §6.6. */
+bool alarm_active(void);
 
 /*
  * The two 240 V channels, measured rather than sampled.
