@@ -123,14 +123,26 @@ static void report_bool(esp_rmaker_device_t *dev, const char *name, bool val, in
     }
 }
 
-static void report_str(esp_rmaker_device_t *dev, const char *name, const char *val)
+/* Every other report_* here has a deadband and this one had none, so the status
+ * string was published on every 2 s cycle whether or not it had changed - about
+ * 43,000 MQTT messages a day saying the same thing. RainMaker budgets messages
+ * (the node logs "MQTT Budgeting initialised. Default: 100, Max: 1024" at boot),
+ * so that is not merely wasteful, it is a node that eventually gets throttled.
+ * Observed on the first cloud-connected boot, 2026-08-28. */
+static void report_str(esp_rmaker_device_t *dev, const char *name, const char *val,
+                       char *last, size_t last_len)
 {
     if (!s_cloud_up || dev == NULL) {
         return;
     }
+    if (strncmp(last, val, last_len) == 0) {
+        return;                                  /* unchanged: say nothing */
+    }
     esp_rmaker_param_t *p = esp_rmaker_device_get_param_by_name(dev, name);
     if (p) {
         esp_rmaker_param_update_and_report(p, esp_rmaker_str(val));
+        strncpy(last, val, last_len - 1);
+        last[last_len - 1] = '\0';
     }
 }
 
@@ -168,12 +180,22 @@ static void alert_eval(alert_t *a, bool tripped, const char *msg)
         return;   /* still tripped, already told them */
     }
 
+    ESP_LOGW(TAG, "ALERT: %s", msg);
+
+    /* Only latch if it could actually be delivered. Latching an alert raised
+     * before MQTT is up means the cloud never hears about it and the latch
+     * suppresses every retry - so a fault already present at boot, which is the
+     * likeliest kind, would be logged to a serial port nobody is watching and
+     * never pushed. Seen on the first cloud boot: the dosing-low alert fired at
+     * 1.5 s, well before MQTT connected at 7.4 s. Leaving it unlatched costs one
+     * repeated log line per cycle until the link comes up, which is the right
+     * trade against a silently dropped alert. */
+    if (!s_cloud_up) {
+        return;
+    }
     a->latched = true;
     a->last_fired_us = now;
-    ESP_LOGW(TAG, "ALERT: %s", msg);
-    if (s_cloud_up) {
-        esp_rmaker_raise_alert(msg);
-    }
+    esp_rmaker_raise_alert(msg);
 }
 
 static void evaluate_alerts(const hub_state_t *s)
@@ -344,6 +366,7 @@ static void poll_task(void *arg)
     int   last_rwt = INT32_MIN, last_twt = INT32_MIN, last_dos = INT32_MIN;
     int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
     int   last_lps = -1;
+    char  last_status[64] = "";
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
     float last_hpp_a = -9999, last_rwp_a = -9999;
 
@@ -471,12 +494,22 @@ static void poll_task(void *arg)
             snprintf(status, sizeof(status), "Over-current");
         } else if (!local.rwt_online || !local.twt_online || !local.battery_online) {
             snprintf(status, sizeof(status), "Node offline");
-        } else if (local.hpp.running) {
-            snprintf(status, sizeof(status), "Producing - TWT %d%%", local.twt.pct < 0 ? 0 : local.twt.pct);
         } else {
-            snprintf(status, sizeof(status), "Idle - TWT %d%%", local.twt.pct < 0 ? 0 : local.twt.pct);
+            /* "0%" and "no reading" are different facts and must not print the
+             * same. pct < 0 means levelPercent() refused to compute one - no
+             * echo, an uncalibrated tank, or a distance outside the calibration -
+             * and rendering that as 0% claims the tank is empty. Same rule as the
+             * amps field reporting null rather than 0.0 when no clamp is fitted. */
+            char twt[12];
+            if (local.twt.pct < 0) {
+                snprintf(twt, sizeof(twt), "--");
+            } else {
+                snprintf(twt, sizeof(twt), "%d%%", local.twt.pct);
+            }
+            snprintf(status, sizeof(status), "%s - TWT %s",
+                     local.hpp.running ? "Producing" : "Idle", twt);
         }
-        report_str(s_dev_plant, PARAM_STATUS, status);
+        report_str(s_dev_plant, PARAM_STATUS, status, last_status, sizeof(last_status));
 
         evaluate_alerts(&local);
 
