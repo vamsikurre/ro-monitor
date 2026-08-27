@@ -54,6 +54,16 @@ expects both, so doing one without the other misreports a fault as low pressure.
 
 ### 0.4. Known open, not blocking
 
+- **An 8-channel PC817 board is owned and unused.** The 4-channel part was fitted
+  because it was already to hand (confirmed 2026-08-27). So `RWT FLOTY` and
+  `DOS LVL` cost no purchase — but they are **no longer channel-limited, they are
+  pin-limited**. With `IN_ALARM` on `GPIO 13`, the only inputs left on this board
+  are `12`, `14` and `15`, and 12 and 15 are strapping pins. Two more taps are
+  possible; eight are not. **Do not swap the board just because the bigger one
+  exists** — it would mean rewiring four working, injection-verified channels for
+  no current need. The point of recording it is that the future decision is
+  "rewire four channels", not "buy a board and rewire four channels".
+
 - **Node `0x03` sample quality** sat at `q=60` on the bench. Leave `US_TRIG_WIDTH_US` at 10 until the sensor is over water; only widen to 20 if it stays low there (§9.0)
 - **Production firmware has never run on hardware.** It compiles and the ported CRC and level maths are proven identical to the field-verified sketch, but BLE pairing and AP+STA coexistence are untested (`firmware/hub_prod/README.md`)
 
