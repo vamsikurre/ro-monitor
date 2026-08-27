@@ -611,14 +611,14 @@ This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nano
 * **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
 * **220V AC Optocoupler 1 (Sump Motor Monitor):**
   * `AC L / N` $\to$ Connected across Sump Motor Starter Contactor 240V Coil
-  * `DC VCC` $\to$ `3.3V` from ESP32
+  * `DC VCC` $\to$ `3.3V` from ESP32 — **not optional**, it feeds the onboard 47 k pull-up (§8)
   * `DC GND` $\to$ `GND`
-  * `DC OUT` $\to$ `ESP32 GPIO 34`
+  * `DC OUT` $\to$ `ESP32 GPIO 16` — **moved from GPIO 34 on 2026-08-27**, see §11.3
 * **220V AC Optocoupler 2 (Borewell Motor Monitor):**
   * `AC L / N` $\to$ Connected across Borewell Motor Starter Contactor 240V Coil
   * `DC VCC` $\to$ `3.3V` from ESP32
   * `DC GND` $\to$ `GND`
-  * `DC OUT` $\to$ `ESP32 GPIO 35`
+  * `DC OUT` $\to$ `ESP32 GPIO 17` — **moved from GPIO 35 on 2026-08-27**, see §11.3
 * **4-Channel Relay Board (Starter Interlocks):**
   * `VCC` $\to$ `5V DC` from HLK-20M5
   * `GND` $\to$ `GND`
@@ -626,6 +626,81 @@ This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nano
   * `IN2` (Borewell High Float Cutoff) $\to$ `ESP32 GPIO 26`
   * `IN3` (Aux Manual Override 1) $\to$ `ESP32 GPIO 27`
   * `IN4` (Aux Manual Override 2) $\to$ `ESP32 GPIO 14`
+
+### 11.3. Node 0x06 Current Clamps — Six Channels, Three Per Motor
+
+Both ground-floor motors are 3-phase and **all three phases of each are clamped**, for the imbalance figure rather than for fault detection — phase-B spec §7.3 has the reasoning and records that this reverses an earlier two-per-motor decision.
+
+**This is why the AC optos moved off `GPIO 34`/`35`.** Those are `ADC1_CH6`/`CH7`, and six analog channels need every ADC1 pin the module exposes. The optos need no ADC — the 240 V module supplies its own 47 k pull-up to `VCC` (§8) — so they take ordinary inputs and the analog pins go where only analog will do.
+
+| Channel | GPIO | ADC1 | Conductor |
+| :--- | :---: | :---: | :--- |
+| `IN_SUMP_CT_L1` | **32** | CH4 | Sump starter, phase L1 |
+| `IN_SUMP_CT_L2` | **33** | CH5 | Sump starter, phase L2 |
+| `IN_SUMP_CT_L3` | **34** | CH6 | Sump starter, phase L3 |
+| `IN_BORE_CT_L1` | **35** | CH7 | Borewell starter, phase L1 |
+| `IN_BORE_CT_L2` | **36** | CH0 | Borewell starter, phase L2 |
+| `IN_BORE_CT_L3` | **39** | CH3 | Borewell starter, phase L3 |
+
+**ADC1 on this node is now full.** `GPIO 37`/`38` are the only other ADC1 channels on an ESP32 and are not broken out on a WROOM; everything else free is ADC2, which is dead whenever Wi-Fi is up.
+
+**One shared bias rail, six series networks** — the same topology as the hub's two channels in §14, with the divider counted once:
+
+```
+                            +3.3V (ESP32 3V3 pin)
+                                    |
+                                   [ ] R1  10k
+                                    |
+        BIAS RAIL  o-----------------+---------o  ( 1.65 V )
+        (1.65 V)   |                 |         |
+                   |                [ ] R2 10k  --+-- C1 10uF
+                   |                 |           --+-- C2 0.1uF
+                   |                GND            |
+                   |                              GND
+                   |
+       to the RING of all six 3.5 mm sockets
+
+  each socket TIP -> [ ] 1k -> its ADC pin, with 100nF from that pin to GND
+```
+
+So the node's interface board is **two resistors and two capacitors once, plus one 1 k, one 100 nF and one socket per channel** — 14 passives and six sockets.
+
+#### 11.3.1. Sizing these channels with no nameplate to read
+
+**Confirmed on site 2026-08-27: neither motor has a readable nameplate.** The sump
+motor sits at the bottom of the sump and the borewell pump is down the bore. Only
+the HPP and RWP plates in the RO room can be read. So the usual "check the
+nameplate FLC" step is not available for the two motors this section is about,
+and any figure quoted for them is a guess until measured.
+
+Three substitutes, in order of how much they are worth:
+
+| Source | What it tells you | Trust |
+| :--- | :--- | :--- |
+| **The overload relay dial in the starter** | Whoever commissioned the motor set this from the nameplate, so the dial *is* the FLC, second-hand. Read the setting, not just the relay's range. | **Best available.** It also reflects what is actually installed, which a nameplate on a replaced pump would not |
+| **A clamp meter on one phase while running** | The real running current, today, under real head | **Definitive** for sizing and for turns. You need the meter anyway — §14.2 and spec §7.3 both require a two-point calibration against one |
+| Contactor rating, and the MCB or fuse feeding it | Upper bounds only. Protection is sized above FLC, often 1.5-2x | Rules out a wrong clamp; will not size one |
+
+**The realistic risk here is the opposite of oversizing.** A 30 A clamp on a 3 A
+motor produces about 100 mV, and the firmware has to pull that out of a 1.65 V
+pedestal — resolution, not saturation, is what limits these channels. So expect
+to fit **turns**, and decide the count on site from the measured running current:
+aim for roughly a third to a half of full scale.
+
+**Turns trade running resolution against start-current headroom, and that trade is
+deliberate here.** Three turns of a 3 A conductor present 9 A to the clamp, which
+reads well — but a direct-on-line start pulls 6-8x FLC, so those same three turns
+present 60 A or more and the clamp clips for the second or two of the start. That
+is accepted: these channels exist for running-current trend and phase imbalance
+(spec §7.3), and start and stop are timed by the contactor optos, which do not
+saturate. If locked-rotor current ever becomes the thing being measured, drop to
+one turn and lose the resolution instead.
+
+**Write the turn count on the enclosure** (§14.3). With no nameplate anywhere on
+these two motors, a future reader has no way to re-derive it — the stored scale
+factor and the turn count are the only record that the reading means amps.
+
+**The starter is 415 V between phases, not 240 V.** Split-core clamps break no conductor, but this panel is more dangerous open than the RO skid. Fit them with the supply isolated and locked off, one conductor per clamp — a clamp around two phases reads their vector sum, not either current.
 
 ---
 

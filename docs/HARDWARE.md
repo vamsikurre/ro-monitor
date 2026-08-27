@@ -64,6 +64,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **Ground Floor Power Supplies**| Hi-Link `HLK-20M5` (5V / 20W / 4.0A) | 2 | Ground Floor - Node 1 & Node 2 dedicated 5V power |
 | **Auxiliary Supply** | Hi-Link `HLK-10M05` (5V / 10W / 2.0A) | 1 | Spare / Local 5V high-current logic rail |
 | **RS485 Transceiver** | `XY-485` (Auto-Flow Control) | 4 | Hardware auto TX/RX direction switching (1x Hub, 3x slave nodes) |
+| **Current Clamp** | `SCT-013-030` split-core CT, 30 A / 1 V output | 8 | 1x HPP + 1x RWP on the hub (`WIRING.md` §14), then **3 phases each** on the ground-floor sump and borewell motors (§11.3). Voltage-output variant: burden resistor is inside, do not add one. Sump and borewell have **no readable nameplate** (submersible, confirmed 2026-08-27) — size from the starter overload dial and a clamp meter, and expect to need 2-3 turns for resolution (`WIRING.md` §11.3.1) |
 | **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 4 | 2x RO Room (HPP/RWP) + 2x Ground Floor (Sump/Borewell). **A 5th is needed only if the Aster `ALARM` output measures as switched mains** — see `WIRING.md` 6.4 |
 | **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used once `IN_ALARM` is fitted. An 8-channel board is needed only to add `RWT FLOTY` / `DOS LVL` taps, which Phase B does not require |
 | **Relay Modules** | 4-Channel 5V Relay Board | 2 | 1x RO Room (Aster Float Emulation) + 1x Ground Floor (Starter Control) |
@@ -150,8 +151,14 @@ Built on a **Pro Mini (5V / 16 MHz)**, not a Nano. Pin functions are identical �
 ### 3.5. Ground Floor ESP32 Node 2: Motor Control & Interlocks (0x06)
 | ESP32 GPIO | Pin Function | Connected Hardware | Direction | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **GPIO 34** | `IN_SUMP_AC` | 220V AC Optocoupler 1 `OUT` | Input | Sump Motor 240V AC Active Sense |
-| **GPIO 35** | `IN_BORE_AC` | 220V AC Optocoupler 2 `OUT` | Input | Borewell Motor 240V AC Active Sense |
+| **GPIO 16** | `IN_SUMP_AC` | 220V AC Optocoupler 1 `OUT` | Input | Sump Motor 240V AC Active Sense. **Moved off GPIO 34 (2026-08-27)** — that pin is ADC1 and is needed for a CT channel |
+| **GPIO 17** | `IN_BORE_AC` | 220V AC Optocoupler 2 `OUT` | Input | Borewell Motor 240V AC Active Sense. **Moved off GPIO 35** |
+| **GPIO 32** | `IN_SUMP_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH4. Sump phase L1 — `WIRING.md` §11.3 |
+| **GPIO 33** | `IN_SUMP_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH5. Sump phase L2 |
+| **GPIO 34** | `IN_SUMP_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH6. Sump phase L3 |
+| **GPIO 35** | `IN_BORE_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH7. Borewell phase L1 |
+| **GPIO 36** | `IN_BORE_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH0. Borewell phase L2 |
+| **GPIO 39** | `IN_BORE_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH3. Borewell phase L3 |
 | **GPIO 25** | `OUT_SUMP_FLOT` | 4-Ch Relay Module `IN1` | Output | Dry contact to Sump Motor Starter |
 | **GPIO 26** | `OUT_BORE_FLOT` | 4-Ch Relay Module `IN2` | Output | Dry contact to Borewell Starter (Overflow Cutoff) |
 | **GPIO 27** | `OUT_AUX_RLY1` | 4-Ch Relay Module `IN3` | Output | Auxiliary remote override |

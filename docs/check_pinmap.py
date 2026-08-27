@@ -11,6 +11,14 @@ by no firmware at all. So the production firmware's own #defines are now a
 fourth source. A pin that is documented but unread, or read but undocumented,
 fails here.
 
+NOT covered yet: node 0x06's pin map. As of 2026-08-27 it is written down twice
+(WIRING.md 11.2 + 11.3 and HARDWARE.md 3.1's node-2 table) and validated nowhere,
+which is the same shape as the gap that hid IN_ALARM. It is left out on purpose
+rather than half-parsed out of prose bullets: node 0x06 has no firmware yet, and
+the right time to add it here is when that firmware exists and can be the third
+source. Six of its pins are freshly assigned CT channels, so this is a live risk,
+not a theoretical one.
+
     python docs/check_pinmap.py        # from the repo root
 """
 import io

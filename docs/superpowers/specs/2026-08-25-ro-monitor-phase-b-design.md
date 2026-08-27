@@ -535,7 +535,7 @@ Decided 2026-08-26, and it is the right shape for anything that can stop a pump:
 
 **Sensor notes if the flow sensor is chosen — see also §7.3, which makes the current clamp the cheaper half of this decision.** Match the body to the delivery pipe — DN50 is 2" BSP, and reducers either side of a 1.5" line add turbulence and two failure points. Install downstream of the non-return valve, with unions, and support the pipe: the 1.75 MPa rating is nominal for a plastic body, and hammer on shutdown spikes well above static pressure. **The K-factor is unknown until measured** — clone sensors vary, so fill a known volume, count pulses, and store litres-per-pulse hub-side alongside the tank calibration, not in node firmware.
 
-### 7.3 Motor current monitoring — six CT channels
+### 7.3 Motor current monitoring — eight CT channels
 
 **What this is for.** The AC optos already say *the contactor is closed*. They cannot say whether the motor behind it is doing any work. A current clamp turns every pump into an instrument:
 
@@ -550,19 +550,25 @@ Decided 2026-08-26, and it is the right shape for anything that can stop a pump:
 | :--- | :--- | :--- | :--- | :--- |
 | HPP | 1-phase (`P`/`N` per panel label) | RO skid | Hub `0x00` | `GPIO 36` — ADC1_CH0 |
 | RWP | 1-phase | RO skid | Hub `0x00` | `GPIO 39` — ADC1_CH3 |
-| Sump motor L1 / L2 | **3-phase** (confirmed 2026-08-26) | Ground starter | Node `0x06` | ADC1 ×2, Phase C |
-| Borewell L1 / L2 | 3-phase | Ground starter | Node `0x06` | ADC1 ×2, Phase C |
+| Sump motor L1 / L2 / L3 | **3-phase** (confirmed 2026-08-26) | Ground starter | Node `0x06` | `GPIO 32` / `33` / `34` — ADC1 ×3, Phase 2 |
+| Borewell L1 / L2 / L3 | 3-phase | Ground starter | Node `0x06` | `GPIO 35` / `36` / `39` — ADC1 ×3, Phase 2 |
 
-**Two clamps per 3-phase motor, not three.** Both ground-floor motors turned out to be 3-phase (the sump motor was documented as single-phase until 2026-08-26). Three clamps per motor is the obvious reading of "monitor a 3-phase motor", and it is one more than the fault actually requires:
+**All three phases per motor. Amended 2026-08-27.** This section previously argued for two clamps per 3-phase motor, on the grounds that single-phasing is detectable either way — a measured phase collapsing, or both measured phases rising 1.7-2× when the unmeasured one drops — so the third clamp bought only *which* phase, and nothing about whether to trip. That reasoning still holds for **detecting a fault**, and it is wrong about the more useful thing.
 
-| Which phase fails | With 2 clamps fitted, what is seen |
-| :--- | :--- |
-| A measured phase | That channel collapses to ~0 while the other rises hard |
-| The unmeasured phase | **Both** measured channels rise ~1.7-2× |
+What the third clamp actually buys is **phase imbalance as a number rather than an inference**. With three channels the imbalance is computable directly — the largest deviation from the mean of the three, as a percentage — and that figure is the standard predictive measure for a 3-phase motor, the one that maps onto derating and to bearing and winding wear long before anything trips. With two channels you can tell that something is wrong; with three you can trend how wrong, and watch it get worse over a season. On motors that are expensive to replace and awkward to reach, that is worth ₹349 a phase.
 
-Single-phasing is detectable in every case, because a motor that loses a phase while running does not stop — it draws far more current through what remains, which is exactly how it burns out. The third clamp adds which-phase-precisely, and nothing about whether to trip. Spend it on a spare instead.
+**Eight channels, ₹2,792** at ₹349 each — one on each single-phase pump, three on each 3-phase motor. Six of them are new: the hub's two are already accounted for.
 
-Six channels, **₹2,094** at ₹349 each — one on each single-phase pump, two on each 3-phase motor. The split matters: only two land on the hub, and `GPIO 36`/`39` were the last free **ADC1** pins on it. Everything still free there (12/13/14/15) is ADC2, which is dead whenever Wi-Fi is up — so the hub is now full for analog, and any further current channel has to go on a node.
+**Both ADC1 banks are now full**, and that is the real cost of this decision:
+
+| Node | ADC1 pins usable | Spent on | Spare |
+| :--- | :--- | :--- | :---: |
+| Hub `0x00` | `36`, `39` (the rest went to optos and I²C long ago) | HPP, RWP | **0** |
+| Node `0x06` | `32`, `33`, `34`, `35`, `36`, `39` | six motor phases | **0** |
+
+`GPIO 37`/`38` are the only other ADC1 channels on an ESP32 and they are not broken out on a WROOM module, so there is no ninth analog input to be had on either board. Everything else free is ADC2, which is dead whenever Wi-Fi is up. Another analog channel from here means a third node or a Modbus meter, not a spare pin.
+
+**This displaces node `0x06`'s AC optos.** They were documented on `GPIO 34`/`35`, which are two of the six ADC1 pins now needed. They move to `GPIO 16`/`17` — the 240 V module carries its own 47 k pull-up to `VCC` (§3.5), so it needs no ADC and no internal pull-up, just an input-capable pin. What is lost there is the analog probe the hub uses to tell a floating opto from an idle one. With three clamps per motor that check is replaced by a better one: an opto reading idle while three CT channels read current is a broken opto wire, stated by disagreement rather than inferred from a voltage.
 
 #### Interface — the "off-the-shelf board" question, answered
 
@@ -589,8 +595,9 @@ So a hub interface board is **two resistors, one capacitor, and one 3.5 mm socke
 - **Clamp one conductor, never the cable.** The panel label lists `P` and `N` per circuit; a clamp around both reads zero, because the currents cancel. This is the most common first-time failure.
 - **Use the turns multiplier on small loads.** A 1 HP RWP at ~5 A gives only ~170 mV from a 30 A clamp. Passing the conductor through the window **2-3 times** multiplies the signal by that factor — the 13 × 13 mm window takes three turns of 2.5 sqmm easily. Record turns per channel; calibration divides by it.
 - **Sample properly.** ~2 kHz for 200 ms, subtract the measured DC offset, then RMS. That is a 200 ms blocking read, so it belongs where the dosing read already sits: after the last RS485 reply, in the idle part of the cycle — never between a poll and its response.
-- **Round-robin the channels on node `0x06`.** Four channels × 200 ms is 800 ms of blocking per cycle, which is most of a second spent not listening. Sample **one channel per cycle** instead: every channel refreshes every ~4 s, which is far faster than any thermal failure develops, and the node stays responsive. Motor start and stop are caught by the contactor optos, which are instant.
+- **Sample one MOTOR per cycle on node `0x06`, not one channel.** Six channels × 200 ms is 1.2 s of blocking, so the naive fix is one channel per cycle — and that would quietly break the thing the third clamp was bought for. Imbalance is a comparison *between* phases, and comparing phases sampled 12 s apart measures how the load changed, not how the phases differ. Take all three phases of one motor back to back (~600 ms) and alternate motors: each motor refreshes every ~4 s with its three phases sampled inside 600 ms of each other, which is close enough for a motor at steady state. Start and stop still come from the contactor optos, which are instant.
 - **Two-point calibrate against a clamp meter**, and store the scale factor hub-side with the tank calibration. The ESP32 ADC is nonlinear enough that raw counts are not worth trusting, and this is a trend instrument: consistency matters more than absolute accuracy.
+- **For the sump and borewell this is the ONLY route to a scale factor.** Confirmed 2026-08-27: neither motor has a readable nameplate — the sump motor is at the bottom of the sump and the borewell pump is down the bore, and only the HPP and RWP plates in the RO room can be read. There is no published FLC to sanity-check a reading against, so the starter's overload-relay setting and a clamp meter are the whole story (`WIRING.md` §11.3.1). It also raises the stakes on §7.2's staged rollout: a dry-run threshold for these two can only be learned from observed behaviour, never derived, which is exactly why stage 1 watches before anything interlocks.
 - **Set ADC attenuation to 11 dB** for the full 0-3.3 V range.
 
 #### Panel work
