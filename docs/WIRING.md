@@ -678,6 +678,31 @@ Four tanks, four different problems. The sensor is the same part in each; the mo
 | Keep the **beam cone clear** — ladders, pipes, ropes, wall seams | The beam is 45–75° wide, so at 3 m it lights up a cone over a metre across. Anything it clips answers *earlier* than the water does, and an early echo reads as a **shorter distance, which the dashboard shows as a fuller tank**. Wrong in the dangerous direction. |
 | Mount **away from the inflow** | Broken surface and foam scatter the pulse. Put the sensor over still water, opposite the fill point. |
 | Fit a **hood or shade** over the face in closed tanks | Condensation forming on, or dripping onto, the transducer kills echoes. This is the most common cause of a sensor that worked for a month and then stopped. |
+
+> **The beam-cone rule got more important on 2026-08-28, not less.** `levelPercent()`
+> used to return "no level" for any distance shorter than the calibrated `full`
+> mark. It now returns **100%** for anything between the 200 mm blind zone and
+> `full`, because a barrel filled above its mark is a real measurement and
+> reporting it as a fault meant the **overflow alert never fired at all** — the
+> alert is gated on having a level, so a genuinely overflowing tank was invisible
+> exactly when it mattered.
+>
+> The cost is on this row. An obstruction that answers from **200–299 mm** used to
+> read as a *fault*, which is visible and safe. It now reads as a **steady 100%**,
+> which is plausible, and it will hold an overflow alert on forever. That is the
+> "wrong in the dangerous direction" this table warns about, and the change
+> widened the band it applies to by 100 mm at the top.
+>
+> It is still the right trade — an obstruction anywhere from 300 to 1500 mm
+> *already* read as a falsely-full tank, so this extends an existing hazard rather
+> than inventing one, and it buys back overflow detection. But it means the beam
+> cone must actually be clear, not approximately clear.
+>
+> **How to tell the two apart, from the console summary:** a real water surface
+> ripples, so its distance wanders by a few millimetres and `q` moves around. An
+> obstruction is rock-steady — the same distance, `q100`, cycle after cycle, for
+> hours. If a tank sits at exactly 100% with an unmoving distance, suspect the
+> mounting before believing the level.
 | Strain-relieve the captive lead at the tank wall | The transducer hangs on its own cable otherwise, and it will eventually hang crooked — see rule 2. |
 
 **Dosing barrel (~50 L, wired direct to the hub, §13).** The blind zone *is* the design problem here: a 50 L drum is only ~550–600 mm deep, so a sensor sitting on the barrel mouth cannot read the top third — the range you care about when deciding whether to top up. **Mount it on a bracket 250–300 mm above the open top**, not on the rim. That is the geometry the hub's `250 mm full / 900 mm empty` defaults assume.
