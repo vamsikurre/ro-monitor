@@ -95,6 +95,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 **Pin selection constraints — re-check these before any reshuffle:**
 * **GPIO 34-39 have no internal pull-up** — but the AC opto modules supply their own. **Corrected 2026-08-27:** the fitted module has a **47 k pull-up from `OUT` to `VCC`**, printed on the silkscreen as `47K VCC`, which is why it has a `VCC` terminal at all (§8). With `VCC` on 3V3 the pin idles high and `pinMode(pin, INPUT)` is correct. No external resistor is required, and the "outstanding hub defect" recorded in phase-B spec §3.5 was a misreading of this part. What *does* float the pin is `VCC` or `OUT` losing continuity — observed once on this build, from a broken wire at the module. 47 k is a weak pull-up, so a parallel 10 k remains available as noise-hardening on a long `OUT` run; that is a tuning choice, not a fix.
 * PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
+* **Silkscreen names that are not GPIO numbers, on the DevKit fitted here.** `SP` is `GPIO 36` and `SN` is `GPIO 39` (§14.0). More dangerously, this board breaks out **`SD2` `SD3` `CMD` `SD0` `SD1` `CLK`** along the bottom of both headers — those are **`GPIO 6-11`, the SPI flash**. They look like free pins and using one prevents the board from booting. There are no spare pins hiding there.
 * **`GPIO 13` carries `IN_ALARM` directly, with no optocoupler** (§6.6). Of the four pins left free — 12, 13, 14, 15 — **12 and 15 are strapping pins** (12 selects flash voltage at boot), so 13 was taken and **14 is the last comfortable spare on this board**.
 * GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added. **They are all ADC2 and therefore useless for analog while Wi-Fi is up**, which is why the two CT channels take `GPIO 36` and `GPIO 39` (ADC1) instead. Those were the last two free ADC1 pins on this hub.
 * `GPIO 4` is `ADC2_CH0`. ADC2 is unusable while Wi-Fi is active, but this pin is used as a **digital** input, which is unaffected. Do not repurpose it for analog.
@@ -958,6 +959,23 @@ into: **one 1×5 0.1" pin header**, carrying 3V3, both ADC pins, and two grounds
         ^
         +-- mark pin 1 on the board. Nothing else identifies this header.
 ```
+
+**`GPIO 36` and `GPIO 39` are not silkscreened "36" and "39".** On the DevKit
+fitted to this hub they are the two pins between `EN` and `G34` on the left
+header, printed **`SP`** and **`SN`**:
+
+```
+   3V3 | EN | SN | SP | G34 | G35 | G32 | G33 | G25 | ...
+               ^    ^
+               |    +-- SP = SENSOR_VP = GPIO 36 = IN_HPP_CT
+               +------- SN = SENSOR_VN = GPIO 39 = IN_RWP_CT
+```
+
+The abbreviation is because both double as the ADC pre-amp sensor inputs, which
+is the same reason they are input-only with no internal pull-up. **That mapping is
+fixed in the silicon**, so it holds whichever order a particular board prints the
+two labels in. Verified against the fitted board 2026-08-27 — it cost a round of
+"there is no pin 36 on this board" first.
 
 **Why this pin order, and not 3V3-GND-A-A-GND.** Three properties, all free:
 
