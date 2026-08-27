@@ -20,15 +20,15 @@ CONFIG_ESP_RMAKER_USE_NVS=y
 # dashboard on port 80 and advertises _http over mDNS; running local_ctrl too
 # means two services competing in the same discovery namespace for no gain,
 # since nothing here is remotely actuated except one fan threshold.
-CONFIG_ESP_RMAKER_LOCAL_CTRL_ENABLE=n
+CONFIG_ESP_RMAKER_LOCAL_CTRL_AUTO_ENABLE=n
 
 # --- BLE provisioning ---
 # BLE, not SoftAP — which is what leaves the hub's own AP free to serve the
 # calibration page at the same time. See start_softap() in app_main.c.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_WIFI_PROV_TRANSPORT_BLE=y
-CONFIG_WIFI_PROV_BLE_BONDING=n
+CONFIG_APP_NETWORK_PROV_TRANSPORT_BLE=y
+CONFIG_NETWORK_PROV_BLE_SEC_CONN=y
 
 # --- OTA updates ---
 CONFIG_ESP_RMAKER_OTA_AUTOFETCH=y
@@ -42,7 +42,7 @@ CONFIG_HTTPD_MAX_URI_LEN=512
 # 30 s. A CT RMS read blocks ~200 ms and an RS485 poll can burn three 120 ms
 # timeouts before giving up. Neither is close to this, but the margin means a
 # slow bus never looks like a hung task.
-CONFIG_ESP_TASK_WDT=y
+CONFIG_ESP_TASK_WDT_INIT=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 
 # --- Size over speed ---
@@ -59,9 +59,10 @@ CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # --- ESP Insights ---
-# Off, as on the gate controllers. Enabling it means committing an auth key,
-# which does not belong in this repository.
-CONFIG_ESP_INSIGHTS_ENABLED=n
+# Not a dependency at all - absent from main/idf_component.yml, so there is no
+# symbol to turn off and setting one only produced an unknown-symbol warning
+# every build. Enabling it would also mean committing an auth key, which does
+# not belong here. To enable: add espressif/esp_insights to idf_component.yml.
 
 # --- Network / time sync (schedules need it) ---
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
