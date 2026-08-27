@@ -37,7 +37,7 @@ expects both, so doing one without the other misreports a fault as low pressure.
 - [ ] **Move PC817 `IN3` from the Aster `AUX OP` pair to the Aster `LPS` `C`/`NO` pair.** The output side (`V3` → `GPIO 33`) does **not** move. §6.6 — **the only hub-board job still outstanding**
 - [x] **`IN_ALARM` header fitted 2026-08-27** — 2-pin: hub `GND` and `GPIO 13`, to the Aster `AUX OP` `C`/`NO` pair. No optocoupler, no resistor, no module. §6.6
 - [x] **CT header fitted 2026-08-27** — **4-pin as built: `3V3` / `SP` / `SN` / `GND`**, not the 5-pin order in §14.0. Leave `SP`/`SN` otherwise unconnected until the breakout exists.
-- [ ] **Key or mark that CT header before first use.** In this pin order a reversed plug shorts 3V3 to GND — §14.0. Paint pin 1 on the header and on the breakout.
+- [ ] **Mark pin 1 on every header and mating plug on the hub board.** Not just the new ones: any header with a supply at one end and `GND` at the other shorts the rail if reversed, and most of them are built that way (§1). One pass with paint, once.
 
 **Then verify, before trusting any of it:**
 
@@ -106,6 +106,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 **Pin selection constraints — re-check these before any reshuffle:**
 * **GPIO 34-39 have no internal pull-up** — but the AC opto modules supply their own. **Corrected 2026-08-27:** the fitted module has a **47 k pull-up from `OUT` to `VCC`**, printed on the silkscreen as `47K VCC`, which is why it has a `VCC` terminal at all (§8). With `VCC` on 3V3 the pin idles high and `pinMode(pin, INPUT)` is correct. No external resistor is required, and the "outstanding hub defect" recorded in phase-B spec §3.5 was a misreading of this part. What *does* float the pin is `VCC` or `OUT` losing continuity — observed once on this build, from a broken wire at the module. 47 k is a weak pull-up, so a parallel 10 k remains available as noise-hardening on a long `OUT` run; that is a tuning choice, not a fix.
 * PC817 outputs are open-collector too, so all four dry-contact channels sit on pins that support `INPUT_PULLUP`: GPIO 25/26/32/33.
+* **Every header on this board can be plugged in backwards, and several of them short the rail when you do.** This is a board-wide property, not a quirk of one connector: wherever `3V3` or `5V` sits at one end of a header and `GND` at the other, reversal puts them onto each other. Some connectors only swap signals when reversed and are recoverable; the powered ones are not. **The convention is therefore one rule applied everywhere — mark pin 1 on every header and on every mating plug.** A dab of paint is enough, and it is worth more than any per-connector note, because the person who reverses a plug at 11 p.m. is not reading this document.
 * **Silkscreen names that are not GPIO numbers, on the DevKit fitted here.** `SP` is `GPIO 36` and `SN` is `GPIO 39` (§14.0). More dangerously, this board breaks out **`SD2` `SD3` `CMD` `SD0` `SD1` `CLK`** along the bottom of both headers — those are **`GPIO 6-11`, the SPI flash**. They look like free pins and using one prevents the board from booting. There are no spare pins hiding there.
 * **`GPIO 13` carries `IN_ALARM` directly, with no optocoupler** (§6.6). Of the four pins left free — 12, 13, 14, 15 — **12 and 15 are strapping pins** (12 selects flash voltage at boot), so 13 was taken and **14 is the last comfortable spare on this board**.
 * GPIO 6-11 are wired to the SPI flash and unusable. GPIO 1/3 are the USB serial console. GPIO 12, 13, 14 and 15 remain free — 13 is the natural home for a fifth PC817 channel if one is ever added. **They are all ADC2 and therefore useless for analog while Wi-Fi is up**, which is why the two CT channels take `GPIO 36` and `GPIO 39` (ADC1) instead. Those were the last two free ADC1 pins on this hub.
@@ -958,12 +959,13 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
 > the 5-pin arrangement designed below, and the difference has one consequence
 > that needs a physical guard rather than a document note:
 >
-> **Plugging the breakout in backwards shorts 3V3 to GND.** With supply and ground
-> at opposite ends of the connector, a reversed plug puts them straight onto each
-> other. Nothing else in this project has that property — the 5-pin order below was
-> chosen specifically to avoid it. So before the breakout is ever plugged in:
-> **key the connector, or mark pin 1 on the header AND on the breakout.** A dab of
-> paint on both is enough. Do not rely on remembering which way round it goes.
+> **Plugging the breakout in backwards shorts 3V3 to GND**, because supply and
+> ground sit at opposite ends of the connector. This is **not special to this
+> header** — every powered header on the board behaves the same way, and §1's
+> pin-selection notes carry the board-wide rule that covers all of them: mark pin 1
+> on every header and every mating plug. The only thing worth saying here is that
+> the 5-pin order below would have been immune by construction, being a palindrome,
+> and the 4-pin one is not.
 >
 > **Second, smaller consequence:** `SP` and `SN` sit adjacent with no screened pin
 > between them, where the 5-pin order put `3V3` in the gap. Two millivolt channels
