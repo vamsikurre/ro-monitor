@@ -31,10 +31,11 @@ firmware for a day (§6.6, `docs/check_pinmap.py`).
 
 ### 0.2. Hub board — still to solder
 
-Three jobs, in this order. The first two go together: the firmware already
-expects both, so doing one without the other misreports a fault as low pressure.
+**Corrected 2026-08-28:** nothing is connected to the Aster yet, and the tank
+sensors are loose on the bench. The board-side headers are fitted; the field wiring
+happens at deployment.
 
-- [ ] **Move PC817 `IN3` from the Aster `AUX OP` pair to the Aster `LPS` `C`/`NO` pair.** The output side (`V3` → `GPIO 33`) does **not** move. §6.6 — **the only hub-board job still outstanding**
+- [ ] **At deployment: connect PC817 `IN3` to the Aster `LPS` `C`/`NO` pair.** Nothing to *move* — `IN3` has never been wired. The output side (`V3` → `GPIO 33`) is already done. §6.6
 - [x] **`IN_ALARM` header fitted 2026-08-27** — 2-pin: hub `GND` and `GPIO 13`, to the Aster `AUX OP` `C`/`NO` pair. No optocoupler, no resistor, no module. §6.6
 - [x] **CT header fitted 2026-08-27** — **4-pin as built: `3V3` / `SP` / `SN` / `GND`**, not the 5-pin order in §14.0. Leave `SP`/`SN` otherwise unconnected until the breakout exists.
 - [ ] **Mark pin 1 on every header and mating plug on the hub board.** Not just the new ones: any header with a supply at one end and `GND` at the other shorts the rail if reversed, and most of them are built that way (§1). One pass with paint, once.
@@ -42,7 +43,7 @@ expects both, so doing one without the other misreports a fault as low pressure.
 **Then verify, before trusting any of it:**
 
 - [ ] Touch the two `IN_ALARM` wires together → alarm latches within one poll, the RO room flashes on the dashboard, a notification arrives
-- [ ] Short PC817 `IN3` to `G` → `LPS` reads *Low pressure*; with the alarm also active the alert should name low feed pressure rather than saying "check the panel"
+- [ ] Short PC817 `IN3` to `G` → `LPS` reads *Low pressure*; with the alarm also active the alert should name low feed pressure rather than saying "check the panel". Works on the bench with nothing attached to the Aster
 - [ ] Confirm the RS485 terminators: **120 Ω at the hub and at node `0x02` only**. `0x03` and `0x04` are mid-chain and must have none — three terminators blunt the differential swing (§10, §12)
 
 ### 0.3. Off-board, in order of what blocks what
@@ -83,6 +84,25 @@ and produces `PermissionError(13, 'Access is denied')`.
 programming interface of the board that runs the plant, and the board still works
 only because the ESP32 core survived. `PCB_HUB_MOTHERBOARD.md` §6 now specifies
 reverse-polarity protection and a dedicated programming header for exactly this.
+
+### 0.3.2. Reading the log while nothing is connected
+
+On the bench, with sensors unmounted and no Aster wiring, these are the **expected**
+readings — none of them is a fault, and each has been mistaken for one:
+
+| Reading | Why |
+| :--- | :--- |
+| `RWT 171 mm q100 BLIND -> --` | A loose sensor pointing at whatever is 17 cm away. `q100` means the echo is *consistent*, which makes it look convincing |
+| `DOS 0 mm NO_ECHO -> --` | Sensor unpowered or aimed at nothing. It reads normally when pointed across a room |
+| `TWT 3861 mm OK -> 0%` | Measuring the room. Past `empty`, so 0% is arithmetically right |
+| `LPS normal` | `IN3` is unconnected, so the PC817 output transistor is off and `GPIO 33` floats high. **Not** the Aster's `LPS` state |
+| `ALARM clear` | `GPIO 13` unconnected, internal pull-up holds it high |
+| `HPP/RWP idle, CT --` | No clamps, no breakout. `CT --` is the honest answer |
+| `Dosing chemical low (0%)` alert | Follows from `DOS` having no echo. Real alert, meaningless input |
+
+The rule this keeps proving: **a confident-looking number from an unconnected
+sensor is the easiest thing in this system to misread as a fault.** Check what is
+physically attached before diagnosing anything.
 
 ### 0.4. Known open, not blocking
 
