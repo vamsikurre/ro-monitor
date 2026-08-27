@@ -309,15 +309,31 @@ static esp_err_t cal_get(httpd_req_t *req)
     n += snprintf(page + n, sizeof(page) - n, "<fieldset><legend>Tank levels</legend>");
     for (int i = 0; i < CAL_TANK_COUNT; i++) {
         const cal_tank_cfg_t *c = cal_tank(i);
+
+        /* Show the percentage the CURRENT calibration produces, not just whether
+         * one exists. Calibrating means typing two numbers while looking at a
+         * tank, and the only useful feedback is "does that percentage match what
+         * I can see". "measured" told you nothing. */
+        char pctbuf[24];
+        if (live[i] == 0) {
+            snprintf(pctbuf, sizeof(pctbuf), "no echo");
+        } else if (live_pct[i] < 0) {
+            snprintf(pctbuf, sizeof(pctbuf), "no level - out of range");
+        } else {
+            snprintf(pctbuf, sizeof(pctbuf), "%d %%", live_pct[i]);
+        }
+
         n += snprintf(page + n, sizeof(page) - n,
-            "<h3>%s</h3><p>live <b>%u mm</b> &rarr; %s</p>"
+            "<h3>%s</h3><p>live <b>%u mm</b> &rarr; <b>%s</b>"
+            "<br><small>full and empty are both distances from the transducer FACE "
+            "to the water. Measure straight down. <b>full</b> must be at least "
+            "%d mm or the top of the scale is inside the blind zone.</small></p>"
             "<form method=post action='/api/cal/tank'>"
             "<input type=hidden name=tank value='%s'>"
             "full <input name=full size=6 value='%u'> "
             "empty <input name=empty size=6 value='%u'> "
             "<button>Save</button></form>",
-            cal_tank_label(i), live[i],
-            live_pct[i] < 0 ? "no level" : "measured",
+            cal_tank_label(i), live[i], pctbuf, BLIND_ZONE_MM,
             cal_tank_key(i), c->full_mm, c->empty_mm);
     }
     n += snprintf(page + n, sizeof(page) - n,
