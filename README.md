@@ -213,6 +213,10 @@ for `ro_node` tells you that in one line instead of failing inside `SoftwareSeri
 ## 6. Detailed Documentation Index
 
 For in-depth technical documentation, refer to the guides in the `docs/` folder:
+
+* **`PCB_HUB_MOTHERBOARD.md`** — net-level schematic specification for a fabricated
+  hub board. Specification only; nothing designed or ordered. Also serves as the
+  first complete net-level record of the hub as wired.
 - **[Hardware Specifications & Pin Allocations](docs/HARDWARE.md)**
 - **[Terminal-by-Terminal Wiring Guide](docs/WIRING.md)**
 - **[RS485 & Wi-Fi Master-Slave Protocol Specification](docs/RS485_PROTOCOL.md)**
