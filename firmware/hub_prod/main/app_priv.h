@@ -149,6 +149,17 @@ extern "C" {
 
 /* ------------------------------------------------------------------- cadence */
 #define POLL_CYCLE_MS           2000
+
+/* Periodic one-line-per-subsystem summary to the console.
+ *
+ * State CHANGES are logged as they happen, but during commissioning what you
+ * actually need is the raw millimetres, continuously: a percentage cannot tell
+ * you whether a sensor is looking at water or at the ceiling, and "no reading"
+ * looks the same either way. Three lines every 30 s stays legible for months and
+ * still answers "what is that sensor actually seeing".
+ *
+ * Drop this to 5000 while standing in front of the plant, then put it back. */
+#define LOG_SUMMARY_MS          30000
 #define NODE_STALE_MS           10000   /* dashboard shows STALE past this */
 #define NODE_OFFLINE_MS         30000   /* ...and OFFLINE past this        */
 

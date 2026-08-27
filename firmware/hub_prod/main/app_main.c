@@ -328,6 +328,83 @@ static void command_fan(hub_state_t *s)
     s->fan_on = (ack[0] != 0);
 }
 
+/* ------------------------------------------------------------ console summary */
+
+static const char *status_word(sensor_status_t s)
+{
+    switch (s) {
+        case SENSOR_OK:       return "OK";
+        case SENSOR_BLIND:    return "BLIND";
+        case SENSOR_NO_ECHO:  return "NO_ECHO";
+        case SENSOR_HW_FAULT: return "HW_FAULT";
+        default:              return "?";
+    }
+}
+
+/* One tank as "2304 mm q100 OK -> 0%", or why there is no level. The distance
+ * comes first on purpose: it is the measurement, and the percentage is an
+ * interpretation of it through a calibration that may well be wrong. */
+static void fmt_tank(char *out, size_t n, const tank_state_t *t, bool online, bool has_q)
+{
+    if (!online) {
+        snprintf(out, n, "%-28s", "OFFLINE - not answering");
+        return;
+    }
+    char pct[8];
+    if (t->pct < 0) {
+        snprintf(pct, sizeof(pct), "--");
+    } else {
+        snprintf(pct, sizeof(pct), "%d%%", t->pct);
+    }
+    if (has_q) {
+        snprintf(out, n, "%5u mm q%-3u %-8s -> %-4s",
+                 t->distance_mm, t->quality, status_word(t->sensor), pct);
+    } else {
+        snprintf(out, n, "%5u mm      %-8s -> %-4s",
+                 t->distance_mm, status_word(t->sensor), pct);
+    }
+}
+
+static void log_summary(const hub_state_t *s)
+{
+    char rwt[40], twt[40], dos[40];
+    fmt_tank(rwt, sizeof(rwt), &s->rwt, s->rwt_online, true);
+    fmt_tank(twt, sizeof(twt), &s->twt, s->twt_online, true);
+    fmt_tank(dos, sizeof(dos), &s->dosing, true, false);
+
+    ESP_LOGI(TAG, "tanks   RWT %s | TWT %s | DOS %s", rwt, twt, dos);
+
+    ESP_LOGI(TAG, "climate RO %d.%d C %d.%d %%RH%s | BAT %d.%d C %d.%d %%RH fan %s%s",
+             s->ro_room.temp_deci_c / 10, abs(s->ro_room.temp_deci_c % 10),
+             s->ro_room.hum_deci_pct / 10, s->ro_room.hum_deci_pct % 10,
+             s->ro_room.fault ? " SHT30 FAULT" : "",
+             s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10),
+             s->battery_room.hum_deci_pct / 10, s->battery_room.hum_deci_pct % 10,
+             s->fan_on ? "ON " : "OFF",
+             !s->battery_online ? " NODE 0x04 OFFLINE" : (s->battery_room.fault ? " SHT30 FAULT" : ""));
+
+    /* Millivolts, not just the booleans they resolve to. On these two channels a
+     * floating pin and an idle opto both read "off", and only the spread tells
+     * them apart - which is the whole reason ac_probe() measures rather than
+     * samples. Same for the clamps: the pedestal proves the breakout exists. */
+    ESP_LOGI(TAG, "motors  HPP %s %4lu-%4lu mV %s | RWP %s %4lu-%4lu mV %s%s",
+             s->hpp.running ? "RUN " : "idle",
+             (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
+             s->hpp.deci_amps < 0 ? "CT --" : "CT ok",
+             s->rwp.running ? "RUN " : "idle",
+             (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
+             s->rwp.deci_amps < 0 ? "CT --" : "CT ok",
+             s->overcurrent ? "  OVER CURRENT" : "");
+
+    ESP_LOGI(TAG, "aster   TWT_FLOT %s | RL1 %s | RL2 %s | LPS %s | ALARM %s   rs485 err %lu",
+             s->twt_float_closed ? "CLOSED" : "open  ",
+             s->rl1_active ? "ACTIVE" : "idle  ",
+             s->rl2_active ? "ACTIVE" : "idle  ",
+             s->lps_active ? "LOW   " : "normal",
+             s->alarm_active ? "FAULT" : "clear",
+             (unsigned long)s->rs485_errors);
+}
+
 /* ------------------------------------------------------------- node reading */
 
 /*
@@ -558,6 +635,16 @@ static void poll_task(void *arg)
         report_str(s_dev_plant, PARAM_STATUS, status, last_status, sizeof(last_status));
 
         evaluate_alerts(&local);
+
+        /* Periodic console summary. Deliberately AFTER the state is committed and
+         * the cloud updated, so a slow console never delays either. */
+        static int64_t last_summary_us = 0;
+        int64_t now_us = esp_timer_get_time();
+        if (last_summary_us == 0 ||
+            now_us - last_summary_us >= (int64_t)LOG_SUMMARY_MS * 1000) {
+            last_summary_us = now_us;
+            log_summary(&local);
+        }
 
         gpio_set_level(GPIO_LED_STATUS, 0);
 
