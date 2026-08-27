@@ -665,6 +665,49 @@ Confirm by boot print before bussing: each node prints its detected ID at startu
 
 ---
 
+### 9.2.1. As-Measured Tank Geometry — fill this in on site
+
+`full` and `empty` live in NVS as two bare millimetre figures. They lose the
+measurements they were derived from, so if a sensor is ever remounted or replaced
+nobody can recompute them without going back up to the tank. Write the raw numbers
+here instead.
+
+**Measure two heights per tank, both from the inside floor:**
+
+```
+   S = floor -> transducer FACE          (not the roof slab, not the bracket)
+   W = floor -> overflow outlet          (the true maximum water level)
+
+   empty = S
+   full  = S - W
+```
+
+Measuring to the face rather than to the roof means the transducer's protrusion is
+already accounted for — one fewer number to record and to get wrong.
+
+| Tank | S: floor → face | W: floor → overflow | `full` = S−W | `empty` = S | Draw-off height | Measured |
+| :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| RWT `0x02` | | | | | | |
+| TWT `0x03` | | | | | | |
+| Dosing (hub) | | | | | | |
+| Sump `0x05` | | | | | | Phase 2 |
+
+**Check before saving: `full` must be at least 200 mm.** That is the blind zone, so
+the face has to sit at least 200 mm above the overflow outlet. If it does not, the
+top of the scale is unusable and the fix is a stand-off that raises the sensor, not
+a number typed into `/cal`.
+
+**The draw-off column is optional and changes what 0% means.** `empty = S` puts 0%
+at a dry floor. If you know the height below which the pump sucks air, use that as
+the effective floor instead and 0% comes to mean "no *usable* water", which is the
+more useful zero — particularly for RWT, which feeds the RWP.
+
+**Refine opportunistically.** These figures only need to be close enough that the
+gauge is not nonsense. `/cal` shows the percentage the current calibration produces
+against the live distance, so the next time a tank is visibly near full or near
+empty, read the live millimetres and set the matching value. Everything is in NVS
+and editable from a phone.
+
 ### 9.3. Ultrasonic Mounting, Per Location
 
 Four tanks, four different problems. The sensor is the same part in each; the mounting is what decides whether it works.
