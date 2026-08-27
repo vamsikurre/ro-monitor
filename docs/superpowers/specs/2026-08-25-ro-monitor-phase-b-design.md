@@ -382,7 +382,15 @@ Structured single-line levels per `plan.txt` §26. State *transitions* are logge
 
 Replaced rather than patched. The previous `firmware/esp32_hub_test/dashboard.html` was a card grid — it listed readings *about* the plant. The `dashboard.png` sketch is a **process flow**, and that is the correct organising principle: the page should be the plant.
 
-New file: **`firmware/hub/data/dashboard.html`** — 29 KB raw, **9.1 KB gzipped**, served from LittleFS.
+That old file was **deleted 2026-08-27**. "Replaced" turned out to mean only that a new one was written: the card grid sat on disk for two days, served by nothing, diverging from the page that is actually shipped, next to it in the tree and identically named.
+
+New file: **`firmware/hub/data/dashboard.html`** — now 67 KB raw, **19 KB gzipped**.
+
+**Not LittleFS, as originally planned.** It is gzipped at build time and embedded
+straight into the app binary (`firmware/hub_prod/main/CMakeLists.txt`), which drops
+a partition, drops a mount that can fail, and makes it impossible for the page and
+the firmware to be different ages. The cost is that a dashboard edit only reaches
+the hub with the next image.
 
 **Structure — a true elevation, not a flat flow.** The plant is drawn at real building height, because the lift is the failure mode:
 
