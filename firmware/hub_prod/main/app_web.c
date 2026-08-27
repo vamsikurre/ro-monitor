@@ -32,11 +32,13 @@
 
 static const char *TAG = "web";
 
-/* dashboard.html is embedded at build time - see main/CMakeLists.txt EMBED_FILES.
+/* dashboard.html is gzipped and embedded at build time - see main/CMakeLists.txt.
  * Serving it from flash rather than SPIFFS means one less partition, one less
- * mount to fail, and no way for the page and the firmware to be different ages. */
-extern const uint8_t dashboard_html_start[] asm("_binary_dashboard_html_start");
-extern const uint8_t dashboard_html_end[]   asm("_binary_dashboard_html_end");
+ * mount to fail, and no way for the page and the firmware to be different ages.
+ * Embedded as BINARY, so there is no trailing NUL and the length is exactly
+ * end - start. */
+extern const uint8_t dashboard_gz_start[] asm("_binary_dashboard_html_gz_start");
+extern const uint8_t dashboard_gz_end[]   asm("_binary_dashboard_html_gz_end");
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -136,9 +138,29 @@ static esp_err_t deny(httpd_req_t *req)
 
 static esp_err_t dashboard_get(httpd_req_t *req)
 {
+    /* Only the compressed copy is in flash - that is the whole point - so a
+     * client that cannot accept gzip gets an honest refusal rather than a
+     * screenful of binary. Every browser sends this header; curl does not
+     * unless asked, and someone debugging with curl deserves to be told why
+     * rather than left staring at garbage. */
+    char enc[64];
+    bool gzip_ok = (httpd_req_get_hdr_value_str(req, "Accept-Encoding", enc, sizeof(enc)) == ESP_OK)
+                   && (strstr(enc, "gzip") != NULL);
+    if (!gzip_ok) {
+        httpd_resp_set_status(req, "406 Not Acceptable");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req,
+            "The dashboard is stored gzip-compressed to save flash, and this "
+            "client did not send Accept-Encoding: gzip.\n"
+            "Use a browser, or curl --compressed.\n"
+            "Telemetry is uncompressed either way: GET /api/telemetry\n",
+            HTTPD_RESP_USE_STRLEN);
+    }
+
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, (const char *)dashboard_html_start,
-                           dashboard_html_end - dashboard_html_start - 1);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)dashboard_gz_start,
+                           dashboard_gz_end - dashboard_gz_start);
 }
 
 static esp_err_t telemetry_get(httpd_req_t *req)

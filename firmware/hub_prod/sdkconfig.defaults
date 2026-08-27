@@ -45,6 +45,12 @@ CONFIG_HTTPD_MAX_URI_LEN=512
 CONFIG_ESP_TASK_WDT=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 
+# --- Size over speed ---
+# -Os rather than the default. This firmware's hot path is a 2-second poll loop
+# and one HTTP page; nothing here is throughput-bound, so optimising for speed
+# buys nothing measurable and costs flash that the OTA slot has to hold twice.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
 # --- Logging ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 

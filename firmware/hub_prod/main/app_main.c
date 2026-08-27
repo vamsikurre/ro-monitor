@@ -600,6 +600,7 @@ static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, v
  * router is the thing that has failed. Provisioning is over BLE, not SoftAP, so
  * this AP does not contend with it.
  */
+#if CONFIG_ESP_WIFI_SOFTAP_SUPPORT
 static void start_softap(void)
 {
     esp_netif_create_default_wifi_ap();
@@ -621,6 +622,14 @@ static void start_softap(void)
 
     ESP_LOGI(TAG, "AP up: SSID %s -> http://192.168.4.1/", AP_SSID);
 }
+#else
+/* SoftAP compiled out. Provisioning is BLE, so pairing still works - what is
+ * lost is reaching /cal without a working router. */
+static void start_softap(void)
+{
+    ESP_LOGW(TAG, "SoftAP not compiled in - /cal needs the LAN");
+}
+#endif
 
 static void start_mdns(void)
 {
