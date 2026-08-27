@@ -22,6 +22,23 @@ CONFIG_ESP_RMAKER_USE_NVS=y
 # since nothing here is remotely actuated except one fan threshold.
 CONFIG_ESP_RMAKER_LOCAL_CTRL_AUTO_ENABLE=n
 
+# --- Provisioning must not block app_main ---
+# app_network_start() ends with, in the component's own source:
+#     xEventGroupWaitBits(network_event_group, NETWORK_CONNECTED_EVENT,
+#                         false, true, portMAX_DELAY);
+# guarded by #if !CONFIG_APP_NETWORK_ASYNCHRONOUS_CONNECTION. Without this
+# option it blocks FOREVER until Wi-Fi connects, so everything after that call
+# in app_main never runs: no SoftAP, no mDNS, no web server, and - worst - no
+# poll task, meaning the hub does no RS485 polling and no sensing at all until
+# it is provisioned and on a router.
+#
+# That would defeat the whole AP+STA design, whose entire point is that the
+# dashboard and /cal work on a roof with no router and survive the router being
+# the thing that failed. Observed on the first hardware boot, 2026-08-28: the
+# log stopped at "Provisioning will auto stop after 30 minute(s)" and none of
+# app_main's closing banner ever printed.
+CONFIG_APP_NETWORK_ASYNCHRONOUS_CONNECTION=y
+
 # --- BLE provisioning ---
 # BLE, not SoftAP — which is what leaves the hub's own AP free to serve the
 # calibration page at the same time. See start_softap() in app_main.c.

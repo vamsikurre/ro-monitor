@@ -628,12 +628,26 @@ static void start_softap(void)
     ap.ap.max_connection = 4;
     ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
 
+    /* Not ESP_ERROR_CHECK. The AP is a convenience - it makes /cal reachable
+     * without a router - and it must not be able to abort the firmware. A hub
+     * that polls the plant and talks to the cloud but has no local AP is running
+     * degraded; a hub that panics on boot is not running at all. */
     wifi_mode_t mode = WIFI_MODE_NULL;
     esp_wifi_get_mode(&mode);
     if (mode == WIFI_MODE_STA || mode == WIFI_MODE_NULL) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "could not enter AP+STA (%s) - continuing without the local AP",
+                     esp_err_to_name(err));
+            return;
+        }
     }
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
+    esp_err_t cfg_err = esp_wifi_set_config(WIFI_IF_AP, &ap);
+    if (cfg_err != ESP_OK) {
+        ESP_LOGW(TAG, "AP config rejected (%s) - continuing without the local AP",
+                 esp_err_to_name(cfg_err));
+        return;
+    }
 
     ESP_LOGI(TAG, "AP up: SSID %s -> http://192.168.4.1/", AP_SSID);
 }
@@ -766,9 +780,18 @@ void app_main(void)
 
     /* The AP and the web server do not depend on the station connecting — that is
      * the whole point of running both. Start them regardless. */
+    /* These run BEFORE nothing and AFTER app_network_start() only because that
+     * call no longer blocks - see CONFIG_APP_NETWORK_ASYNCHRONOUS_CONNECTION in
+     * sdkconfig.defaults. Without it, provisioning parked app_main here forever
+     * and none of the following ever started. */
     start_softap();
     start_mdns();
-    ESP_ERROR_CHECK(web_start());
+    if (web_start() != ESP_OK) {
+        /* Same reasoning as the AP: losing the local dashboard is degraded
+         * operation, not a reason to stop monitoring the plant. RainMaker
+         * telemetry and the alerts are unaffected. */
+        ESP_LOGE(TAG, "local web server failed to start - cloud path unaffected");
+    }
 
     xTaskCreate(poll_task, "poll", 6144, NULL, 5, NULL);
     xTaskCreate(button_task, "button", 2560, NULL, 3, NULL);
