@@ -1,15 +1,44 @@
-"""Fail if the three ESP32 hub GPIO tables ever disagree again.
+"""Fail if the hub GPIO map disagrees between the documents and the firmware.
 
 The hub pin map is written down in three places for three audiences: the wiring
 guide, the hardware spec, and the phase-B design doc. They drifted once (GPIO
 25/26/27 and 18/19/23 were double-assigned, see phase-B spec section 9). This
 script is the thing that fails if that happens again.
 
+It used to compare documents to documents ONLY, and that gap cost a day:
+`IN_ALARM` on GPIO 33 sat in all three tables, passed this check, and was read
+by no firmware at all. So the production firmware's own #defines are now a
+fourth source. A pin that is documented but unread, or read but undocumented,
+fails here.
+
     python docs/check_pinmap.py        # from the repo root
 """
 import io
 import re
 import sys
+
+# The production firmware's pin map, as C #defines. Parsed as a fourth source
+# alongside the three prose tables.
+FIRMWARE = 'firmware/hub_prod/main/app_priv.h'
+
+# #define GPIO_IN_TWT_FLOT        32   /* ... */    ->    (32, 'IN_TWT_FLOT')
+# Only GPIO_* defines are pins; the rest of the header is protocol and thresholds.
+FW_DEFINE = re.compile(r'^#define\s+GPIO_([A-Z0-9_]+)\s+(\d{1,2})\b')
+
+# Firmware names are the signal names with the GPIO_ prefix stripped, except the
+# relay outputs and the status LED, which the documents spell out in full.
+FW_ALIASES = {
+    'RLY_TWT': 'OUT_RLY_TWT',
+    'RLY_RWT': 'OUT_RLY_RWT',
+    'RLY_DOS': 'OUT_RLY_DOS',
+    'RLY_AUX': 'OUT_RLY_AUX',
+    'RS485_RX': 'RS485_RX',
+    'RS485_TX': 'RS485_TX',
+    'I2C_SDA': 'I2C_SDA',
+    'I2C_SCL': 'I2C_SCL',
+    'LED_STATUS': 'LED_STATUS',
+    'BOOT_BUTTON': 'BTN_BOOT',
+}
 
 # (path, start heading, end heading)
 TABLES = [
@@ -43,8 +72,24 @@ def pinmap(path, start, end):
     return out
 
 
+def firmware_pinmap(path):
+    """{32: 'IN_TWT_FLOT', ...} from the production firmware's #defines."""
+    out = {}
+    for line in io.open(path, encoding='utf-8').read().splitlines():
+        m = FW_DEFINE.match(line)
+        if not m:
+            continue
+        name, gpio = m.group(1), int(m.group(2))
+        signal = FW_ALIASES.get(name, name)
+        assert gpio not in out, '%s: GPIO %d assigned twice' % (path, gpio)
+        out[gpio] = signal
+    assert out, 'no GPIO defines parsed from %s' % path
+    return out
+
+
 def main():
     maps = [(path, pinmap(path, start, end)) for path, start, end in TABLES]
+    maps.append((FIRMWARE, firmware_pinmap(FIRMWARE)))
     ref_path, ref = maps[0]
     bad = 0
     for path, m in maps[1:]:
@@ -58,7 +103,8 @@ def main():
         print('\n%d mismatch(es). WIRING.md section 1 is authoritative '
               '(it matches the built hub) - correct the others to it.' % bad)
         return 1
-    print('OK: %d GPIOs agree across %d documents.' % (len(ref), len(maps)))
+    print('OK: %d GPIOs agree across %d sources (%d documents + the firmware).'
+          % (len(ref), len(maps), len(maps) - 1))
     return 0
 
 

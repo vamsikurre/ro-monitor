@@ -143,10 +143,11 @@ The project is built **by site**, terrace first, then ground floor. Each phase i
 
 ## 5. Firmware
 
-| Sketch | Board | Notes |
-| :--- | :--- | :--- |
-| `firmware/ro_node/` | Nano ×2, Pro Mini ×1 | **One binary for all three RS485 nodes.** The `A0`/`A1` jumpers pick the address *and* the personality: `0x02`/`0x03` ultrasonic, `0x04` climate + fan. Nothing to edit per board. |
-| `firmware/esp32_hub_test/` | ESP32-S hub | Master. Polls the three nodes, reads the dosing sensor and the optos directly, prints a diagnostic block per cycle over USB at 115200, and serves the tank-calibration page on its own Wi-Fi AP. |
+| Firmware | Board | Toolchain | Notes |
+| :--- | :--- | :--- | :--- |
+| `firmware/ro_node/` | Nano ×2, Pro Mini ×1 | Arduino | **One binary for all three RS485 nodes.** The `A0`/`A1` jumpers pick the address *and* the personality: `0x02`/`0x03` ultrasonic, `0x04` climate + fan. Nothing to edit per board. |
+| `firmware/hub_prod/` | ESP32-S hub | **ESP-IDF** | **Production hub.** RS485 master, local dashboard, password-protected calibration page, ESP RainMaker cloud with push alerts, and OTA updates from the RainMaker dashboard. Built the same way as `gate-controller`, so one update workflow covers both. See `firmware/hub_prod/README.md`. |
+| `firmware/esp32_hub_test/` | ESP32-S hub | Arduino | **Bench self-test.** Cycles all five relays, injects nothing, prints raw millivolts per channel per cycle over USB at 115200. Kept deliberately: commissioning a board and running a plant are different jobs. |
 
 **Flashing the nodes:** jumper first, flash second, then confirm the boot print
 (`Node ID: 0x02 … role: RWT ultrasonic`) before putting the board on the bus. Both
@@ -154,8 +155,21 @@ jumpers grounded is the deliberate "unassigned" code — the node blinks and sta
 bus rather than guessing an address. Pro Mini: `Arduino Pro or Pro Mini` / *ATmega328P
 (5V, 16 MHz)*, `DTR` wired, and pull the buck's 5 V while the FTDI adapter is connected.
 
+**Production hub, in one block:**
+
+```
+cd firmware/hub_prod
+idf.py set-target esp32 && idf.py build && idf.py -p COM5 flash monitor
+```
+
+Pair from the ESP RainMaker app with proof-of-possession `rohub1234`, over BLE.
+After that the dashboard is at `http://ro-hub.local/`, calibration at `/cal`
+(user `admin`), and firmware updates are pushed from the RainMaker dashboard —
+no cable, exactly like the gate controllers. The hub keeps its own AP up at the
+same time, so calibration still works on a roof with no router.
+
 **Calibration is hub-side and needs no cable.** Nodes report millimetres; the hub turns
-them into percentages. Join the hub's Wi-Fi AP (`RO-HUB`) and open `http://192.168.4.1/`
+them into percentages. On the bench sketch, join the hub's Wi-Fi AP (`RO-HUB`) and open `http://192.168.4.1/`
 — every tank has a full and an empty distance, and a **Set full = now** button that
 captures whatever the sensor reads at that moment. Fill the tank, tap it; drain it, tap
 **Set empty = now**. Values persist in NVS across reboots and reflashes of the nodes.
@@ -173,8 +187,9 @@ ventilating regardless.
 
 ```
 python docs/check_addrmap.py   # jumper table agrees across docs and firmware
-python docs/check_pinmap.py    # GPIO allocation agrees across the documents
-python docs/check_frame.py     # node and hub agree on CRC-16, framing, level maths
+python docs/check_pinmap.py    # GPIO allocation agrees across 3 docs AND app_priv.h
+python docs/check_frame.py     # node, bench hub and production hub agree on
+                               # CRC-16, framing and level maths
 ```
 
 **Compile both before flashing** — `arduino-cli` ships inside the Arduino IDE install
@@ -183,6 +198,7 @@ python docs/check_frame.py     # node and hub agree on CRC-16, framing, level ma
 ```
 arduino-cli compile -b arduino:avr:nano  firmware/ro_node
 arduino-cli compile -b esp32:esp32:esp32 firmware/esp32_hub_test
+cd firmware/hub_prod && idf.py build          # the production hub
 ```
 
 Each sketch also carries a `#error` guard for the wrong target, so selecting the ESP32

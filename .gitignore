@@ -28,6 +28,15 @@ ehthumbs_vista.db
 *.sublime-project
 *.sublime-workspace
 
+# ESP-IDF generated files (firmware/hub_prod). Only sdkconfig.defaults is
+# tracked: sdkconfig itself is generated from it plus the target, and committing
+# it means every machine's local menuconfig churn lands in the diff.
+firmware/*/sdkconfig
+firmware/*/sdkconfig.old
+firmware/*/dependencies.lock
+firmware/*/managed_components/
+firmware/*/build_log.txt
+
 # Embedded Development & Build Artifacts (PlatformIO / Arduino / ESP-IDF)
 .pio/
 .pioenvs/

@@ -3,13 +3,17 @@
 A master and a slave that disagree about the CRC talk past each other with no
 symptom except silence, so this lifts the real code out of both sketches --
 node crc16() from ro_node.ino, master crc16() and levelPercent() from
-esp32_hub_test.ino -- builds them with gcc and checks:
+esp32_hub_test.ino, and the SAME TWO from the production hub firmware
+(app_rs485.c, app_cal.c) -- builds them with gcc and checks:
 
   * both CRCs match the CRC-16/Modbus known answer for "123456789" (0x4B37)
   * both agree byte-for-byte over a spread of frames
   * a built request frame verifies, and one flipped bit fails it
   * the hub's tank level maths holds at its boundaries, including uncalibrated
     and inverted calibration (the nodes no longer compute this at all)
+  * the production firmware agrees with the bench sketch on both, over a sweep.
+    Three copies of this maths now exist, and a copy no checker knows about is
+    exactly how IN_ALARM sat in three documents and no firmware for a day.
 
     python docs/check_frame.py          # from the repo root
 """
@@ -22,6 +26,8 @@ import tempfile
 
 NODE = 'firmware/ro_node/ro_node.ino'
 HUB = 'firmware/esp32_hub_test/esp32_hub_test.ino'
+PROD_RS485 = 'firmware/hub_prod/main/app_rs485.c'
+PROD_CAL = 'firmware/hub_prod/main/app_cal.c'
 
 HARNESS = """
 #include <stdint.h>
@@ -32,6 +38,9 @@ HARNESS = """
 %s
 
 /* --- lifted from esp32_hub_test.ino (crc renamed to keep both) --- */
+%s
+
+/* --- lifted from the production firmware (renamed again to keep all three) --- */
 %s
 
 static int failures = 0;
@@ -114,8 +123,37 @@ int main(void) {
     if (levelPercent(575, 250, 900) != 50)     fail("dosing halfway should read 50");
     if (levelPercent(880, 250, 900) >= 20)     fail("nearly empty dosing should be under the low mark");
 
+    /* --- the production firmware must not have drifted from either --- */
+    if (prod_crc16(known, 9) != 0x4B37) fail("production crc16 fails the Modbus known answer");
+    for (int seed = 0; seed < 512; seed++) {
+        uint8_t n = (uint8_t)(1 + seed %% 39);
+        for (uint8_t i = 0; i < n; i++) buf[i] = (uint8_t)(seed * 7 + i * 13);
+        if (prod_crc16(buf, n) != crc16(buf, n)) { fail("production and node crc16 disagree"); break; }
+    }
+
+    /* Every calibration the /cal page can store, plus the ones it refuses, swept
+     * against the sketch's copy. Boundary equality is not enough here: these two
+     * are separate source files now and only a sweep catches a divergence in the
+     * middle of the range. */
+    for (uint16_t full = 200; full <= 400; full += 50) {
+        for (uint16_t empty = 500; empty <= 2000; empty += 100) {
+            for (uint16_t mm = 0; mm <= 2200; mm += 7) {
+                if (prod_levelPercent(mm, full, empty) != levelPercent(mm, full, empty)) {
+                    fail("production and sketch level maths disagree");
+                    full = 500; empty = 3000; break;
+                }
+            }
+        }
+    }
+    /* and the refusals, explicitly, because these are the ones that matter */
+    if (prod_levelPercent(0, 300, 1500) != 255)      fail("production: no echo must not be a level");
+    if (prod_levelPercent(500, 0, 0) != 255)         fail("production: uncalibrated must not be a level");
+    if (prod_levelPercent(500, 1500, 300) != 255)    fail("production: inverted must not be a level");
+    if (prod_levelPercent(500, 300, 300) != 255)     fail("production: zero span must not divide by zero");
+
     if (failures) return 1;
-    printf("OK: node and hub agree on CRC-16/Modbus; framing and level maths hold.\\n");
+    printf("OK: node, bench hub and production hub agree on CRC-16/Modbus;\\n");
+    printf("    framing and level maths hold across all three.\\n");
     return 0;
 }
 """
@@ -135,6 +173,7 @@ def func(text, signature, rename=None):
 
 def main():
     node, hub = read(NODE), read(HUB)
+    prod_rs485, prod_cal = read(PROD_RS485), read(PROD_CAL)
 
     node_src = func(node, 'uint16_t crc16(const uint8_t *buf, uint8_t len)')
     hub_src = (
@@ -143,10 +182,17 @@ def main():
         + func(hub, 'uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)')
     )
 
+    prod_src = (
+        func(prod_rs485, 'uint16_t crc16(const uint8_t *buf, uint8_t len)',
+             'uint16_t prod_crc16(const uint8_t *buf, uint8_t len)')
+        + func(prod_cal, 'uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)',
+               'uint8_t prod_levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)')
+    )
+
     tmp = tempfile.mkdtemp()
     c_path = os.path.join(tmp, 'frame.c')
     exe = os.path.join(tmp, 'frame.exe')
-    io.open(c_path, 'w', encoding='utf-8').write(HARNESS % (node_src, hub_src))
+    io.open(c_path, 'w', encoding='utf-8').write(HARNESS % (node_src, hub_src, prod_src))
 
     if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-o', exe, c_path]) != 0:
         print('gcc refused the extracted code -- that is the finding.')

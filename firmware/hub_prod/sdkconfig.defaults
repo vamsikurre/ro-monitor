@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------
+# RO Monitor central hub — sdkconfig.defaults
+# ESP-IDF v5.2+ / ESP32-WROOM-32
+#
+# Deliberately close to the gate-controller's, so one OTA and one pairing
+# workflow covers both projects. Differences are called out where they exist.
+# ---------------------------------------------------------------
+
+# --- Flash & partition ---
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- ESP RainMaker ---
+# Assisted Claiming: the original ESP32-WROOM-32 does NOT support Self-Claiming.
+CONFIG_ESP_RMAKER_ASSISTED_CLAIM=y
+CONFIG_ESP_RMAKER_USE_NVS=y
+
+# RainMaker's own local-control HTTP service is OFF. This hub already serves a
+# dashboard on port 80 and advertises _http over mDNS; running local_ctrl too
+# means two services competing in the same discovery namespace for no gain,
+# since nothing here is remotely actuated except one fan threshold.
+CONFIG_ESP_RMAKER_LOCAL_CTRL_ENABLE=n
+
+# --- BLE provisioning ---
+# BLE, not SoftAP — which is what leaves the hub's own AP free to serve the
+# calibration page at the same time. See start_softap() in app_main.c.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_WIFI_PROV_TRANSPORT_BLE=y
+CONFIG_WIFI_PROV_BLE_BONDING=n
+
+# --- OTA updates ---
+CONFIG_ESP_RMAKER_OTA_AUTOFETCH=y
+CONFIG_ESP_RMAKER_OTA_AUTOFETCH_PERIOD=3600
+
+# --- HTTP server ---
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# --- Watchdog ---
+# 30 s. A CT RMS read blocks ~200 ms and an RS485 poll can burn three 120 ms
+# timeouts before giving up. Neither is close to this, but the margin means a
+# slow bus never looks like a hung task.
+CONFIG_ESP_TASK_WDT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
+# --- Logging ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- FreeRTOS stack sizes ---
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- ESP Insights ---
+# Off, as on the gate controllers. Enabling it means committing an auth key,
+# which does not belong in this repository.
+CONFIG_ESP_INSIGHTS_ENABLED=n
+
+# --- Network / time sync (schedules need it) ---
+CONFIG_LWIP_DHCP_GET_NTP_SRV=y
+CONFIG_LWIP_SNTP_MAX_SERVERS=3
+CONFIG_ESP_RMAKER_DEF_TIMEZONE="Asia/Kolkata"
+
+# --- Wi-Fi: AP and STA both up ---
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# --- IRAM budget ---
+# Wi-Fi + NimBLE + lwIP + RainMaker + an HTTP server overflows iram0_0_seg by
+# ~3.4 KB with the default speed optimisations on. These three move the Wi-Fi and
+# lwIP hot paths out of IRAM and into flash, which costs throughput we have no
+# use for: this hub publishes a few hundred bytes a second and serves one page to
+# one browser. Buying packet-rate with IRAM is the wrong trade here.
+#
+# If the link ever overflows again, this is the first place to look, and the next
+# lever is CONFIG_ESP_PANIC_HANDLER_IRAM=n. Do NOT reach for a bigger app
+# partition: the 2x 0x1C0000 OTA layout is shared with the gate controllers and
+# changing it breaks the common flashing workflow.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_LWIP_IRAM_OPTIMIZATION=n
