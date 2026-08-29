@@ -11,7 +11,26 @@
 ## 0. Build State — What Is Verified, What Is Still To Do
 
 Kept at the top because it is the first thing anyone opening this document in the
-RO room needs. **Last updated 2026-08-27.**
+RO room needs. **Last updated 2026-08-30.**
+
+> **The hub as it is actually wired is drawn in
+> [`images/hardware/hub_wiring_asbuilt.png`](../images/hardware/hub_wiring_asbuilt.png)** —
+> every module, every header, every wire colour, drawn from the built board.
+> Editable source: the **`Hub`** page of `wiring.drawio` at the repo root.
+>
+> **And the board itself, photographed 2026-08-30:**
+>
+> | Photo | What it shows |
+> | :--- | :--- |
+> | [`hub_board_asbuilt_overview.jpg`](../images/hardware/hub_board_asbuilt_overview.jpg) | The whole perfboard. DevKit, HLK-20M12, RS485 module, the module headers along the right edge, and the mains-side opto boards on flying leads rather than on the board |
+> | [`hub_board_asbuilt_psu_rs485.jpg`](../images/hardware/hub_board_asbuilt_psu_rs485.jpg) | HLK-20M12 markings legible (`100-240VAC 0.4A` → `12VDC 1.6A 20W`), the RS485 module's `A+`/`B-` screw terminal and its 4-pin `GND`/`RXD`/`TXD`/`VCC` JST, and the Cat5e landing |
+> | [`hub_board_asbuilt_buck_headers.jpg`](../images/hardware/hub_board_asbuilt_buck_headers.jpg) | The 12 V → 5 V buck, both 2-pin distribution terminals, and **the female header strips the DevKit is seated in** |
+>
+> Start with these when diagnosing: this document explains *why* each connection
+> is what it is, the drawing shows *where* it goes, the photos show *what is
+> actually there*. **If any two disagree, meter the board** — no drawing,
+> photograph or paragraph outranks a continuity test — which is exactly how the
+> CT header's pin order was settled on 2026-08-30 (§0.2).
 
 "Verified" below means *observed working on the hardware*, not *designed* and not
 *compiled* — the distinction that let `IN_ALARM` sit in three documents and no
@@ -37,7 +56,7 @@ happens at deployment.
 
 - [ ] **At deployment: connect PC817 `IN3` to the Aster `LPS` `C`/`NO` pair.** Nothing to *move* — `IN3` has never been wired. The output side (`V3` → `GPIO 33`) is already done. §6.6
 - [x] **`IN_ALARM` header fitted 2026-08-27** — 2-pin: hub `GND` and `GPIO 13`, to the Aster `AUX OP` `C`/`NO` pair. No optocoupler, no resistor, no module. §6.6
-- [x] **CT header fitted 2026-08-27** — **4-pin as built: `3V3` / `SP` / `SN` / `GND`**, not the 5-pin order in §14.0. Leave `SP`/`SN` otherwise unconnected until the breakout exists.
+- [x] **CT header fitted 2026-08-27, pin order confirmed with a meter 2026-08-30** — 4-pin, **`3V3` / `SN` / `SP` / `GND`**, not the 5-pin order in §14.0. This document had it as `3V3`/`SP`/`SN`/`GND` until the as-built diagram disagreed and the continuity test settled it; the DevKit's own header runs `3V3 | EN | SN | SP | G34`, so straight-across wiring gives `SN` first. **The breakout must therefore land RWP on pin 2 (`SN` = `GPIO 39`) and HPP on pin 3 (`SP` = `GPIO 36`)** — the reverse of what the old order implied. Leave both otherwise unconnected until the breakout exists.
 - [ ] **Mark pin 1 on every header and mating plug on the hub board.** Not just the new ones: any header with a supply at one end and `GND` at the other shorts the rail if reversed, and most of them are built that way (§1). One pass with paint, once.
 
 **Then verify, before trusting any of it:**
@@ -80,6 +99,13 @@ is the correct and only port.
 
 **Keep the Arduino IDE closed while flashing.** Its Serial Monitor holds the port
 and produces `PermissionError(13, 'Access is denied')`.
+
+**The DevKit is socketed, not soldered** — it sits in female header strips
+(`hub_board_asbuilt_buck_headers.jpg`). So the dead CP2102 is not a permanent
+condition of this build: a replacement module pulls in and out with no desoldering,
+and the FTDI path above is a workaround by choice, not by necessity. Worth knowing
+before anyone plans around it. Re-check the module's own pin labels against §1 if
+one is ever swapped; DevKit variants differ in what they print on `SP`/`SN`.
 
 **The lesson worth carrying to the PCB:** one reversed supply took out the
 programming interface of the board that runs the plant, and the board still works
@@ -128,6 +154,11 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 
 ### Master Pin Mapping Table
 
+Drawn form of this same table, with the modules and wire colours:
+[`images/hardware/hub_wiring_asbuilt.png`](../images/hardware/hub_wiring_asbuilt.png)
+(`wiring.drawio`, page `Hub`).
+
+
 | ESP32 Pin | Signal Label | Connected Device / Module | Module Pin | Direction | Electrical Characteristics & Notes |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | **3V3** | `+3.3V_LOGIC` | SHT30 Sensor, XY-485 Module | `VCC` | Power Out | Regulated 3.3V logic power bus (from ESP32 onboard LDO) |
@@ -143,7 +174,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 | **GPIO 33** | `IN_LPS`     | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `LPS` low-pressure contact (`C`/`NO`) is closed. **Took this channel from `IN_ALARM` on 2026-08-27** — §6.6 (`INPUT_PULLUP`) |
 | **GPIO 13** | `IN_ALARM`   | Aster `AUX OP` relay `C` / `NO` | **direct** | Input | Active LOW when the Aster `AUX OP` contact closes. **No optocoupler and no external parts** — two wires and `INPUT_PULLUP`, debounced in firmware. §6.6 |
 | **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
-| **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required** (1 kΩ series + 2 kΩ to GND) |
+| **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required. As built: 1 kΩ series + 1.8 kΩ to GND → 3.21 V** (the design figure was 2 kΩ / 3.33 V). 1.8 kΩ is an E24 value that 2 kΩ is not, it sits *under* 3.3 V rather than over it, and the AJ-SR04M's 5 V `ECHO` still clears `V_IH` with room to spare. Do not "correct" the board to the 2 kΩ figure. |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. Module carries its own **47 k pull-up to `VCC`** (silkscreen `47K VCC`); wire `VCC` to 3V3 and no external resistor is needed — see §8 |
 | **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. Same onboard 47 k pull-up — see §8 |
 | **GPIO 36** | `IN_HPP_CT`  | SCT-013-030 clamp, HPP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH0, 11 dB. Rides a shared 1.65 V bias rail — spec §7.3 |
@@ -1213,18 +1244,18 @@ The dosing tank sits roughly **100 cm** from the hub enclosure, well inside the 
  |                        |         |                                |
  | GPIO 4  <--+-- 1kΩ ----+---------+ ECHO  (5V logic - divide it)   |
  |            |                     +---------------+----------------+
- |           2kΩ                                    | 2.5 m coax
+ |          1.8kΩ                                   | 2.5 m coax
  | GND  <-----+                                     v
  +------------------------+                +--------------------+
                                            | Waterproof         |
-   ECHO divider: 5.0V x 2k/(1k+2k)         | Transducer Head    |
-              = 3.33V at GPIO 4            | (in dosing tank)   |
+   ECHO divider: 5.0V x 1.8k/(1k+1.8k)     | Transducer Head    |
+              = 3.21V at GPIO 4            | (in dosing tank)   |
                                            +--------------------+
 ```
 
 **AJ-SR04M checks apply here too** — `R19` mode pad empty, `TRIG` width tunable. See Section 9.0; a dosing sensor reading a flat zero is that pad, not the wiring.
 
-**Why the divider is not optional.** `ECHO` idles low and swings to a hard 5 V. The ESP32 is 3.3 V logic with no 5 V tolerance on its GPIOs; a bare connection stresses the pad every ranging cycle. Same 1 kΩ / 2 kΩ arrangement as ground-floor node 1 (Section 11.1).
+**Why the divider is not optional.** `ECHO` idles low and swings to a hard 5 V. The ESP32 is 3.3 V logic with no 5 V tolerance on its GPIOs; a bare connection stresses the pad every ranging cycle. **Built with 1 kΩ / 1.8 kΩ** — an E24 value, and it lands at 3.21 V, just under the rail instead of just over it. Section 11.1 still specifies 1 kΩ / 2 kΩ for the unbuilt ground-floor node; fit 1.8 kΩ there too when it is built, so the whole plant carries one divider.
 
 **Scheduling — do not read this sensor inside a poll window.** `pulseIn(GPIO4, HIGH, 35000UL)` blocks for up to 35 ms. Phase-B spec §4.1 documents this as fatal *on a Nano slave*, where a blocked `SoftwareSerial` silently drops ~15 % of incoming polls. On the hub the risk is different and milder: the hub is the master and slaves never transmit unbidden (`RS485_PROTOCOL.md` §1.1), so nothing is missed — but a 35 ms stall inside the poll/response sequence still eats into the turnaround guard time. Read it at a fixed point in the 1 s cycle, **after** the last slave response and before serving the dashboard. There is ~800 ms of idle cycle to put it in.
 
@@ -1275,8 +1306,16 @@ Two SCT-013-030 split-core clamps on the RO skid panel, read by the hub's last t
 
 ### 14.0. Hub-side header — AS BUILT
 
-> **Built 2026-08-27 as a 4-pin header, `3V3` / `SP` / `SN` / `GND`.** That is not
-> the 5-pin arrangement designed below, and the difference has one consequence
+> **Built 2026-08-27 as a 4-pin header. Pin order metered 2026-08-30:
+> `3V3` / `SN` / `SP` / `GND`.**
+>
+> This section said `3V3`/`SP`/`SN`/`GND` for three days on nothing but assumption.
+> The as-built diagram disagreed, a continuity test settled it, and the middle two
+> are the ones that decide **which clamp reads which motor**: **pin 2 is `SN` =
+> `GPIO 39` = RWP, pin 3 is `SP` = `GPIO 36` = HPP.** Wire the breakout to that, not
+> to the order a document remembers.
+>
+> That is not the 5-pin arrangement designed below, and the difference has one consequence
 > that needs a physical guard rather than a document note:
 >
 > **Plugging the breakout in backwards shorts 3V3 to GND**, because supply and

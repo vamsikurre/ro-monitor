@@ -70,7 +70,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **Relay Modules** | 4-Channel 5V Relay Board | 2 | 1x RO Room (Aster Float Emulation) + 1x Ground Floor (Starter Control) |
 | **Relay Module (Single)** | 1-Channel 5V Relay Board | 1 | Battery Room (Exhaust Fan Switching) |
 | **Ultrasonic Sensors** | Waterproof Ultrasonic (**AJ-SR04M**) | 4 | **Dosing (wired direct to hub)**, RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`). Confirm `R19` mode pad is empty (Trig/Echo mode) — `WIRING.md` §9.0 |
-| **Resistors** | 1 kΩ + 2 kΩ (1/4 W) | 2 pairs | `ECHO` 5V→3.3V dividers: hub dosing sensor + ground-floor sump sensor |
+| **Resistors** | 1 kΩ + 1.8 kΩ (1/4 W) | 2 pairs | `ECHO` 5V→3.3V dividers: hub dosing sensor + ground-floor sump sensor. **1.8 kΩ as built**, not the 2 kΩ originally specified — `WIRING.md` §1, §13 |
 | **Environmental Sensors** | GY-SHT30-D Digital Temp & Humidity | 2 | 1x RO Room (Hub I2C) + 1x Battery Room (Node 4 I2C) |
 | **Microcontrollers** | ESP32-S / ESP32-WROOM-32 | 3 | 1x Central Hub + 2x Ground Floor Nodes |
 | **Microcontrollers** | Arduino Nano (ATmega328P) | 2 | RS485 Slave Nodes `0x02`, `0x03` |
@@ -101,7 +101,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **GPIO 18** | `OUT_RLY_DOS` | 4-Ch Relay Module IN3 | Output | Dosing Level Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
 | **GPIO 19** | `OUT_RLY_AUX` | 4-Ch Relay Module IN4 | Output | Auxiliary / interlock override. Polarity depends on target terminal (`WIRING.md` 7.2). Phase C |
 | **GPIO 5** | `US_TRIG_DOS` | AJ-SR04M (Dosing) `TRIG` | Output | 10 µs trigger. Sensor wired direct to hub (`WIRING.md` §13) |
-| **GPIO 4** | `US_ECHO_DOS` | AJ-SR04M (Dosing) `ECHO` | Input | Echo width. **1 kΩ/2 kΩ divider required** (5V→3.3V) |
+| **GPIO 4** | `US_ECHO_DOS` | AJ-SR04M (Dosing) `ECHO` | Input | Echo width. **1 kΩ/1.8 kΩ divider as built** (5V→3.21V) |
 | **GPIO 2** | `LED_STATUS` | System Heartbeat LED | Output | Active HIGH onboard LED |
 | **GPIO 0** | `BTN_BOOT` | Onboard BOOT Button | Input | Factory reset / provisioning trigger |
 
