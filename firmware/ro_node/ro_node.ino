@@ -5,13 +5,16 @@
  * AND the personality (phase-B spec 4):
  *
  *   0x02  Raw Water Tank      Nano       AJ-SR04M ultrasonic, end-of-bus 120R
- *   0x03  Treated Water Tank  Nano       AJ-SR04M ultrasonic
+ *   0x03  Treated Water Tank  Nano       AJ-SR04M ultrasonic, or a 4-20 mA
+ *                                           submersible transducer if the J-PRESS
+ *                                           shunt is on (WIRING.md 9.4)
  *   0x04  Battery Room        Pro Mini   GY-SHT30-D + exhaust fan relay on D9
  *
  * There is no per-board edit and no per-board sketch: flashing the wrong image
  * onto a board is a failure mode this design simply does not have.
  *
- * Wiring: WIRING.md 9 (jumpers), 10 (battery room), 12 (chain and terminators).
+ * Wiring: WIRING.md 9 (jumpers), 9.4 (pressure transducer), 10 (battery room),
+ * 12 (chain and terminators).
  * Protocol: RS485_PROTOCOL.md - 0xAA 0x55 ADDR CMD LEN payload CRC_L CRC_H,
  * CRC-16/Modbus over every preceding byte, payload fields big-endian.
  *
@@ -28,7 +31,7 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-#define FW_VERSION       0x0100   // 1.00, reported by CMD_PING
+#define FW_VERSION       0x0101   // 1.01, reported by CMD_PING
 
 // Set to 1 only after confirming the board has an Optiboot-class bootloader.
 // The old ATmegaBOOT bootloader on some Nano clones does not clear WDRF, so a
@@ -40,6 +43,8 @@
 #define PIN_RS485_TX     3   // XY-485 TXD
 #define PIN_US_TRIG      7   // AJ-SR04M TRIG (tank nodes)
 #define PIN_US_ECHO      8   // AJ-SR04M ECHO (tank nodes, 5V - divider on ESP32 only)
+#define PIN_PRESS_SENSE  A2  // J-LOOP pin 2: 4-20 mA loop across the 150R sense resistor
+#define PIN_PRESS_FIT    A3  // J-PRESS shunt to GND = transducer fitted, ignore the ultrasonic
 #define PIN_FAN_RELAY    9   // 1-ch relay IN, ACTIVE LOW (0x04 only)
 #define PIN_LED          13  // Onboard activity LED
 #define PIN_ADDR_0       A0  // Address jumper bit 0
@@ -68,6 +73,23 @@
 #define WINDOW           5       // rolling median depth, one sample per cycle
 #define AGREE_MM         25      // samples this close to the median count as good
 #define DEAD_CYCLES      10      // consecutive no-echo cycles before "hardware fault"
+
+// Submersible pressure transducer - the fallback for TWT, where the only roof
+// penetration is hard against a wall and the beam cone reads that wall forever
+// (WIRING.md 9.3). Wiring and commissioning: 9.4. Nothing here is active unless A3 is jumpered to GND; without
+// the jumper A2 is never read, so an unfitted, floating input cannot invent a level.
+//
+// The node reports RANGE - head, not head: a distance that still SHRINKS as the
+// tank fills, so the hub's calibration, its level maths, the alerts and the /cal
+// page all work untouched. The two figures typed into /cal are then offsets from
+// the sensor's full scale rather than air gaps - and because that page is a
+// two-point calibration, it absorbs the sense resistor's tolerance for free.
+#define PRESS_RANGE_MM   2000    // sensor full scale at 20 mA. MUST match the part fitted.
+#define PRESS_SENSE_OHMS 150     // loop resistor: 4 mA = 0.60 V, 20 mA = 3.00 V into a 5 V ADC
+#define PRESS_ADC_MV     5000    // AVcc, the ADC reference
+#define PRESS_MIN_UA     3500    // under this the loop is open or unpowered, not empty
+#define PRESS_MAX_UA     21000   // over this it is shorted or miswired
+#define PRESS_SAMPLES    8       // averaged per cycle; the median window rides on top of that
 
 // No tank calibration here on purpose. A node reports millimetres; the hub turns
 // them into a percentage against calibration you can change over Wi-Fi. Tanks get
@@ -105,6 +127,7 @@ static const uint8_t ADDR_MAP[4] = {
 
 uint8_t  MY_NODE_ID  = 0x00;
 bool     isClimate   = false;   // 0x04 runs the climate personality
+bool     pressureFitted = false; // A3 jumpered: level comes from the 4-20 mA loop
 
 SoftwareSerial rs485(PIN_RS485_RX, PIN_RS485_TX);
 
@@ -171,10 +194,35 @@ uint16_t pingOnce() {
   return (uint16_t)((duration * 10UL) / 58UL);       // mm at ~343 m/s
 }
 
+// ---------------------------------------------------------------- pressure
+// Pure, so docs/check_frame.py can compile it on the host and pin the endpoints.
+// Returns what pingOnce() returns: millimetres, 0 = no usable reading.
+uint16_t pressureMM(uint16_t counts) {
+  uint16_t mV = (uint16_t)(((uint32_t)counts * PRESS_ADC_MV) / 1023UL);
+  uint32_t uA = ((uint32_t)mV * 1000UL) / PRESS_SENSE_OHMS;
+
+  // A 4-20 mA loop cannot legitimately read below 4 mA. That is the whole point
+  // of the live zero: a cut cable, a dead loop supply or a failed sensor is
+  // distinguishable from an empty tank, which a 0-5 V sensor never is.
+  if (uA < PRESS_MIN_UA || uA > PRESS_MAX_UA) return 0;
+
+  int32_t head = ((int32_t)uA - 4000L) * (int32_t)PRESS_RANGE_MM / 16000L;
+  if (head < 0) head = 0;
+  if (head > (int32_t)PRESS_RANGE_MM - 1) head = (int32_t)PRESS_RANGE_MM - 1;
+  return (uint16_t)((int32_t)PRESS_RANGE_MM - head);   // distance-alike, see above
+}
+
+uint16_t readPressureOnce() {
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < PRESS_SAMPLES; i++) sum += (uint32_t)analogRead(PIN_PRESS_SENSE);
+  return pressureMM((uint16_t)(sum / PRESS_SAMPLES));
+}
+
+// ---------------------------------------------------------------- filtering
 // One sample per cycle into a rolling window. A five-deep median rides out the
 // single wild outlier these sensors throw; averaging would not.
 void sampleTank() {
-  rawMM = pingOnce();
+  rawMM = pressureFitted ? readPressureOnce() : pingOnce();
   window[windowNext] = rawMM;
   windowNext = (uint8_t)((windowNext + 1) % WINDOW);
   if (windowCount < WINDOW) windowCount++;
@@ -422,6 +470,7 @@ void setup() {
 
   pinMode(PIN_US_TRIG, OUTPUT);
   pinMode(PIN_US_ECHO, INPUT);
+  pinMode(PIN_PRESS_FIT, INPUT_PULLUP);
   digitalWrite(PIN_US_TRIG, LOW);
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
@@ -432,18 +481,19 @@ void setup() {
 
   MY_NODE_ID = readNodeAddress();
   isClimate  = (MY_NODE_ID == 0x04);
+  pressureFitted = !isClimate && (digitalRead(PIN_PRESS_FIT) == LOW);
 
   Serial.println(F("RO MONITOR - RS485 NODE"));
   Serial.print(F("Node ID: 0x0"));
   Serial.print(MY_NODE_ID, HEX);
-  Serial.print(F("  fw 1.00  role: "));
+  Serial.print(F("  fw 1.01  role: "));
 
   switch (MY_NODE_ID) {
     case 0x02:
-      Serial.println(F("RWT ultrasonic (end of bus, fit 120R)"));
+      Serial.println(F("RWT tank (end of bus, fit 120R)"));
       break;
     case 0x03:
-      Serial.println(F("TWT ultrasonic"));
+      Serial.println(F("TWT tank"));
       break;
     case 0x04:
       Serial.println(F("Battery Room climate + fan"));
@@ -454,6 +504,19 @@ void setup() {
       // poll is the failure the whole table exists to prevent.
       Serial.println(F("UNASSIGNED - both jumpers grounded. Holding off the bus."));
       for (;;) { digitalWrite(PIN_LED, !digitalRead(PIN_LED)); delay(200); }
+  }
+
+  // Which sensor a tank node is actually reading is not something to infer from
+  // the numbers later. Print it once, where it is read.
+  if (!isClimate) {
+    Serial.print(F("Level source: "));
+    if (pressureFitted) {
+      Serial.print(F("4-20 mA pressure transducer on A2, "));
+      Serial.print(PRESS_RANGE_MM);
+      Serial.println(F(" mm full scale"));
+    } else {
+      Serial.println(F("AJ-SR04M ultrasonic on D7/D8"));
+    }
   }
 
 #if ENABLE_WATCHDOG
@@ -500,7 +563,7 @@ void loop() {
       Serial.println(fanOn ? F("ON") : F("OFF"));
     } else {
       Serial.print(medianMM);
-      Serial.print(F(" mm  q="));
+      Serial.print(pressureFitted ? F(" mm(P) q=") : F(" mm  q="));
       Serial.println(quality);
     }
   }

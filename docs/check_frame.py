@@ -11,6 +11,10 @@ esp32_hub_test.ino, and the SAME TWO from the production hub firmware
   * a built request frame verifies, and one flipped bit fails it
   * the hub's tank level maths holds at its boundaries, including uncalibrated
     and inverted calibration (the nodes no longer compute this at all)
+  * the node's 4-20 mA pressure conversion (the TWT fallback sensor) lands on
+    RANGE at 4 mA and near zero at 20 mA, and refuses a broken loop -- the
+    numbers it returns are indistinguishable from an ultrasonic distance, which
+    is exactly why they have to be right
   * the production firmware agrees with the bench sketch on both, over a sweep.
     Three copies of this maths now exist, and a copy no checker knows about is
     exactly how IN_ALARM sat in three documents and no firmware for a day.
@@ -167,6 +171,27 @@ int main(void) {
     if (prod_levelPercent(500, 1500, 300) != 255)    fail("production: inverted must not be a level");
     if (prod_levelPercent(500, 300, 300) != 255)     fail("production: zero span must not divide by zero");
 
+    /* --- the node's pressure fallback, whose output the hub cannot tell apart
+       from an ultrasonic distance. Counts for a given current on a 150R sense
+       resistor: counts = mA * R * 1023 / 5000. --- */
+    if (pressureMM(0) != 0)      fail("pressure: a dead loop must not read as a full tank");
+    if (pressureMM(60) != 0)     fail("pressure: 2 mA is a broken loop, not a level");
+    if (pressureMM(123) != PRESS_RANGE_MM) fail("pressure: 4 mA must read empty, not 0");
+    if (pressureMM(1023) != 0)   fail("pressure: over-range must read as no reading");
+    {   /* 12 mA is half scale: 368 counts. Allow a count of slop either way. */
+        int mid = pressureMM(368), want = PRESS_RANGE_MM / 2;
+        if (mid < want - 10 || mid > want + 10) fail("pressure: 12 mA is not half scale");
+        /* and it must fall as the tank fills, or the hub's maths runs backwards */
+        int prev = PRESS_RANGE_MM + 1;
+        for (uint16_t c = 123; c <= 614; c++) {
+            int mm = pressureMM(c);
+            if (mm > prev) { fail("pressure: distance must shrink as the loop current rises"); break; }
+            prev = mm;
+        }
+    }
+    /* the whole point of the live zero: empty and cut-cable are different states */
+    if (pressureMM(123) == pressureMM(0)) fail("pressure: empty and a cut cable must differ");
+
     if (failures) return 1;
     printf("OK: node, bench hub and production hub agree on CRC-16/Modbus;\\n");
     printf("    framing and level maths hold across all three.\\n");
@@ -191,7 +216,13 @@ def main():
     node, hub = read(NODE), read(HUB)
     prod_rs485, prod_cal = read(PROD_RS485), read(PROD_CAL)
 
-    node_src = func(node, 'uint16_t crc16(const uint8_t *buf, uint8_t len)')
+    # The PRESS_* defines come across with the function that uses them, so the
+    # checker cannot drift from the sketch's constants.
+    node_src = (
+        '\n'.join(re.findall(r'^#define PRESS_\w+.*$', node, re.M)) + '\n\n'
+        + func(node, 'uint16_t crc16(const uint8_t *buf, uint8_t len)')
+        + func(node, 'uint16_t pressureMM(uint16_t counts)')
+    )
     hub_src = (
         func(hub, 'uint16_t crc16(const uint8_t *buf, uint8_t len)',
              'uint16_t hub_crc16(const uint8_t *buf, uint8_t len)')

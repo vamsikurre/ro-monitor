@@ -79,7 +79,7 @@ Used by the Master to verify slave liveness and measure round-trip latency.
 Requests processed, filtered water level and telemetry from tank nodes (`0x02`, `0x03`). The dosing tank level is read locally by the hub and never appears on the bus.
 - **Request Payload:** None ($N=0$).
 - **Response Payload (10 Bytes):**
-  - `uint16_t distance_mm`: Median-filtered distance from sensor transducer to liquid surface in millimeters.
+  - `uint16_t distance_mm`: Median-filtered distance from sensor transducer to liquid surface in millimeters. A node fitted with a **4-20 mA submersible transducer** instead of an ultrasonic one (`A3` jumpered, `WIRING.md` §9.4) reports `full_scale - head` here so this field keeps its meaning: a number that shrinks as the tank fills. The bus, the hub and the calibration do not know or care which sensor produced it — only the node's boot print says.
   - `uint16_t raw_distance_mm`: Unfiltered instantaneous reading in millimeters.
   - `uint8_t level_percent`: **Always `255` from a node.** Tank geometry is hub-side calibration, not node firmware — a node has no idea how tall its tank is, and re-scaling a tank must not mean climbing to a roof with a laptop. The hub scales `distance_mm` against per-tank full/empty values held in its NVS and editable over its calibration AP. The byte stays in the frame so the layout is fixed; any other value means a node running old firmware.
   - `uint8_t signal_quality`: Quality indicator ($0$ to $100\%$, based on echo stability).
