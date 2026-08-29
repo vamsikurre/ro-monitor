@@ -52,6 +52,7 @@ happens at deployment.
 - [ ] **2 × SCT-013-030** for HPP and RWP. Measure which socket pads the clamp actually reaches — meter it, do not read the silkscreen (§14.2)
 - [ ] **6 × SCT-013-030** for the ground floor: three phases each on the sump and borewell motors (§11.3). Neither motor has a readable nameplate, so size from the starter's overload dial and a clamp meter (§11.3.1)
 - [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
+- [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 150 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
 - [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
 
 ### 0.3.1. Programming the hub — the onboard USB is dead
@@ -609,6 +610,10 @@ spread over a full mains cycle — the only way to tell the three states apart:
                                +-----------------+
 ```
 
+Two more headers belong on a tank node's board and are not drawn above — `J-LOOP`
+(12V / A2 / GND) and `J-PRESS` (A3 / GND). They are the provision for a submersible
+pressure transducer and cost nothing to fit while the board is open: **§9.4**.
+
 ### 9.0. AJ-SR04M Sensor Notes (applies to every ultrasonic node and the hub's dosing sensor)
 
 The sensors in hand are **AJ-SR04M**, not JSN-SR04T. Electrically interchangeable for our purposes — 5 V supply, 5 V `ECHO` needing the divider, ~20 cm blind zone, `pulseIn` timeout of 35000 µs still covering the useful range — with two board-specific gotchas:
@@ -790,7 +795,7 @@ The arithmetic rules it out. The beam is ~45° total, so its radius grows ~0.41 
 Three ways out, in cost order:
 
 1. **Core a new penetration away from the wall.** Clearance must exceed `0.41 × (depth from transducer to the lowest working surface)` — for a 1.5 m drop, **≥ 0.6 m from any wall**. Cheapest in parts, most invasive in a concrete roof slab.
-2. **Submersible pressure transducer through the existing hole** (phase-B spec §7.1). Geometry stops mattering: it hangs on its cable and reads head. The cable passes a wire hole, but the **22 mm stainless body does not** — budget on opening that hole to ~30 mm with a masonry bit, which is a far smaller job than coring 90 mm. The 12 V the loop needs is already at the node.
+2. **Submersible pressure transducer through the existing hole** (phase-B spec §7.1; node wiring and the firmware provision are in §9.4). Geometry stops mattering: it hangs on its cable and reads head. The cable passes a wire hole, but the **22 mm stainless body does not** — budget on opening that hole to ~30 mm with a masonry bit, which is a far smaller job than coring 90 mm. The 12 V the loop needs is already at the node.
 3. **Leave TWT on the Aster float alone** and accept no continuous level here. It is, after all, the tank whose float already drives the controller.
 
 **This reorders the procurement question in spec §7.1.** The sump has an open manhole and can take a stilling well with a sensor already owned; TWT cannot. If exactly one pressure transducer is bought, the evidence points at TWT for it, not the sump.
@@ -814,6 +819,171 @@ Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, 
 **Cable routing near the PV installation.** The roof array has no string inverters — the DC runs down to the battery room, where every inverter lives. That is also where node `0x04` sits and where the RS485 chain passes on its way to the roof, so the electrically noisy room is the battery room, not the roof. Keep the Cat5e clear of inverter AC and DC runs there, cross at 90 degrees rather than running parallel, and do not share a conduit with the PV strings on their way down. A 4-20 mA loop feeding a 10-bit ADC will show every bit of noise it picks up as jitter in the level.
 
 **Judging any of these from the data, not by argument:** the node reports `raw` alongside the filtered `median`, plus an echo-quality figure. Clean tracking is a median that moves smoothly with quality at 100. False echoes look like a median stepping between two values with quality stuck below 100. Log a day of it before concluding anything about a sensor.
+
+---
+
+### 9.4. Pressure Transducer Provision on a Tank Node (fitted or not)
+
+§9.3 argues that TWT is the tank an ultrasonic sensor cannot read. This section is
+the provision that makes acting on that argument a one-hour job instead of a
+redesign: **the node firmware already reads a 4-20 mA loop**, so procuring the
+sensor is the only long-lead item. Nothing needs to change on the hub, in the
+RS485 protocol, on the dashboard, or in the alerts.
+
+**What is already done, today:**
+
+| Piece | State |
+| :--- | :--- |
+| Node firmware `fw 1.01` | Reads the loop on `A2` and reports millimetres exactly the way the ultrasonic does. Shipped on **all** node boards — one binary, as ever. |
+| Selection | `A3` jumpered to GND. No jumper, and `A2` is never read: an unfitted, floating input cannot invent a level. |
+| Hub, protocol, `/cal`, alerts | **Untouched.** See "why the reading is inverted" below — that is what buys this. |
+| On the board | Nothing fitted. Two through-holes' worth of parts (§9.4.4) and the loop wiring. |
+
+#### 9.4.1. Why the node reports `RANGE - head`, not head
+
+An ultrasonic sensor measures the **air gap** and its reading *shrinks* as the tank
+fills. A submersible transducer measures **head** and its reading *grows*. The hub's
+`levelPercent()` — and `cal_set_tank()`, which refuses `empty <= full` precisely to
+catch a swapped pair — assumes the first.
+
+So the node subtracts: it reports `PRESS_RANGE_MM - head`. That is still a number
+that shrinks as the tank fills, so every consumer downstream keeps working with no
+special case anywhere and no second code path to keep in step.
+
+The two figures you type into `/cal` are then **offsets from the sensor's full
+scale** rather than air gaps. They are still just "the number the node reports at
+this water line", which is exactly what the `/cal` page shows you live — so the
+calibration procedure does not change either.
+
+**A useful consequence:** `/cal` is a two-point fit over a reading that is linear in
+loop current, so it absorbs the sense resistor's tolerance, the ADC reference error
+*and* a wrong `PRESS_RANGE_MM` — the **percentage stays correct** even if those
+constants are off. They only need to be right for the raw millimetres to be honest.
+The one hard requirement is that `PRESS_RANGE_MM` is **not smaller than the deepest
+head the sensor will see**, or the reading clamps into the blind zone and the tank
+reports no level at all.
+
+#### 9.4.2. The two headers to fit now
+
+Two 0.1" headers on the node board, both fitted **whether or not the sensor is ever
+bought**. That is the whole provision: soldered now with the board open on a bench,
+not later on a ladder.
+
+```
+   J-LOOP  (1x3)                          J-PRESS  (1x2)
+  +---------------+                      +-----------+
+  | 1  12V       -|--> transducer ( + )  | 1  A3    -|--\
+  | 2  A2        -|--> transducer ( - )  | 2  GND   -|--/  shunt fitted = pressure
+  | 3  GND       -|                      +-----------+     shunt off    = ultrasonic
+  +---------------+
+        ^                                      ^
+        +-- mark pin 1. 12V is on it.          +-- same shunt as the A0/A1
+            Nothing else identifies                address jumpers, §9.1.
+            this header.
+```
+
+**`J-LOOP` pin 1 takes 12 V from the buck's INPUT side**, not its 5 V output — the
+same pair that feeds the buck (§9, block diagram). A 2-wire transducer needs the
+loop voltage; the Nano's 5 V cannot supply it.
+
+**The passives live across `J-LOOP` pins 2 and 3, on the board:**
+
+```
+   J-LOOP pin 1  o---------------------> ( + ) transducer
+                                              |
+                                           ( - ) loop return
+                                              |
+   J-LOOP pin 2  o------------------------+---+
+                                          |
+                                    [ 150 R 1% ]        <- sense resistor
+                                          |
+   J-LOOP pin 3  o-------------------+----+
+                                     |
+                                    GND
+
+   and from the pin-2 node to the Nano:
+
+   pin 2 node ---[ 1 k ]---+--- Nano A2
+                           |
+                        ][ 100 nF
+                           |
+                          GND
+```
+
+* **Sense resistor to GND, not high-side.** The voltage across it *is* the signal,
+  referenced to the ADC's own ground. 150 R gives **0.60 V at 4 mA and 3.00 V at
+  20 mA** into the 5 V ADC — comfortable headroom, no divider, no op-amp.
+* **Fit the 150 R at the same time as the header, before any sensor exists.** It is
+  what makes an empty `J-LOOP` read **0 V** instead of floating: jumper `J-PRESS`
+  with nothing plugged in and the node reports a *sensor fault*, not a plausible
+  number. Without the resistor, that same mistake reads noise as a water level.
+* **`1 k` in series and `100 nF` to ground at the Nano pin.** The pair is an RC
+  filter — a 4-20 mA loop run across a roof shows its pickup as jitter in the level
+  (§9.3, last paragraph) — *and* it is what survives the one destructive wiring
+  mistake this header allows: **12 V landed on pin 2**. The 1 k holds the fault into
+  the ADC's clamp diode to ~7 mA, which the ATmega takes; without it the pin is
+  gone. Neither part shifts the reading — the ADC input draws under a microamp, so
+  the drop across the 1 k is under a millivolt, and `/cal`'s two-point fit absorbs
+  even that.
+* **Check the transducer's minimum supply voltage before buying.** At full scale the
+  sense resistor eats 3.0 V, so a 12 V loop leaves the sensor **~9 V**. Most 2-wire
+  transducers are specified 9-36 V and are fine; a part that wants 12 V minimum is
+  not. If you end up with such a part, drop the sense resistor to **100 R** (0.4 V /
+  2.0 V, still plenty of ADC span) and set `PRESS_SENSE_OHMS` to match.
+* **Ground.** The loop return and the Nano share one ground. They already do — same
+  buck, same 12 V pair.
+* **`J-PRESS` is reversal-safe and `J-LOOP` is not.** A 2-pin shunt shorts the same
+  two pins whichever way round it goes. `J-LOOP` reversed puts 12 V on the GND pin
+  and back-feeds the transducer, so mark pin 1 and, if the sensor is ever unplugged
+  in the field, use a keyed 3-pin JST-XH shell rather than bare dupont.
+* The **vent tube must stay open** and the enclosure must breathe. That is not
+  optional and it is not a detail: see §9.3, requirement 1, for the 0.7 m of
+  apparent level a sealed vent invents on a sunny afternoon.
+
+**Both headers go on all tank nodes (`0x02` and `0x03`), not just TWT.** One binary,
+one board layout — the RWT node then needs only a sensor and a shunt if its
+ultrasonic ever fouls, and a spare board is a spare board for either tank.
+
+#### 9.4.3. Commissioning, in order
+
+1. **Set `PRESS_RANGE_MM` to the sensor's full scale** in `ro_node.ino` and reflash
+   the node. This is the one value that is not settable over the network — it is a
+   property of the part, and the part is not changing without a ladder anyway.
+   `PRESS_SENSE_OHMS` likewise, if you did not fit 150 R.
+2. **Plug the transducer into `J-LOOP` with the `J-PRESS` shunt off.** The node
+   stays on the ultrasonic, so nothing changes yet.
+3. **Meter across `J-LOOP` pins 2-3, sensor dry and in air.** Expect **~0.60 V**
+   (4 mA). Nothing, or a rail, means the loop is wrong — find that now, not after
+   the sensor is down a tank.
+4. **Fit the `J-PRESS` shunt and reset.** The boot print states the source outright:
+   `Level source: 4-20 mA pressure transducer on A2, 2000 mm full scale`.
+5. **Hang the sensor 50-100 mm off the floor** (§9.3, requirement 3) and watch the
+   console: `1450 mm(P) q=100`. The `(P)` marks the pressure source. **The number
+   must fall as the tank fills.** If it rises, the loop is backwards somewhere.
+6. **Calibrate from `/cal`,** which shows the live reading and the resulting
+   percentage: at the working empty level type what it reads as `empty`, at the full
+   mark type what it reads as `full`. Record both, and the water lines they came
+   from, in §9.2.1 — the same as for an ultrasonic sensor.
+
+#### 9.4.4. Bill of materials, and what the loop tells you when it breaks
+
+| Part | Qty | Note |
+| :--- | :---: | :--- |
+| Submersible 4-20 mA level transducer, **0-2 m** | 1 | Buy for the tank, not the catalogue — §9.3, requirement 2. Cable length ≥ tank depth + run to the node. |
+| 150 R, 1 %, 0.25 W metal film | 1 | Sense resistor. 1 % because it is cheap, not because the maths needs it. |
+| 1 k, 0.25 W | 1 | Series into `A2`. Filter, and the only thing between a miswired 12 V and a dead ADC pin. |
+| 100 nF ceramic | 1 | Nano `A2` to GND. |
+| 1x3 0.1" pin header (`J-LOOP`) | 1 | 12V / A2 / GND. **Fit now**, with the 150 R, even with no sensor. |
+| 1x2 0.1" pin header + shunt (`J-PRESS`) | 1 | `A3` / GND. Same shunt as the address jumpers, §9.1. **Fit now, leave the shunt off.** |
+| M12 membrane breather vent + desiccant sachet | 1 | Enclosure, non-negotiable — §9.3, requirement 1. |
+| Masonry bit to open the wire hole to ~30 mm | 1 | The 22 mm body will not pass a wire pass-through. |
+
+**The failure signature is the point of choosing 4-20 mA.** A cut cable, a dead loop
+supply or a failed sensor all read **below 4 mA**, which the node returns as *no
+reading* — `sensor_status` 2, then 3 after ten cycles, and the dashboard shows a
+sensor fault. A 0-5 V sensor in the same state reads 0 V, which is indistinguishable
+from an empty tank: the alert fires, someone climbs to the roof, and the tank is
+full. That live zero is worth the extra wire.
 
 ---
 
