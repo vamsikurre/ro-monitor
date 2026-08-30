@@ -55,6 +55,12 @@ static int failures = 0;
 
 static void fail(const char *what) { printf("%%s\\n", what); failures++; }
 
+/* microamps -> ADC counts, the inverse of what pressureMM() does */
+static uint16_t counts_for_ua(uint32_t uA) {
+    uint32_t mV = uA * PRESS_SENSE_OHMS / 1000UL;
+    return (uint16_t)((mV * 1023UL + PRESS_ADC_MV / 2) / PRESS_ADC_MV);
+}
+
 /* Build a request the way the hub does: AA 55 ADDR CMD LEN payload CRC_L CRC_H */
 static uint8_t build(uint8_t *f, uint8_t addr, uint8_t cmd, const uint8_t *p, uint8_t len) {
     f[0] = 0xAA; f[1] = 0x55; f[2] = addr; f[3] = cmd; f[4] = len;
@@ -172,25 +178,27 @@ int main(void) {
     if (prod_levelPercent(500, 300, 300) != 255)     fail("production: zero span must not divide by zero");
 
     /* --- the node's pressure fallback, whose output the hub cannot tell apart
-       from an ultrasonic distance. Counts for a given current on a 150R sense
-       resistor: counts = mA * R * 1023 / 5000. --- */
+       from an ultrasonic distance. The counts are DERIVED from the sketch's own
+       PRESS_SENSE_OHMS rather than written in: that resistor is a tuning knob
+       sized against the loop's voltage headroom (WIRING.md 9.4.2), and a test
+       that hardcodes "4 mA = 123 counts" breaks the moment someone turns it. --- */
     if (pressureMM(0) != 0)      fail("pressure: a dead loop must not read as a full tank");
-    if (pressureMM(60) != 0)     fail("pressure: 2 mA is a broken loop, not a level");
-    if (pressureMM(123) != PRESS_RANGE_MM) fail("pressure: 4 mA must read empty, not 0");
+    if (pressureMM(counts_for_ua(2000)) != 0)  fail("pressure: 2 mA is a broken loop, not a level");
+    if (pressureMM(counts_for_ua(4000)) != PRESS_RANGE_MM) fail("pressure: 4 mA must read empty, not 0");
     if (pressureMM(1023) != 0)   fail("pressure: over-range must read as no reading");
-    {   /* 12 mA is half scale: 368 counts. Allow a count of slop either way. */
-        int mid = pressureMM(368), want = PRESS_RANGE_MM / 2;
-        if (mid < want - 10 || mid > want + 10) fail("pressure: 12 mA is not half scale");
+    {   /* 12 mA is half scale. Allow a couple of counts of slop either way. */
+        int mid = pressureMM(counts_for_ua(12000)), want = PRESS_RANGE_MM / 2;
+        if (mid < want - 20 || mid > want + 20) fail("pressure: 12 mA is not half scale");
         /* and it must fall as the tank fills, or the hub's maths runs backwards */
         int prev = PRESS_RANGE_MM + 1;
-        for (uint16_t c = 123; c <= 614; c++) {
+        for (uint16_t c = counts_for_ua(4000); c <= counts_for_ua(20000); c++) {
             int mm = pressureMM(c);
             if (mm > prev) { fail("pressure: distance must shrink as the loop current rises"); break; }
             prev = mm;
         }
     }
     /* the whole point of the live zero: empty and cut-cable are different states */
-    if (pressureMM(123) == pressureMM(0)) fail("pressure: empty and a cut cable must differ");
+    if (pressureMM(counts_for_ua(4000)) == pressureMM(0)) fail("pressure: empty and a cut cable must differ");
 
     if (failures) return 1;
     printf("OK: node, bench hub and production hub agree on CRC-16/Modbus;\\n");

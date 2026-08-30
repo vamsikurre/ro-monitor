@@ -71,7 +71,7 @@ happens at deployment.
 - [ ] **2 × SCT-013-030** for HPP and RWP. Measure which socket pads the clamp actually reaches — meter it, do not read the silkscreen (§14.2)
 - [ ] **6 × SCT-013-030** for the ground floor: three phases each on the sump and borewell motors (§11.3). Neither motor has a readable nameplate, so size from the starter's overload dial and a clamp meter (§11.3.1)
 - [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
-- [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 150 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
+- [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 100 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
 - [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
 
 ### 0.3.1. Programming the hub — the onboard USB is dead
@@ -926,7 +926,7 @@ loop voltage; the Nano's 5 V cannot supply it.
                                               |
    J-LOOP pin 2  o------------------------+---+
                                           |
-                                    [ 150 R 1% ]        <- sense resistor
+                                    [ 100 R 1% ]        <- sense resistor
                                           |
    J-LOOP pin 3  o-------------------+----+
                                      |
@@ -942,9 +942,9 @@ loop voltage; the Nano's 5 V cannot supply it.
 ```
 
 * **Sense resistor to GND, not high-side.** The voltage across it *is* the signal,
-  referenced to the ADC's own ground. 150 R gives **0.60 V at 4 mA and 3.00 V at
-  20 mA** into the 5 V ADC — comfortable headroom, no divider, no op-amp.
-* **Fit the 150 R at the same time as the header, before any sensor exists.** It is
+  referenced to the ADC's own ground. 100 R gives **0.40 V at 4 mA and 2.00 V at
+  20 mA** into the 5 V ADC — no divider, no op-amp.
+* **Fit the 100 R at the same time as the header, before any sensor exists.** It is
   what makes an empty `J-LOOP` read **0 V** instead of floating: jumper `J-PRESS`
   with nothing plugged in and the node reports a *sensor fault*, not a plausible
   number. Without the resistor, that same mistake reads noise as a water level.
@@ -956,11 +956,17 @@ loop voltage; the Nano's 5 V cannot supply it.
   gone. Neither part shifts the reading — the ADC input draws under a microamp, so
   the drop across the 1 k is under a millivolt, and `/cal`'s two-point fit absorbs
   even that.
-* **Check the transducer's minimum supply voltage before buying.** At full scale the
-  sense resistor eats 3.0 V, so a 12 V loop leaves the sensor **~9 V**. Most 2-wire
-  transducers are specified 9-36 V and are fine; a part that wants 12 V minimum is
-  not. If you end up with such a part, drop the sense resistor to **100 R** (0.4 V /
-  2.0 V, still plenty of ADC span) and set `PRESS_SENSE_OHMS` to match.
+* **Why 100 R and not 150 R — this is the constraint that sizes the whole loop.**
+  The 12 V does not arrive as 12 V: `POWER_BUDGET.md` §5.1 works the Cat5e drop to
+  `0x03` at **0.30 V over 10 m hops, 0.74 V over 25 m**. What is left after the sense
+  resistor's burden is what the transducer runs on, and that burden is worst at
+  **20 mA — a full tank**. At 150 R the sensor would see **8.7 V on a short run**,
+  under the 9 V minimum most 2-wire parts specify, and it would fail *only when the
+  tank fills*: correct while empty, drifting as the water rises. 100 R holds 9 V out
+  to ~25 m hops and costs ~6 mm per ADC count on a 0-2 m sensor, against a filter
+  whose agreement window is 25 mm. **Read the actual minimum off the datasheet before
+  ordering** — a 12-36 V part cannot work on this bus at any sense resistance, and
+  the fix would be a 12→24 V boost module at this node alone.
 * **Ground.** The loop return and the Nano share one ground. They already do — same
   buck, same 12 V pair.
 * **`J-PRESS` is reversal-safe and `J-LOOP` is not.** A 2-pin shunt shorts the same
@@ -980,10 +986,10 @@ ultrasonic ever fouls, and a spare board is a spare board for either tank.
 1. **Set `PRESS_RANGE_MM` to the sensor's full scale** in `ro_node.ino` and reflash
    the node. This is the one value that is not settable over the network — it is a
    property of the part, and the part is not changing without a ladder anyway.
-   `PRESS_SENSE_OHMS` likewise, if you did not fit 150 R.
+   `PRESS_SENSE_OHMS` likewise, if you did not fit 100 R.
 2. **Plug the transducer into `J-LOOP` with the `J-PRESS` shunt off.** The node
    stays on the ultrasonic, so nothing changes yet.
-3. **Meter across `J-LOOP` pins 2-3, sensor dry and in air.** Expect **~0.60 V**
+3. **Meter across `J-LOOP` pins 2-3, sensor dry and in air.** Expect **~0.40 V**
    (4 mA). Nothing, or a rail, means the loop is wrong — find that now, not after
    the sensor is down a tank.
 4. **Fit the `J-PRESS` shunt and reset.** The boot print states the source outright:
@@ -1001,10 +1007,10 @@ ultrasonic ever fouls, and a spare board is a spare board for either tank.
 | Part | Qty | Note |
 | :--- | :---: | :--- |
 | Submersible 4-20 mA level transducer, **0-2 m** | 1 | Buy for the tank, not the catalogue — §9.3, requirement 2. Cable length ≥ tank depth + run to the node. |
-| 150 R, 1 %, 0.25 W metal film | 1 | Sense resistor. 1 % because it is cheap, not because the maths needs it. |
+| 100 R, 1 %, 0.25 W metal film | 1 | Sense resistor. **100 R, not 150 R** — the loop's voltage headroom sizes it, `POWER_BUDGET.md` §5.1. |
 | 1 k, 0.25 W | 1 | Series into `A2`. Filter, and the only thing between a miswired 12 V and a dead ADC pin. |
 | 100 nF ceramic | 1 | Nano `A2` to GND. |
-| 1x3 0.1" pin header (`J-LOOP`) | 1 | 12V / A2 / GND. **Fit now**, with the 150 R, even with no sensor. |
+| 1x3 0.1" pin header (`J-LOOP`) | 1 | 12V / A2 / GND. **Fit now**, with the 100 R, even with no sensor. |
 | 1x2 0.1" pin header + shunt (`J-PRESS`) | 1 | `A3` / GND. Same shunt as the address jumpers, §9.1. **Fit now, leave the shunt off.** |
 | M12 membrane breather vent + desiccant sachet | 1 | Enclosure, non-negotiable — §9.3, requirement 1. |
 | Masonry bit to open the wire hole to ~30 mm | 1 | The 22 mm body will not pass a wire pass-through. |

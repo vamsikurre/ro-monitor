@@ -85,7 +85,9 @@
 // the sensor's full scale rather than air gaps - and because that page is a
 // two-point calibration, it absorbs the sense resistor's tolerance for free.
 #define PRESS_RANGE_MM   2000    // sensor full scale at 20 mA. MUST match the part fitted.
-#define PRESS_SENSE_OHMS 150     // loop resistor: 4 mA = 0.60 V, 20 mA = 3.00 V into a 5 V ADC
+#define PRESS_SENSE_OHMS 100     // loop resistor: 4 mA = 0.40 V, 20 mA = 2.00 V into a 5 V ADC.
+                                 // 100R not 150R because 20 mA through 150R eats 3 V of a 12 V
+                                 // loop and the sensor browns out AT FULL TANK - WIRING.md 9.4.2
 #define PRESS_ADC_MV     5000    // AVcc, the ADC reference
 #define PRESS_MIN_UA     3500    // under this the loop is open or unpowered, not empty
 #define PRESS_MAX_UA     21000   // over this it is shorted or miswired

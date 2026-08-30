@@ -154,3 +154,50 @@ $$\Delta V = 0.084 \times (10 \times 0.212 + 10 \times 0.130 + 10 \times 0.065) 
 **Re-run this once the TBM lengths in `WIRING.md` §12 are measured.** Substitute the real $L_i$ into the sum above — no other part of this document changes.
 
 > Deleting node `0x01` removed the shortest, most heavily loaded segment from this sum (1.5 m at 277 mA). The trunk now starts at the battery room run.
+
+### 5.1. If TWT `0x03` gets a submersible pressure transducer (`WIRING.md` §9.4)
+
+The drop itself is a non-event. The transducer adds up to **20 mA** on the 12 V rail
+at `0x03`, and removes the AJ-SR04M it replaces (30 mA at 5 V ≈ 15 mA through the
+buck), so the trunk sees about **+5 mA** — segment 1 becomes 217 mA, segment 2
+135 mA, and the drop *at `0x03`* works out at:
+
+| Hop length | Drop to `0x03` | Arriving at the node |
+| :--- | :--- | :--- |
+| 10 m (the §5 assumption) | 0.30 V | 11.70 V |
+| 25 m | 0.74 V | 11.26 V |
+| 40 m | 1.18 V | 10.82 V |
+
+**The buck does not care** — it regulates from 7 V, so even 40 m hops leave 3.8 V of
+margin. **The loop does.** What reaches the transducer is what is left after the
+sense resistor's burden, and that burden is worst at **20 mA, which is a full tank**:
+
+| Sense resistor | Burden at 20 mA | Sensor sees, 10 m | 25 m | 40 m |
+| :--- | :--- | :--- | :--- | :--- |
+| **150 Ω** | 3.00 V | **8.70 V** | **8.26 V** | **7.82 V** |
+| **100 Ω** | 2.00 V | 9.70 V | 9.26 V | 8.82 V |
+| 68 Ω | 1.36 V | 10.34 V | 9.90 V | 9.46 V |
+
+Most 2-wire transducers are specified **9-36 V**. So **150 Ω fails at every run
+length** — and it fails *only when the tank is full*, reading correctly while empty
+and browning out as the water rises. That is the dangerous direction, and it would
+present as a level that stops tracking near the top rather than as a fault.
+
+**Hence 100 Ω, which is what `PRESS_SENSE_OHMS` now defaults to.** It holds 9 V to
+about 25 m per hop and costs nothing that matters: the ADC span becomes 0.4-2.0 V,
+still 327 counts across a 0-2 m sensor (~6 mm per count), against a median filter
+whose agreement window is 25 mm.
+
+**Two things to do before trusting this table:**
+
+1. **Measure the hops.** §5's lengths are still TBM. At 40 m per hop even 100 Ω is
+   marginal against a 9 V part, and the answer changes.
+2. **Read the transducer's minimum supply off its datasheet, not off this page.** A
+   part specified 12-36 V cannot work on this bus at any sense resistance. If one is
+   unavoidable, the fix is a small 12→24 V boost module at that node only — one
+   part, one node, and the rest of the plant is untouched.
+
+**The under-voltage failure is at least honest.** A browned-out transducer drops its
+loop current, and anything under 4 mA is what `pressureMM()` returns 0 for — a
+sensor fault, not a plausible level (`WIRING.md` §9.4.1). Useful, but not something
+to design around.
