@@ -14,9 +14,18 @@ Kept at the top because it is the first thing anyone opening this document in th
 RO room needs. **Last updated 2026-08-30.**
 
 > **The hub as it is actually wired is drawn in
-> [`images/hardware/hub_wiring_asbuilt.png`](../images/hardware/hub_wiring_asbuilt.png)** —
+> [`images/hardware/wiring-Hub.jpg`](../images/hardware/wiring-Hub.jpg)** —
 > every module, every header, every wire colour, drawn from the built board.
-> Editable source: the **`Hub`** page of `wiring.drawio` at the repo root.
+> Editable source: the **`Hub`** page of `wiring.drawio` at the repo root — the
+> filename is drawio's own export name, so re-exporting overwrites it in place.
+>
+> **It draws the plant DEPLOYED, not the plant as it stands.** Every field
+> connection to the Aster is on it: `LPS` to PC817 `IN3`, `ALARM` to `G13`, and all
+> four relay outputs to the float terminals. **None of those wires exist yet** —
+> §0.2 and §6.6 are the authority on what is actually connected, and §0.3.2 lists
+> what the log looks like while they are not. A picture beats a checklist for
+> anyone in a hurry, so read the two together or you will diagnose a fault in a
+> wire that was never run.
 >
 > **And the board itself, photographed 2026-08-30:**
 >
@@ -155,7 +164,7 @@ The ESP32-S serves as the Central Telemetry Hub. It gathers telemetry from the l
 ### Master Pin Mapping Table
 
 Drawn form of this same table, with the modules and wire colours:
-[`images/hardware/hub_wiring_asbuilt.png`](../images/hardware/hub_wiring_asbuilt.png)
+[`images/hardware/wiring-Hub.jpg`](../images/hardware/wiring-Hub.jpg)
 (`wiring.drawio`, page `Hub`).
 
 
