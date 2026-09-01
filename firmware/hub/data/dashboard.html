@@ -377,6 +377,10 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <div class="fanrow" id="cBattFan"></div>
   </div>
   <div class="card">
+    <span class="legend">Water Quality · TDS</span>
+    <div class="rows" id="cQuality"></div>
+  </div>
+  <div class="card">
     <span class="legend">Aster NXT 11 · Isolated contacts</span>
     <div class="rows" id="cAster"></div>
   </div>
@@ -1391,6 +1395,29 @@ function render(s) {
   fc.textContent = ft;
   fc.className = "chip " + fk;
 
+  /* Rejection is the row that matters: permeate TDS rising on its own is a fact
+     about the borewell, not the plant. Feed and permeate are shown beside it so
+     a falling percentage can be attributed to one or the other. */
+  const Q = s.quality;
+  /* "Not fitted" and "no reading" are different facts and must not print the
+     same: the first is a probe nobody has installed, the second is one that has
+     stopped answering. Same distinction the tank levels draw. */
+  const ppm = w => !w.fitted ? "Not fitted" : w.ppm === null ? "No reading" : `${w.ppm} ppm`;
+  const kind = w => !w.fitted ? "off" : w.ppm === null ? "warn" : "on";
+  const wt  = w => (w.fitted && w.t !== null) ? `${w.t.toFixed(1)} °C` : null;
+  let rejLabel = "–", rejKind = "off";
+  if (Q.rejection !== null) {
+    rejLabel = `${Q.rejection}%`;
+    /* An RO membrane in good order rejects well over 90%. Below 85 is worth
+       looking at; below 75 the permeate is drifting towards the feed. */
+    rejKind = Q.rejection >= 90 ? "on" : Q.rejection >= 75 ? "warn" : "fault";
+  }
+  rows($("#cQuality"), [
+    ["Salt rejection", rejLabel, rejKind],
+    ["Raw water", ppm(Q.rwt), kind(Q.rwt), wt(Q.rwt)],
+    ["Treated water", ppm(Q.twt), kind(Q.twt), wt(Q.twt)],
+  ]);
+
   const A = s.aster;
   rows($("#cAster"), [
     ["TWT FLOTY", A.twt_floty ? "Closed" : "Open", A.twt_floty ? "on" : "off"],
@@ -1518,6 +1545,11 @@ const demo = {
     sump_motor: { on: true, state: "ONLINE" },
     rwp:        { on: true, state: "ONLINE" },
     hpp:        { on: true, state: "ONLINE" },
+  },
+  quality: {
+    rwt: { ppm: 612, t: 28.4, fitted: true },
+    twt: { ppm: 31, t: 28.1, fitted: true },
+    rejection: 95,
   },
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false, lps: false },
   motors: { hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false },

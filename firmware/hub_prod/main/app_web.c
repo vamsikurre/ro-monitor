@@ -184,9 +184,24 @@ static esp_err_t dashboard_get(httpd_req_t *req)
                            dashboard_gz_end - dashboard_gz_start);
 }
 
+/* ppm and water temperature as JSON, or null. Both or neither: the node sets
+ * its two fault bits together because TDS without a temperature is
+ * uncompensated (RS485_PROTOCOL.md 4.5), so half a reading is never emitted. */
+static void wq_json(char *ppm, size_t ppm_len, char *temp, size_t temp_len,
+                    const wq_state_t *wq)
+{
+    if (!wq->fitted || wq->ppm == TDS_INVALID) {
+        snprintf(ppm, ppm_len, "null");
+        snprintf(temp, temp_len, "null");
+        return;
+    }
+    snprintf(ppm, ppm_len, "%u", wq->ppm);
+    snprintf(temp, temp_len, "%d.%d", wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
+}
+
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[2600];
+    static char json[2800];   /* +200 for the quality block */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -208,6 +223,18 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         snprintf(rwp_amps, sizeof(rwp_amps), "%d.%d", s->rwp.deci_amps / 10, s->rwp.deci_amps % 10);
     }
 
+    /* Same rule as the amps above, and it matters more here: 0 ppm is what
+     * distilled water reads, so an unfitted or faulty probe reporting 0 would
+     * look like the cleanest water the plant has ever made. null, not zero. */
+    char rwt_ppm[12], twt_ppm[12], rwt_wt[12], twt_wt[12], rejection[12];
+    wq_json(rwt_ppm, sizeof(rwt_ppm), rwt_wt, sizeof(rwt_wt), &s->rwt_wq);
+    wq_json(twt_ppm, sizeof(twt_ppm), twt_wt, sizeof(twt_wt), &s->twt_wq);
+    if (s->rejection_pct < 0) {
+        snprintf(rejection, sizeof(rejection), "null");
+    } else {
+        snprintf(rejection, sizeof(rejection), "%d", s->rejection_pct);
+    }
+
     int n = snprintf(json, sizeof(json),
         "{"
         "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\"},"
@@ -223,6 +250,11 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"sump_motor\":{\"on\":false,\"state\":\"OFFLINE\"},"
           "\"rwp\":{\"on\":%s,\"state\":\"ONLINE\"},"
           "\"hpp\":{\"on\":%s,\"state\":\"ONLINE\"}"
+        "},"
+        "\"quality\":{"
+          "\"rwt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s},"
+          "\"twt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s},"
+          "\"rejection\":%s"
         "},"
         "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":false,\"sump_floty\":false,"
                    "\"dos_lvl\":false,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s,\"lps\":%s},"
@@ -256,6 +288,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
         s->rwp.running ? "true" : "false",
         s->hpp.running ? "true" : "false",
+
+        rwt_ppm, rwt_wt, s->rwt_wq.fitted ? "true" : "false",
+        twt_ppm, twt_wt, s->twt_wq.fitted ? "true" : "false",
+        rejection,
 
         s->twt_float_closed ? "true" : "false",
         s->rl1_active ? "true" : "false",
