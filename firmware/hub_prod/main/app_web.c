@@ -20,6 +20,8 @@
 #include <string.h>
 
 #include <esp_app_desc.h>
+#include <esp_system.h>
+#include <esp_wifi.h>
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -43,6 +45,35 @@ extern const uint8_t dashboard_gz_start[] asm("_binary_dashboard_html_gz_start")
 extern const uint8_t dashboard_gz_end[]   asm("_binary_dashboard_html_gz_end");
 
 /* ---------------------------------------------------------------- helpers */
+
+/* Both of these were literals in the format string - 0 and "Power on" - written
+ * as placeholders and never replaced, so the page confidently reported a signal
+ * strength of 0 dBm and a clean power-on after every crash. The reset reason is
+ * the one that costs you: PANIC and BROWNOUT are exactly what you want to see on
+ * a board whose supply has already killed one chip, and "Power on" hid them. */
+static int wifi_rssi(void)
+{
+    wifi_ap_record_t ap;
+    /* 0 dBm is not a possible reading, so it doubles as "not associated". */
+    return (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) ? ap.rssi : 0;
+}
+
+static const char *reset_word(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "Power on";
+    case ESP_RST_EXT:       return "External";
+    case ESP_RST_SW:        return "Software";
+    case ESP_RST_PANIC:     return "Panic";
+    case ESP_RST_INT_WDT:   return "Interrupt WDT";
+    case ESP_RST_TASK_WDT:  return "Task WDT";
+    case ESP_RST_WDT:       return "Watchdog";
+    case ESP_RST_DEEPSLEEP: return "Deep sleep";
+    case ESP_RST_BROWNOUT:  return "Brownout";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "Unknown";
+    }
+}
 
 static const char *link_word(int64_t last_ok_us, bool ever)
 {
@@ -77,8 +108,17 @@ static const char *sensor_word(sensor_status_t s)
     }
 }
 
-static const char *tank_state_word(const tank_state_t *t)
+static const char *tank_state_word(const tank_state_t *t, bool online)
 {
+    /* The node not answering outranks anything its last reading said. Checking
+     * pct first reported SENSOR_ERROR for a tank whose node is simply offline,
+     * which points the finger at the transducer when the fault is on the bus -
+     * and it printed alongside "sensor":"OK", which is a contradiction on its
+     * face. The dosing tank is wired to the hub and has no node, so it passes
+     * true: there is no link for it to lose. */
+    if (!online) {
+        return "OFFLINE";
+    }
     if (t->sensor == SENSOR_HW_FAULT) {
         return "SENSOR_ERROR";
     }
@@ -275,16 +315,17 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "{\"id\":\"0x06\",\"role\":\"Motors\",\"link\":\"Wi-Fi\",\"state\":\"OFFLINE\",\"age_s\":9999}"
         "]"
         "}",
-        esp_timer_get_time() / 1000000, 0, esp_app_get_description()->version, "Power on",
+        esp_timer_get_time() / 1000000, wifi_rssi(),
+        esp_app_get_description()->version, reset_word(),
         (s->rwt_online ? 1 : 0) + (s->twt_online ? 1 : 0) + (s->battery_online ? 1 : 0),
         (unsigned long)rs485_error_count(), (unsigned long)s->last_cycle_ms,
 
         s->rwt.pct < 0 ? 0 : s->rwt.pct, s->rwt.distance_mm,
-        tank_state_word(&s->rwt), sensor_word(s->rwt.sensor),
+        tank_state_word(&s->rwt, s->rwt_online), sensor_word(s->rwt.sensor),
         s->dosing.pct < 0 ? 0 : s->dosing.pct, s->dosing.distance_mm,
-        tank_state_word(&s->dosing), sensor_word(s->dosing.sensor),
+        tank_state_word(&s->dosing, true), sensor_word(s->dosing.sensor),
         s->twt.pct < 0 ? 0 : s->twt.pct, s->twt.distance_mm,
-        tank_state_word(&s->twt), sensor_word(s->twt.sensor),
+        tank_state_word(&s->twt, s->twt_online), sensor_word(s->twt.sensor),
 
         s->rwp.running ? "true" : "false",
         s->hpp.running ? "true" : "false",
@@ -307,7 +348,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10),
         s->battery_room.hum_deci_pct / 10, s->battery_room.hum_deci_pct % 10,
         s->fan_on ? "true" : "false",
-        s->battery_room.fault ? "SENSOR_ERROR" : link_word(s->battery_room.last_ok_us, s->battery_online),
+        !s->battery_online ? "OFFLINE"
+                           : (s->battery_room.fault ? "SENSOR_ERROR"
+                                                    : link_word(s->battery_room.last_ok_us, true)),
         age_s(s->battery_room.last_ok_us),
 
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
