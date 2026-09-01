@@ -23,6 +23,10 @@
   --ink:#E6ECF3; --ink-2:#9AA7B8; --ink-3:#6B7787;
   /* fluids — categorical, ΔE 17.8 normal / 17.3 deutan */
   --raw:#3E8F5F; --treated:#2B8FD4; --additive:#9A7B3C;
+  /* TDS readouts. Deliberately NOT the vessel fluid colours: those say what is
+     in the tank, these say how clean it is. Orange on the feed, green on the
+     permeate, so a glance down the plant reads dirty -> clean. */
+  --tds-feed:#C4703A; --tds-clean:#3E8F5F;
   /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
   --warn:#B08F1A; --fault:#D93E68; --offline:#6B7787;
   /* --fault at low alpha, for washing a whole region rather than a chip */
@@ -151,6 +155,19 @@ h1 span{color:var(--ink-3); font-weight:400}
   color:var(--ink-2); margin-top:3px; letter-spacing:-.01em;
 }
 .amps u{text-decoration:none; font-size:10px; color:var(--ink-3); font-weight:600; margin-left:2px}
+
+/* TDS above a tank. Same weight as .amps under a pump - a secondary reading
+   attached to a vessel, not the vessel's identity. */
+.tds{
+  font-family:var(--mono); font-size:12px; font-weight:600;
+  letter-spacing:-.01em; margin-bottom:2px; text-align:center;
+}
+.tds u{text-decoration:none; font-size:10px; color:var(--ink-3); font-weight:600; margin-left:2px}
+.tds.feed{color:var(--tds-feed)}
+.tds.clean{color:var(--tds-clean)}
+/* No probe, or a probe that has stopped answering: greyed, so it reads as an
+   absent measurement rather than a clean one. */
+.tds.none{color:var(--ink-3); font-weight:500}
 .amps.over{color:var(--fault)}
 .room > .roomenv,.annex > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
@@ -815,6 +832,23 @@ function tankUnit(t, cfg) {
   } else {
     g.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
   }
+  /* Above the vessel, so the plant reads top-down: how clean the water is, then
+     how much of it there is. Only the two tanks with probes grow one - dosing
+     and the sump are passed no wq and get no permanent dash. */
+  if (cfg.wq) {
+    const td = node("tds " + (cfg.tdsKind || "feed"));
+    if (!cfg.wq.fitted) {
+      td.className = "tds none";
+      td.textContent = "—";
+    } else if (cfg.wq.ppm === null) {
+      td.className = "tds none";
+      td.textContent = "no reading";
+    } else {
+      td.innerHTML = `${cfg.wq.ppm}<u>ppm</u>`;
+    }
+    u.appendChild(td);
+  }
+
   u.appendChild(v);
   const cap = node("caption");
   cap.appendChild(txt("name", cfg.label));
@@ -969,15 +1003,18 @@ function buildPlant(s) {
   host.classList.toggle("narrow", narrow);
 
   const T = s.tanks, P = s.pumps, B = s.env.battery_room;
+  /* Older firmware, or a page served before the quality block existed, would
+     otherwise throw here and drop the whole plant view. */
+  const Q = s.quality || { rwt: { fitted: false }, twt: { fitted: false } };
   const live = k => P[k].on && P[k].state === "ONLINE";
   const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
 
   const build = {
-    rwt:    () => tankUnit(T.rwt,    { w: 118, h: 142, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt" }),
+    rwt:    () => tankUnit(T.rwt,    { w: 118, h: 142, shape: "cyl", fluid: "raw",      label: "Raw Water",     id: "rwt", wq: Q.rwt, tdsKind: "feed" }),
     /* Concrete, not a moulded cylinder: a rectangular poured tank spanning the
        end of the roof slab. Bigger than the others because it is the biggest
        vessel on the roof, and box-shaped because that is what is up there. */
-    twt:    () => tankUnit(T.twt,    { w: 300, h: 186, shape: "box", fluid: "treated",  label: "Treated Water", id: "twt", stretch: true, corner: 2, portx: 0.08 }),
+    twt:    () => tankUnit(T.twt,    { w: 300, h: 186, shape: "box", fluid: "treated",  label: "Treated Water", id: "twt", stretch: true, corner: 2, portx: 0.08, wq: Q.twt, tdsKind: "clean" }),
     dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
     sump:   () => tankUnit(T.sump,   { w: 176, h: 146, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
     rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25, null, s.motors && s.motors.rwp),
