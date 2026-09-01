@@ -20,7 +20,11 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ identity */
-#define FW_VERSION              "1.0.0"
+/* No FW_VERSION constant. The version is the git description, set as PROJECT_VER
+ * in CMakeLists.txt and read back from the app descriptor with
+ * esp_app_get_description()->version - so the boot banner, the RainMaker
+ * "Firmware" attribute, the dashboard footer and the OTA version check are all
+ * literally the same string, and none of them can drift from the code. */
 #define NODE_TYPE               "Water Plant Monitor"
 #define NODE_PROJECT            "RO Monitor"
 
@@ -183,6 +187,12 @@ extern "C" {
 #define ALERT_DOSING_LOW_PCT    20
 #define ALERT_HYST_PCT          5
 #define ALERT_REARM_MS          300000  /* 5 min floor between repeats of one alert */
+/* Hourly reminder, for the conditions that stay true until somebody walks over
+ * and does something. Most alerts must NOT use this - see alert_eval(). */
+#define ALERT_REPEAT_MS         3600000
+/* The HPP must be off this long before "idle with room in the tank" counts as a
+ * fault. Covers the Aster's flush and backwash cycles, which stop the pump. */
+#define ALERT_IDLE_HOLD_MS      900000
 
 /* Over-current. Deliberately generous: this is a "something is badly wrong"
  * threshold, not a protection trip, and nothing here touches a motor circuit.
@@ -204,6 +214,7 @@ extern "C" {
 
 #define PARAM_RWT_PCT           "Raw Water Level"
 #define PARAM_TWT_PCT           "Treated Water Level"
+#define PARAM_TWT_FLOAT         "TWT Float Full"
 #define PARAM_DOS_PCT           "Dosing Level"
 #define PARAM_HPP_ON            "HPP Running"
 #define PARAM_RWP_ON            "RWP Running"
@@ -218,12 +229,28 @@ extern "C" {
 #define PARAM_FAN_THRESHOLD     "Fan On Above"
 #define PARAM_ALARM             "Controller Fault"
 #define PARAM_LPS               "Low Pressure"
+#define PARAM_RL1               "RL1 Multiport"
+#define PARAM_RL2               "RL2 Multiport"
 #define PARAM_STATUS            "Status"
 
 /* ------------------------------------------------------------------ web server */
 #define WEB_PORT                80
 #define CAL_USER                "admin"
 #define CAL_PASS_DEFAULT        "ro-calibrate"   /* changeable at /cal, stored in NVS */
+/* The hub's own access point. OFF as deployed 2026-09-01: the dashboard and
+ * /cal are reached over the house LAN only.
+ *
+ * Set to 1 and reflash to bring it back — that is the whole switch, deliberately
+ * a compile-time one. A runtime toggle would need an NVS key, a control on /cal
+ * and a way to recover when somebody turns the AP off from the AP, and none of
+ * that is worth building for a setting that changes about once.
+ *
+ * What turning it off costs, stated plainly: if the router dies, or the hub
+ * falls off the Wi-Fi, there is NO local way in. No dashboard, no /cal, no
+ * calibration on a roof without a working network. RS485 polling, the alerts
+ * and the fan policy all carry on regardless — the hub keeps running the plant,
+ * you just cannot see or configure it until the LAN is back. */
+#define AP_MODE_ENABLED         0
 #define AP_SSID                 "RO-HUB"
 #define AP_PASS                 "ro-monitor"
 #define MDNS_HOSTNAME           "ro-hub"
@@ -263,6 +290,10 @@ typedef struct {
 
 typedef struct {
     bool     running;              /* mains present on the contactor opto */
+    bool     ac_floating;          /* opto VCC or OUT lost continuity - `running`
+                                    * then reads false and means nothing. Seen on
+                                    * this build once, a broken wire at the
+                                    * module (WIRING.md 1) */
     int16_t  deci_amps;            /* -1 while no clamp is fitted */
     uint32_t mv_lo;                /* raw probe figures, surfaced for commissioning */
     uint32_t mv_hi;

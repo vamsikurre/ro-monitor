@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <esp_app_desc.h>
+
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -121,9 +123,28 @@ static esp_err_t deny(httpd_req_t *req)
 {
     /* The realm string is what the browser shows in its password box. */
     httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"RO Hub calibration\"");
-    httpd_resp_send(req, "Calibration requires the hub password.", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"RO Hub\"");
+    httpd_resp_send(req, "This page needs the hub password.", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
+}
+
+typedef struct {
+    const char      *uri;
+    httpd_method_t   method;
+    esp_err_t      (*fn)(httpd_req_t *);
+    bool             open;      /* true = reachable without the password */
+} route_t;
+
+/* Every request lands here first. Nothing reaches a handler without passing
+ * this, so "protected" is the default and "open" is a decision someone had to
+ * write down. */
+static esp_err_t gate(httpd_req_t *req)
+{
+    const route_t *r = (const route_t *)req->user_ctx;
+    if (!r->open && !authorised(req)) {
+        return deny(req);
+    }
+    return r->fn(req);
 }
 
 /* Basic auth sends the password base64-encoded, which is encoding and not
@@ -222,7 +243,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "{\"id\":\"0x06\",\"role\":\"Motors\",\"link\":\"Wi-Fi\",\"state\":\"OFFLINE\",\"age_s\":9999}"
         "]"
         "}",
-        esp_timer_get_time() / 1000000, 0, FW_VERSION, "Power on",
+        esp_timer_get_time() / 1000000, 0, esp_app_get_description()->version, "Power on",
         (s->rwt_online ? 1 : 0) + (s->twt_online ? 1 : 0) + (s->battery_online ? 1 : 0),
         (unsigned long)rs485_error_count(), (unsigned long)s->last_cycle_ms,
 
@@ -278,10 +299,6 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 static esp_err_t cal_get(httpd_req_t *req)
 {
-    if (!authorised(req)) {
-        return deny(req);
-    }
-
     static char page[4096];
     int n = 0;
 
@@ -515,8 +532,6 @@ static const char *ct_key_i(int i)   { return cal_ct_key((cal_ct_t)i); }
 
 static esp_err_t cal_tank_post(httpd_req_t *req)
 {
-    if (!authorised(req)) return deny(req);
-
     char body[192], f[16];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
 
@@ -542,8 +557,6 @@ static esp_err_t cal_tank_post(httpd_req_t *req)
 
 static esp_err_t cal_ct_post(httpd_req_t *req)
 {
-    if (!authorised(req)) return deny(req);
-
     char body[192], f[16];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
 
@@ -571,8 +584,6 @@ static esp_err_t cal_ct_post(httpd_req_t *req)
 
 static esp_err_t cal_fan_post(httpd_req_t *req)
 {
-    if (!authorised(req)) return deny(req);
-
     char body[192], on[16], off[16];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
     if (!form_field(body, "on", on, sizeof(on)) ||
@@ -592,8 +603,6 @@ static esp_err_t cal_fan_post(httpd_req_t *req)
 
 static esp_err_t cal_pass_post(httpd_req_t *req)
 {
-    if (!authorised(req)) return deny(req);
-
     char body[128], pass[48];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
     if (!form_field(body, "pass", pass, sizeof(pass))) return bad(req, "need pass");
@@ -631,17 +640,28 @@ esp_err_t web_start(void)
         return err;
     }
 
-    const httpd_uri_t routes[] = {
-        { .uri = "/",               .method = HTTP_GET,  .handler = dashboard_get },
-        { .uri = "/api/telemetry",  .method = HTTP_GET,  .handler = telemetry_get },
-        { .uri = "/cal",            .method = HTTP_GET,  .handler = cal_get },
-        { .uri = "/api/cal/tank",   .method = HTTP_POST, .handler = cal_tank_post },
-        { .uri = "/api/cal/ct",     .method = HTTP_POST, .handler = cal_ct_post },
-        { .uri = "/api/cal/fan",    .method = HTTP_POST, .handler = cal_fan_post },
-        { .uri = "/api/cal/pass",   .method = HTTP_POST, .handler = cal_pass_post },
+    /* PUBLIC is opt-in. Every route goes through gate(), so a handler added
+     * later is password-protected unless whoever adds it deliberately writes
+     * .open = true next to it. The old arrangement put the check inside each
+     * handler, which protects exactly the handlers somebody remembered - and
+     * the next thing to land here is a relay toggle. */
+    static const route_t routes[] = {
+        { "/",              HTTP_GET,  dashboard_get,  true  },  /* read-only, no password */
+        { "/api/telemetry", HTTP_GET,  telemetry_get,  true  },  /* what the dashboard polls */
+        { "/cal",           HTTP_GET,  cal_get,        false },
+        { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
+        { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
+        { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
+        { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
-        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &routes[i]));
+        httpd_uri_t u = {
+            .uri      = routes[i].uri,
+            .method   = routes[i].method,
+            .handler  = gate,
+            .user_ctx = (void *)&routes[i],
+        };
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &u));
     }
 
     ESP_LOGI(TAG, "dashboard on :%d, calibration at /cal", WEB_PORT);

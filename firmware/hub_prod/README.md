@@ -49,10 +49,57 @@ of truth. Delete `sdkconfig` and rebuild if the config ever looks wrong.
 
 ---
 
+## OTA from the RainMaker dashboard
+
+Wired and enabled: `esp_rmaker_ota_enable_default()` in `app_main.c`, two 1.84 MB
+app slots in `partitions.csv`, HTTPS transport, 3 retries 5 minutes apart. Push a
+job from the dashboard and the node acts on it over its OTA topic. The current
+image is 1.5 MB, so a new one has room in the other slot.
+
+Three things were fixed on 2026-09-01 before this could be relied on:
+
+| | Was | Now |
+| :--- | :--- | :--- |
+| **Automatic rollback** | off — `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` unset, so `ROLLBACK_WAIT_PERIOD=90` was inert | **on.** A new image boots as *pending verify* and is only marked good once it reaches the cloud. If it cannot within 90 s, the ESP reboots into the previous slot on its own |
+| **Autofetch period** | `3600` in `sdkconfig.defaults` — the unit is **hours**, range 0-168, so it was out of range, ignored, and the build ran with `0` (ask once per boot) | **24** — a daily catch-up for jobs missed while offline |
+| **Reported version** | `PROJECT_VER` unset and a hand-maintained `FW_VERSION "1.0.0"` in `app_priv.h` that never left the header | **The version is the git description.** `CMakeLists.txt` runs `git describe --always --tags --dirty` into `PROJECT_VER`, and the banner, the RainMaker `Firmware` attribute and the dashboard footer all read it back from the app descriptor |
+
+Rollback matters more on this build than on most. The onboard USB-serial is
+destroyed (`WIRING.md` §0.3.1) and the local AP is now off, so an OTA image that
+boots but cannot connect would leave **no way in at all** short of an FTDI and the
+BOOT/EN dance in the plant room. With rollback on, that image reverts itself.
+
+### The version is the commit
+
+`1.0.0` was a number somebody had to remember to bump, and RainMaker refuses an
+update whose version equals the running one — so a forgotten bump shows up as an
+OTA that silently declines with *"Current running version is same as the new"*,
+blaming the version rather than the habit. The version is now whatever
+`git describe --always --tags --dirty` says:
+
+| On the device | Means |
+| :--- | :--- |
+| `a3cb57d` | exactly that commit |
+| `a3cb57d-dirty` | that commit **plus uncommitted changes** — you flashed a tree that is not in git |
+| `v1.2-4-ga3cb57d` | 4 commits past tag `v1.2`, if anything is ever tagged |
+
+Ordering is not required: RainMaker only checks that the two version strings
+*differ*, never that the new one is greater, so a hash is a complete answer.
+
+Commit before you build if you want the hash to mean anything — `-dirty` is the
+build telling you it cannot identify what is on the box. Configure re-runs when
+`.git/HEAD` or `.git/index` changes, so a fresh commit updates the version
+without a manual `idf.py reconfigure`; if a version ever looks stale, that is the
+command.
+
+---
+
 ## First-boot pairing
 
-Provisioning is over **BLE**, not SoftAP — which is what leaves the hub's own
-access point free to serve the calibration page at the same time.
+Provisioning is over **BLE**, not SoftAP. That used to be what kept the hub's own
+access point free to serve `/cal` at the same time; the AP is off as of
+2026-09-01 and BLE remains the transport because it does not contend with the
+station link.
 
 1. ESP RainMaker app → **Add Device**
 2. Scan the QR code printed on the serial console
@@ -73,7 +120,7 @@ need when the *router* is the thing that has failed.
 | Path | Address |
 | :--- | :--- |
 | Over the LAN | `http://ro-hub.local/` or the DHCP address |
-| Hub's own AP | SSID `RO-HUB`, password `ro-monitor` → `http://192.168.4.1/` |
+| Hub's own AP | **Disabled** as of 2026-09-01 (`AP_MODE_ENABLED 0`, `app_priv.h`). Dashboard and `/cal` are LAN-only. Set to `1` and reflash to restore `RO-HUB` / `ro-monitor` → `http://192.168.4.1/` |
 | Calibration | `/cal` — user `admin`, password `ro-calibrate` (change it on that page) |
 
 Change the calibration password on first commissioning. It is stored in NVS, so

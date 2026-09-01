@@ -28,28 +28,58 @@ CONFIG_ESP_RMAKER_LOCAL_CTRL_AUTO_ENABLE=n
 #                         false, true, portMAX_DELAY);
 # guarded by #if !CONFIG_APP_NETWORK_ASYNCHRONOUS_CONNECTION. Without this
 # option it blocks FOREVER until Wi-Fi connects, so everything after that call
-# in app_main never runs: no SoftAP, no mDNS, no web server, and - worst - no
+# in app_main never runs: no mDNS, no web server, and - worst - no
 # poll task, meaning the hub does no RS485 polling and no sensing at all until
 # it is provisioned and on a router.
 #
-# That would defeat the whole AP+STA design, whose entire point is that the
-# dashboard and /cal work on a roof with no router and survive the router being
-# the thing that failed. Observed on the first hardware boot, 2026-08-28: the
-# log stopped at "Provisioning will auto stop after 30 minute(s)" and none of
-# app_main's closing banner ever printed.
+# Observed on the first hardware boot, 2026-08-28: the log stopped at
+# "Provisioning will auto stop after 30 minute(s)" and none of app_main's
+# closing banner ever printed.
+#
+# This mattered even more when the hub raised its own AP; that AP is off as of
+# 2026-09-01 (AP_MODE_ENABLED 0) and the reason still stands unchanged. An
+# unprovisioned or unreachable hub must still POLL - the plant does not stop
+# needing its fan policy and its RS485 cycle because the router is down.
 CONFIG_APP_NETWORK_ASYNCHRONOUS_CONNECTION=y
 
 # --- BLE provisioning ---
-# BLE, not SoftAP — which is what leaves the hub's own AP free to serve the
-# calibration page at the same time. See start_softap() in app_main.c.
+# BLE, not SoftAP. This used to be what kept the hub's own AP free to serve /cal
+# at the same time; that AP is now off (AP_MODE_ENABLED 0, app_priv.h) and BLE
+# stays the transport regardless - it is the one that does not fight the STA
+# link. SOFTAP_SUPPORT is left compiled in so re-enabling the AP is one #define
+# and a reflash, not a config archaeology exercise.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_APP_NETWORK_PROV_TRANSPORT_BLE=y
 CONFIG_NETWORK_PROV_BLE_SEC_CONN=y
 
 # --- OTA updates ---
+# A push from the RainMaker dashboard reaches the node over its OTA topic
+# whether or not autofetch is on; the period below only decides how often the
+# node ASKS for a job it might have missed while offline.
+#
+# ESP_RMAKER_OTA_AUTOFETCH_PERIOD is in HOURS, range 0-168. This file said 3600,
+# which is not seconds and not in range - it was silently ignored and the build
+# ran with 0 (ask once per boot, then never again). 24 is a daily catch-up.
 CONFIG_ESP_RMAKER_OTA_AUTOFETCH=y
-CONFIG_ESP_RMAKER_OTA_AUTOFETCH_PERIOD=3600
+CONFIG_ESP_RMAKER_OTA_AUTOFETCH_PERIOD=24
+
+# Roll back automatically if a new image cannot reach the cloud.
+#
+# Without this the bootloader marks every OTA image permanently valid the
+# instant it boots, so an image that comes up but cannot connect - a bad Wi-Fi
+# change, a crash after init, a half-written flash - leaves a hub that is
+# unreachable and stays unreachable. Recovery is then physical: the onboard
+# USB-serial on this board is destroyed (WIRING.md 0.3.1), so it means an FTDI,
+# the BOOT/EN dance, and standing in the plant room. With the local AP now off
+# too, there is no second way in at all.
+#
+# Enabled, the new image boots as "pending verify" and RainMaker marks it good
+# only once it is talking to the cloud. If it is not talking within
+# ROLLBACK_WAIT_PERIOD the ESP reboots into the previous slot by itself. The
+# observed first cloud connect on this hardware was 7.4 s, so 90 s is ample.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_RMAKER_OTA_ROLLBACK_WAIT_PERIOD=90
 
 # --- HTTP server ---
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

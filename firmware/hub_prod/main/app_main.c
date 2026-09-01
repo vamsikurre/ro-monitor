@@ -42,6 +42,7 @@
 #include <esp_rmaker_common_events.h>
 #include <esp_rmaker_core.h>
 #include <esp_rmaker_ota.h>
+#include <esp_app_desc.h>
 #include <esp_rmaker_scenes.h>
 #include <esp_rmaker_schedule.h>
 #include <esp_rmaker_standard_params.h>
@@ -163,9 +164,13 @@ typedef struct {
 } alert_t;
 
 static alert_t s_al_twt_full, s_al_rwt_full, s_al_dos_low, s_al_bat_hot;
-static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost;
+static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle;
 
-static void alert_eval(alert_t *a, bool tripped, const char *msg)
+/* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
+ * A non-zero value re-notifies on that interval for as long as the condition
+ * holds, and is for the small number of faults that stay true until a person
+ * physically intervenes. Everything else passes 0 on purpose. */
+static void alert_eval(alert_t *a, bool tripped, const char *msg, uint32_t repeat_ms)
 {
     int64_t now = esp_timer_get_time();
 
@@ -173,13 +178,29 @@ static void alert_eval(alert_t *a, bool tripped, const char *msg)
         a->latched = false;
         return;
     }
-    /* One notification per trip. While the condition stays true this returns
-     * here and never fires again - deliberately. Re-notifying about a fault
-     * somebody already knows about is how people learn to mute the app, and the
-     * dashboard and the app's own parameter both still show the live state.
+    /* One notification per trip, unless this alert asked for reminders.
+     * Re-notifying about a fault somebody already knows about is how people
+     * learn to mute the app, and the dashboard and the app's own parameter both
+     * still show the live state - so the default is silence after the first.
      *
-     * ALERT_REARM_MS is NOT a repeat interval - there are no repeats. */
+     * ALERT_REARM_MS is NOT the repeat interval; it is the floor between
+     * separate TRIPS. repeat_ms is the reminder interval within one trip. */
     if (a->latched) {
+        if (repeat_ms == 0) {
+            return;
+        }
+        if ((now - a->last_fired_us) < (int64_t)repeat_ms * 1000) {
+            return;
+        }
+        /* Due for a reminder: fall through and fire again. The rearm floor below
+         * is skipped deliberately - it guards against a flapping sensor raising
+         * a NEW trip too soon, which is not what this is. */
+        ESP_LOGW(TAG, "ALERT (still active): %s", msg);
+        if (!s_cloud_up) {
+            return;
+        }
+        a->last_fired_us = now;
+        esp_rmaker_raise_alert(msg);
         return;
     }
 
@@ -221,21 +242,21 @@ static void evaluate_alerts(const hub_state_t *s)
         bool full = s->twt.pct > ALERT_TANK_FULL_PCT;
         if (s->twt.pct < ALERT_TANK_FULL_PCT - ALERT_HYST_PCT) full = false;
         snprintf(msg, sizeof(msg), "Treated water tank full (%d%%). RO plant entering standby.", s->twt.pct);
-        alert_eval(&s_al_twt_full, full, msg);
+        alert_eval(&s_al_twt_full, full, msg, 0);
     }
 
     if (s->rwt.pct >= 0 && s->rwt_online) {
         bool full = s->rwt.pct > ALERT_TANK_FULL_PCT;
         if (s->rwt.pct < ALERT_TANK_FULL_PCT - ALERT_HYST_PCT) full = false;
         snprintf(msg, sizeof(msg), "Raw water tank full (%d%%). Check the float and the sump motor.", s->rwt.pct);
-        alert_eval(&s_al_rwt_full, full, msg);
+        alert_eval(&s_al_rwt_full, full, msg, 0);
     }
 
     if (s->dosing.pct >= 0) {
         bool low = s->dosing.pct < ALERT_DOSING_LOW_PCT;
         if (s->dosing.pct > ALERT_DOSING_LOW_PCT + ALERT_HYST_PCT) low = false;
         snprintf(msg, sizeof(msg), "Dosing chemical low (%d%%). Replenish the anti-scalant.", s->dosing.pct);
-        alert_eval(&s_al_dos_low, low, msg);
+        alert_eval(&s_al_dos_low, low, msg, 0);
     }
 
     if (!s->battery_room.fault && s->battery_online) {
@@ -243,7 +264,7 @@ static void evaluate_alerts(const hub_state_t *s)
         snprintf(msg, sizeof(msg), "Battery room %d.%d C. Exhaust fan %s.",
                  s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10),
                  s->fan_on ? "ON" : "not running");
-        alert_eval(&s_al_bat_hot, hot, msg);
+        alert_eval(&s_al_bat_hot, hot, msg, 0);
     }
 
     /* The Aster multiplexes every fault condition onto the one AUX OP contact, so
@@ -251,14 +272,18 @@ static void evaluate_alerts(const hub_state_t *s)
      * LPS is tapped separately for exactly that reason: closed at the same time,
      * low feed pressure IS the cause and the alert can name it instead of sending
      * someone to read the panel. That is what the channel was spent on. */
+    /* The one alert that reminds. A tripped Aster stops making water and stays
+     * stopped until somebody walks over and resets it, so silence after the
+     * first notification is silence about a plant that is down. Every other
+     * alert here clears itself when the condition does; this one does not. */
     if (s->alarm_active && s->lps_active) {
         alert_eval(&s_al_fault, true,
                    "RO controller fault: LOW FEED PRESSURE. Check the feed pump, "
-                   "the filters and the LPS setting.");
+                   "the filters and the LPS setting.", ALERT_REPEAT_MS);
     } else {
         alert_eval(&s_al_fault, s->alarm_active,
-                   "RO controller fault, cause not identified. Check the panel: "
-                   "dosing level, pump overload, level interlocks.");
+                   "RO controller fault, cause unknown. Check panel: dosing, "
+                   "pump overload, interlocks.", ALERT_REPEAT_MS);
     }
 
     if (s->overcurrent) {
@@ -267,17 +292,54 @@ static void evaluate_alerts(const hub_state_t *s)
                  s->hpp.deci_amps < 0 ? 0 : s->hpp.deci_amps % 10,
                  s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps / 10,
                  s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps % 10);
-        alert_eval(&s_al_overcurrent, true, msg);
+        alert_eval(&s_al_overcurrent, true, msg, 0);
     } else {
-        alert_eval(&s_al_overcurrent, false, NULL);
+        alert_eval(&s_al_overcurrent, false, NULL, 0);
     }
+
+    /* The plant is idle while the treated water tank still has room for water.
+     * TWT FLOTY is a C/NC contact: CLOSED is the healthy "not full" state
+     * (WIRING.md 6.1), so closed-and-not-producing means the plant should be
+     * making water and is not. The tank being full opens the contact and this
+     * goes quiet, which is why it does not fire every night in standby.
+     *
+     * Two guards, both earned:
+     *   - IDLE_HOLD_MS, because the Aster flushes and backwashes and the HPP
+     *     drops out legitimately for a few minutes at a time. Alerting on the
+     *     instant it stops would notify on every normal cycle.
+     *   - ac_floating, because a broken wire at the opto module reads exactly
+     *     like a stopped pump, and that has already happened once on this
+     *     build. Without this, one loose wire produces an hourly notification
+     *     about a plant that is running perfectly.
+     *
+     * The message names MANUAL mode specifically because that is the observed
+     * cause: maintenance leaves the Aster in manual and forgets to put it back,
+     * and the plant then sits there making nothing until somebody notices the
+     * taps running dry. The hub cannot see the AUTO/MANUAL switch - it is not
+     * wired anywhere - so the alert names the likeliest reason rather than
+     * asking for a general look at the panel. The nagging is the feature. */
+    static int64_t hpp_last_seen_running_us = 0;
+    int64_t now_us = esp_timer_get_time();
+    /* Seed from boot, not from the first time the pump is seen running. A hub
+     * that reboots while the plant is already down would otherwise stay silent
+     * forever - and a reboot during a fault is exactly when it must not. */
+    if (hpp_last_seen_running_us == 0 || s->hpp.running) {
+        hpp_last_seen_running_us = now_us;
+    }
+    bool idle_long_enough =
+        (now_us - hpp_last_seen_running_us) >= (int64_t)ALERT_IDLE_HOLD_MS * 1000;
+    bool should_be_producing = !s->hpp.running && !s->hpp.ac_floating &&
+                               s->twt_float_closed && idle_long_enough;
+    alert_eval(&s_al_idle, should_be_producing,
+               "RO idle 15 min, treated water tank has room. "
+               "Is the Aster still in MANUAL?", ALERT_REPEAT_MS);
 
     bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online;
     snprintf(msg, sizeof(msg), "RS485 node offline: %s%s%s. Check the bus and the terminators.",
              s->rwt_online ? "" : "0x02 RWT ",
              s->twt_online ? "" : "0x03 TWT ",
              s->battery_online ? "" : "0x04 Battery ");
-    alert_eval(&s_al_node_lost, any_lost, msg);
+    alert_eval(&s_al_node_lost, any_lost, msg, 0);
 }
 
 /* -------------------------------------------------------------- fan policy */
@@ -488,6 +550,7 @@ static void poll_task(void *arg)
     /* Deadbands, remembered per parameter so report_*() can skip no-op updates. */
     int   last_rwt = INT32_MIN, last_twt = INT32_MIN, last_dos = INT32_MIN;
     int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
+    int   last_twt_float = -1, last_rl1 = -1, last_rl2 = -1;
     int   last_lps = -1;
     char  last_status[64] = "";
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
@@ -542,14 +605,15 @@ static void poll_task(void *arg)
         local.alarm_active = alarm_active();
         local.lps_active = opto_lps_active();
 
-        bool floating = false;
-        ac_probe(GPIO_IN_HPP_AC, &local.hpp.running, &floating, &local.hpp.mv_lo, &local.hpp.mv_hi);
-        if (floating) {
+        ac_probe(GPIO_IN_HPP_AC, &local.hpp.running, &local.hpp.ac_floating,
+                 &local.hpp.mv_lo, &local.hpp.mv_hi);
+        if (local.hpp.ac_floating) {
             ESP_LOGW(TAG, "HPP AC channel floating (%lu-%lu mV) — check VCC and OUT at the module",
                      (unsigned long)local.hpp.mv_lo, (unsigned long)local.hpp.mv_hi);
         }
-        ac_probe(GPIO_IN_RWP_AC, &local.rwp.running, &floating, &local.rwp.mv_lo, &local.rwp.mv_hi);
-        if (floating) {
+        ac_probe(GPIO_IN_RWP_AC, &local.rwp.running, &local.rwp.ac_floating,
+                 &local.rwp.mv_lo, &local.rwp.mv_hi);
+        if (local.rwp.ac_floating) {
             ESP_LOGW(TAG, "RWP AC channel floating (%lu-%lu mV) — check VCC and OUT at the module",
                      (unsigned long)local.rwp.mv_lo, (unsigned long)local.rwp.mv_hi);
         }
@@ -607,6 +671,9 @@ static void poll_task(void *arg)
         report_bool(s_dev_vent, PARAM_FAN_ON, local.fan_on, &last_fan);
         report_bool(s_dev_plant, PARAM_ALARM, local.alarm_active, &last_alarm);
         report_bool(s_dev_plant, PARAM_LPS, local.lps_active, &last_lps);
+        report_bool(s_dev_tanks, PARAM_TWT_FLOAT, local.twt_float_closed, &last_twt_float);
+        report_bool(s_dev_plant, PARAM_RL1, local.rl1_active, &last_rl1);
+        report_bool(s_dev_plant, PARAM_RL2, local.rl2_active, &last_rl2);
 
         /* A one-line summary is what the app shows without opening anything. */
         char status[64];
@@ -700,6 +767,12 @@ static void build_node(esp_rmaker_node_t *node)
                                                       esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_DOS_PCT, "esp.param.water-level",
                                                       esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+    /* The Aster's own TWT float, next to our ultrasonic reading of the same tank,
+     * because the useful thing is the DISAGREEMENT: float closed with the level
+     * reading low means one of the two is lying, and until now the app could only
+     * see one of them. */
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_FLOAT, "esp.param.toggle",
+                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
     esp_rmaker_node_add_device(node, s_dev_tanks);
 
     /* --- pumps and current --- */
@@ -757,6 +830,12 @@ static void build_node(esp_rmaker_node_t *node)
                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
     esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_LPS, "esp.param.alert",
                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    /* Not alerts - these two are just the multiport valve's position, which is
+     * how you tell "producing" from "backwashing" without standing in the room. */
+    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_RL1, "esp.param.toggle",
+                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_RL2, "esp.param.toggle",
+                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
     esp_rmaker_node_add_device(node, s_dev_plant);
 }
 
@@ -781,7 +860,7 @@ static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, v
  * router is the thing that has failed. Provisioning is over BLE, not SoftAP, so
  * this AP does not contend with it.
  */
-#if CONFIG_ESP_WIFI_SOFTAP_SUPPORT
+#if CONFIG_ESP_WIFI_SOFTAP_SUPPORT && AP_MODE_ENABLED
 static void start_softap(void)
 {
     esp_netif_create_default_wifi_ap();
@@ -818,11 +897,14 @@ static void start_softap(void)
     ESP_LOGI(TAG, "AP up: SSID %s -> http://192.168.4.1/", AP_SSID);
 }
 #else
-/* SoftAP compiled out. Provisioning is BLE, so pairing still works - what is
- * lost is reaching /cal without a working router. */
+/* AP off, by AP_MODE_ENABLED or because SoftAP is not compiled in. Provisioning
+ * is BLE so pairing still works; what is lost is reaching the dashboard and /cal
+ * without a working router. Logged at boot rather than left silent, because "I
+ * cannot find RO-HUB" is otherwise indistinguishable from a broken radio. */
 static void start_softap(void)
 {
-    ESP_LOGW(TAG, "SoftAP not compiled in - /cal needs the LAN");
+    ESP_LOGW(TAG, "local AP disabled (AP_MODE_ENABLED=%d) - dashboard and /cal are LAN only",
+             AP_MODE_ENABLED);
 }
 #endif
 
@@ -878,7 +960,7 @@ static void button_task(void *arg)
 void app_main(void)
 {
     ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "  RO Monitor — Central Hub  fw %s", FW_VERSION);
+    ESP_LOGI(TAG, "  RO Monitor — Central Hub  fw %s", esp_app_get_description()->version);
     ESP_LOGI(TAG, "==========================================");
 
     esp_err_t err = nvs_flash_init();
@@ -924,7 +1006,7 @@ void app_main(void)
     }
     esp_rmaker_node_add_attribute(node, "Project", NODE_PROJECT);
     esp_rmaker_node_add_attribute(node, "Device Type", NODE_TYPE);
-    esp_rmaker_node_add_attribute(node, "Firmware", FW_VERSION);
+    esp_rmaker_node_add_attribute(node, "Firmware", esp_app_get_description()->version);
 
     build_node(node);
 

@@ -104,7 +104,36 @@ ESP RainMaker automatically dispatches native push notifications to all paired m
 
 ## 5. Provisioning & Pairing Procedure
 
-1. **BLE / SoftAP Pairing:** On initial startup (or when BOOT button is held for 5 seconds), the ESP32 Central Hub enters BLE pairing mode with a flashing Blue Status LED.
+1. **BLE pairing — not SoftAP.** A hub that has never been provisioned is already in pairing mode at boot and stays there **30 minutes** (`CONFIG_APP_NETWORK_PROV_TIMEOUT_PERIOD`). To re-arm it afterwards, **hold `BOOT` for ~5 seconds and release** — the action fires on release, and the accepted window is **3 to 9 seconds**:
+
+   | Hold | On release | Notes |
+   | :--- | :--- | :--- |
+   | tap, < 3 s | **nothing** | Not a pairing gesture. Neither is a power cycle — a provisioned hub just reconnects |
+   | **3-9 s** | **Wi-Fi reset → pairing mode** | The one you want. `esp_rmaker_wifi_reset(2, 2)` |
+   | **≥ 10 s** | **factory reset** | `esp_rmaker_factory_reset(2, 2)` — also unclaims the node from the RainMaker account, and re-claiming needs the app and internet again. **Let go before ten.** |
+
+   > **`BOOT` held while the board is reset is NOT pairing mode — it is flash download mode.** `GPIO 0` is a strapping pin. Press and hold `BOOT` on an already-running hub; never combine it with `EN` or a power cycle. Easy to get wrong with the FTDI sitting right there (`WIRING.md` §0.3.1).
+
+   > **The blue LED is not a pairing indicator.** `GPIO 2` is driven only by the poll loop — one blink per 2 s cycle, provisioned or not. It says the poll task is alive and nothing else. Judge pairing from the serial log or from the app, never from the LED. *(This line previously claimed a "flashing Blue Status LED" marked pairing mode. It never did.)*
 2. **ESP RainMaker App:** Open the ESP RainMaker app (available on Google Play Store & Apple App Store).
-3. **Scan QR Code / BLE Device:** Select "Add Device" $\to$ Scan the provisioning QR code displayed on the serial console or printed on the Hub enclosure.
-4. **Wi-Fi Configuration:** Select the home/facility Wi-Fi network and enter the credentials. The Hub connects, authenticates with AWS IoT, and registers all devices automatically.
+3. **Scan QR Code / BLE Device:** Select "Add Device" $\to$ scan the QR printed on the serial console at boot, or choose "I don't have a QR code" and pick the BLE device named **`PROV_xxxxxx`**. The proof of possession is **`rohub1234`** (`app_network_set_custom_pop()` in `app_main.c`).
+
+   > **The phone needs working internet during pairing.** This hub uses **Assisted Claiming** — the original ESP32-WROOM-32 cannot self-claim, so the app fetches the node certificate from the RainMaker cloud and hands it over during the BLE session. On a roof with no mobile data, pairing fails at the claim step and the error does not name the cause. Pair where there is signal.
+4. **Wi-Fi Configuration:** Select the home/facility Wi-Fi network and enter the credentials. The Hub connects, authenticates with AWS IoT, and registers all devices automatically. A wrong password is recoverable without touching the board: after `CONFIG_APP_NETWORK_PROV_MAX_RETRY_CNT` = 3 failed attempts, `CONFIG_APP_NETWORK_RESET_PROV_ON_FAILURE` returns it to pairing mode by itself.
+
+**There is no `RO-HUB` access point any more.** As of 2026-09-01 the hub's own AP is **off** (`AP_MODE_ENABLED 0` in `app_priv.h`) and the dashboard and `/cal` are reachable **over the house LAN only** — `http://ro-hub.local/` or the hub's DHCP address. Provisioning is still BLE and is unaffected.
+
+> **What that costs, so it is not a surprise on a bad day:** if the router dies or the hub drops off the Wi-Fi, there is no local way in at all — no dashboard, no `/cal`, no calibrating a tank on a roof without a working network. RS485 polling, the alerts and the fan policy all continue regardless; the hub keeps running the plant, you just cannot see or configure it until the LAN is back. Bringing the AP back is `AP_MODE_ENABLED 1` and a reflash — deliberately a compile-time switch, because a runtime one has to answer "what happens when somebody turns the AP off while connected to the AP".
+
+### 5.1. Who needs the password
+
+The dashboard is deliberately open — it is read-only, it shows tank levels and pump states, and anyone already on the house LAN can see the plant without hunting for a password. Everything that *changes* something is behind HTTP Basic (`admin` / the password stored in NVS, default `ro-calibrate`, changeable at `/cal`).
+
+| Route | Password | Why |
+| :--- | :---: | :--- |
+| `/` | no | Read-only view |
+| `/api/telemetry` | no | What the dashboard polls |
+| `/cal` and every `/api/cal/*` | **yes** | Changes calibration, thresholds, the password itself |
+| *anything added later* | **yes, by default** | See below |
+
+**Protected is the default in the code, not a convention.** Every route is registered through a single `gate()` in `app_web.c` that refuses unless the route is explicitly marked `.open = true`. A relay toggle added later is password-protected because somebody would have to go out of their way to make it public. The previous arrangement put the check inside each handler, which protects exactly the handlers somebody remembered to protect.
