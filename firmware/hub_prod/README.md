@@ -49,6 +49,29 @@ of truth. Delete `sdkconfig` and rebuild if the config ever looks wrong.
 
 ---
 
+## Looking at the running dashboard
+
+`.mcp.json` at the repo root registers the Playwright MCP server, so the live
+page can be opened in a real browser rather than guessed at from source. It is
+headless and isolated (no profile written to disk), and its origin allowlist is
+the hub only.
+
+This is worth doing before calling a dashboard change done. Fetching
+`/api/telemetry` with curl proves the JSON; it cannot show a console error, a
+failed request, or where an element actually landed on the page. Both of these
+were found that way and neither could have been caught by a checker:
+
+- `/favicon.ico` 404ing twice per page load, in a log whose value depends on a
+  warning meaning something
+- the sump sitting 44 px below the ground line it was supposed to meet - verified
+  fixed by measuring `sump.top === earth.top` in the rendered DOM, not by eye
+
+**Fetching the page with plain `curl` returns 406.** It is stored gzipped and the
+body says so; use `curl --compressed`, or a browser, which always sends
+`Accept-Encoding: gzip`.
+
+---
+
 ## OTA from the RainMaker dashboard
 
 Wired and enabled: `esp_rmaker_ota_enable_default()` in `app_main.c`, two 1.84 MB
