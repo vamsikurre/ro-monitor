@@ -22,7 +22,12 @@
   --ground-c:#10161F; --panel:#18202C; --line:#2A3646; --line-2:#3E4E63;
   --ink:#E6ECF3; --ink-2:#9AA7B8; --ink-3:#6B7787;
   /* fluids — categorical, ΔE 17.8 normal / 17.3 deutan */
-  --earth-lift:44px;
+  /* How far the earth band is pulled ABOVE its grid row so its top edge lands
+     exactly on the grade slab. Not a taste value: it is the plant row-gap
+     (32px) minus the grade slab's own overhang (19px). The sump reads the
+     same figure, so the ground line, the hatching and the sump rim cannot
+     drift apart. Was 44px, which started the hatching 22px above the line. */
+  --earth-lift:13px;
   --raw:#3E8F5F; --treated:#2B8FD4; --additive:#9A7B3C;
   /* TDS readouts. Deliberately NOT the vessel fluid colours: those say what is
      in the tank, these say how clean it is. Orange on the feed, green on the
@@ -64,6 +69,10 @@ h1 span{color:var(--ink-3); font-weight:400}
 }
 .mode::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--ink-3); animation:beat 2.6s ease-in-out infinite}
 .mode.live::before{background:var(--treated)}
+/* Cannot reach the hub. Red, and it stays red - it is not a transient to be
+   ridden out quietly, it means every number on this page is stale. */
+.mode.dead{color:var(--fault); border-color:var(--fault)}
+.mode.dead::before{background:var(--fault)}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* ── alerts ─────────────────────────────────────────────── */
@@ -106,7 +115,10 @@ h1 span{color:var(--ink-3); font-weight:400}
 .plant{
   position:relative; display:grid; min-width:1240px; transform-origin:top left;
   grid-template-columns:[lbl] 108px [c1] 2fr [c2] .8fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 2.1fr;
-  grid-template-rows:minmax(326px,auto) minmax(396px,auto) auto 0 auto;
+  /* roof, terrace, below ground. There was a ground-floor band between the
+     last two; once the sump moved underground where it belongs, all it held
+     was three parked cars. */
+  grid-template-rows:minmax(326px,auto) minmax(396px,auto) auto;
   row-gap:32px;
 }
 .plant > svg.pipes{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible}
@@ -115,6 +127,18 @@ h1 span{color:var(--ink-3); font-weight:400}
 .cell.line .unit > [data-a]{
   height:152px; display:flex; align-items:center; justify-content:center;
 }
+/* Stand a small glyph on the floor instead of floating it on the shared
+   centreline. The inset is the FILTER's own: 126px tall in a 152px box puts its
+   base 13px above the bottom, so matching it is what "same floor" means here.
+   Horizontal pipe anchors do NOT follow this - they use the 152px box, which is
+   what keeps the whole train on one line - so a unit moved off that line needs a
+   [data-y] marker or its pipes float where the glyph used to be.
+
+   JUSTIFY-content, not align-content: [data-a] carries .unit, which is
+   flex-direction:column, so the main axis is vertical and align-items only moves
+   things sideways. Setting align-items:flex-end here computed correctly and did
+   nothing visible, which is the most expensive kind of wrong. */
+.cell.line.floor .unit > [data-a]{justify-content:flex-end; padding-bottom:13px}
 .glyph{position:relative; display:flex; align-items:center; justify-content:center}
 .chipgap{height:19px}
 .cell.bottom{align-items:flex-end}
@@ -132,7 +156,13 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 /* the RO room, with both roof tanks resting on it */
 .room{grid-row:2; border:1px solid var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px -12px -21px; position:relative; z-index:1}
-.room > .tag{position:absolute; top:-8px; left:14px; background:var(--ground-c); padding:0 8px}
+/* Centred, not tucked into a corner. Both roof tanks hang a caption over a room
+   box below them - RWT over the RO room's left end, TWT over its right end and
+   over the annex - and those captions are z-index 3 with a solid background, so
+   a corner-pinned tag was buried whichever corner it used. The middle of each
+   top edge is the one span nothing hangs over. */
+.room > .tag{position:absolute; top:-8px; left:50%; transform:translateX(-50%);
+  background:var(--ground-c); padding:0 8px}
 
 /* Controller fault: the whole room reads as faulted, not just one row in the
    alert list. The Aster multiplexes every condition onto a single contact, so
@@ -169,6 +199,7 @@ h1 span{color:var(--ink-3); font-weight:400}
   letter-spacing:-.01em; margin-bottom:2px; text-align:center;
 }
 .tds u{text-decoration:none; font-size:10px; color:var(--ink-3); font-weight:600; margin-left:2px}
+.tds i{font-style:normal; color:var(--ink-3); margin:0 5px; font-weight:400}
 .tds.feed{color:var(--tds-feed)}
 .tds.clean{color:var(--tds-clean)}
 /* No probe, or a probe that has stopped answering: greyed, so it reads as an
@@ -187,7 +218,8 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 /* battery room — beside the RO room on the terrace, not in the water path */
 .annex{grid-row:2; border:1px dashed var(--line-2); border-bottom:0; border-radius:2px 2px 0 0; margin:-18px 0 -21px; position:relative; z-index:1; display:flex; align-items:center; justify-content:center}
-.annex > .tag{position:absolute; top:-8px; left:13px; background:var(--ground-c); padding:0 8px}
+.annex > .tag{position:absolute; top:-8px; left:50%; transform:translateX(-50%);
+  background:var(--ground-c); padding:0 8px}
 
 /* Structural slabs, hatched the way concrete reads in a section. Each
    sits in the gap below its level, so the equipment stands on a floor. */
@@ -202,7 +234,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 
 /* earth below grade */
 .earth{
-  grid-column:1 / -1; grid-row:5; align-self:stretch; position:relative; z-index:0;
+  grid-column:1 / -1; grid-row:3; align-self:stretch; position:relative; z-index:0;
   /* The band is pulled ABOVE its grid row so its top edge is the ground line.
      .cell.sunk uses the same figure, so a sump sitting on that line and the line
      itself cannot drift apart. */
@@ -377,7 +409,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 
 <header>
   <h1>Varenyam <span>/ RO Plant · Elevation</span></h1>
-  <span class="mode" id="mode">Demo data</span>
+  <span class="mode" id="mode">Connecting</span>
   <div class="hstats">
     <div class="hstat"><span class="legend">Firmware</span><span class="readout mono" id="hFw">–</span></div>
     <div class="hstat"><span class="legend">Bus</span><span class="readout" id="hBus">–</span></div>
@@ -626,33 +658,7 @@ function sized(vbW, vbH, paths, circles, w) {
   return svg;
 }
 
-/* Pickup: short hood, raked screen, cab, then an open bed. */
-function truckGlyph(w) {
-  return sized(132, 52, [
-    "M 6 44 L 6 30 Q 6 26 11 25 L 40 25 L 50 11 Q 52 9 56 9 L 72 9 Q 76 9 76 13 L 76 25 L 80 25 L 80 21 L 126 21 L 126 44",
-    "M 6 44 L 21 44", "M 39 44 L 95 44", "M 113 44 L 126 44",
-    "M 53 24 L 59 12 L 72 12 L 72 24 Z",
-    "M 80 21 L 80 44",
-    "M 85 26 L 121 26",
-    "M 126 30 L 131 30",
-  ], [[30, 44, 8], [104, 44, 8], [30, 44, 3], [104, 44, 3]], w);
-}
 
-/* G-Wagon: upright screen, flat roof, square arches, spare on the door. */
-function gwagonGlyph(w) {
-  return sized(126, 53, [
-    "M 6 44 L 6 24 L 10 20 L 34 20 L 36 7 L 102 7 L 102 44",
-    "M 6 44 L 19 44", "M 39 44 L 77 44", "M 97 44 L 102 44",
-    "M 40 18 L 41 10 L 58 10 L 58 18 Z",
-    "M 62 10 L 78 10 L 78 18 L 62 18 Z",
-    "M 82 10 L 97 10 L 97 18 L 82 18 Z",
-    "M 17 44 L 17 33 L 41 33 L 41 44",
-    "M 75 44 L 75 33 L 99 33 L 99 44",
-    "M 6 27 L 10 27",
-    "M 102 41 L 113 41",
-  ], [[29, 44, 9], [87, 44, 9], [29, 44, 3.5], [87, 44, 3.5],
-      [111, 26, 10], [111, 26, 4]], w);
-}
 
 /* A tilted PV row: panel plane, mounting rail, module joints. Drawn in
    a 200x62 box that stretches horizontally only, so the panel lengthens
@@ -686,16 +692,53 @@ function solarRow(cls) {
   return u;
 }
 
-/* Swift: small hatchback, steep screen, short rear overhang. */
-function swiftGlyph(w) {
-  return sized(108, 51, [
-    "M 5 43 L 5 29 Q 6 24 12 23 L 28 23 L 40 9 Q 43 7 48 7 L 73 7 Q 79 7 83 12 L 93 23 Q 99 26 99 33 L 99 43",
-    "M 5 43 L 18 43", "M 34 43 L 72 43", "M 88 43 L 99 43",
-    "M 32 22 L 43 11 L 57 11 L 57 22 Z",
-    "M 61 11 L 73 11 L 81 22 L 61 22 Z",
-    "M 59 11 L 59 22",
-    "M 99 30 L 105 30",
-  ], [[26, 43, 8], [80, 43, 8], [26, 43, 3], [80, 43, 3]], w);
+
+/* A submersible borewell pump: motor at the bottom, intake above it, pump stages
+   up the body, discharge at the top. Drawn long and slender because that shape is
+   what identifies it in a section - a disc reads as a surface-mounted pump, which
+   is the one thing this is not. */
+function boreGlyph({ r, running, dead }) {
+  const VW = 24, VH = 74, W = Math.round(r * 0.92);
+  const stroke = dead ? "var(--offline)" : "var(--line-2)";
+  const col = dead ? "var(--offline)" : running ? "var(--treated)" : "var(--ink-3)";
+  const svg = el("svg", { width: W, height: Math.round(W * VH / VW),
+                          viewBox: `0 0 ${VW} ${VH}`, "aria-hidden": "true" });
+  const line = d => svg.appendChild(el("path", { d, fill: "none", stroke,
+                                                 "stroke-width": 1.2, "stroke-linecap": "round" }));
+  line("M 12 8 L 12 0");                                     // discharge riser
+  svg.appendChild(el("rect", { x: 5, y: 8, width: 14, height: 40, rx: 5,
+                               fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
+  [16, 24, 32, 40].forEach(y => line(`M 5 ${y} H 19`));       // pump stages
+  line("M 5 52 H 19");                                       // intake screen
+  [8, 12, 16].forEach(x => line(`M ${x} 48 L ${x} 52`));
+  svg.appendChild(el("rect", { x: 6.5, y: 56, width: 11, height: 16, rx: 3,
+                               fill: "var(--panel)", stroke, "stroke-width": 1.3 }));   // motor
+  const hub = el("g", { transform: "translate(12 64)" });
+  const g = el("g", { class: "rotor" });
+  for (let i = 0; i < 3; i++)
+    g.appendChild(el("path", { d: "M 0 0 Q 1.8 -1.7 3.8 -0.8", fill: "none", stroke: col,
+                               "stroke-width": 1.4, "stroke-linecap": "round",
+                               transform: `rotate(${i * 120})` }));
+  g.appendChild(el("circle", { cx: 0, cy: 0, r: 1.3, fill: col }));
+  hub.appendChild(g);
+  svg.appendChild(hub);
+  return svg;
+}
+
+/* The reject side of the membrane. A solenoid valve: bow-tie body, coil on top.
+   Passive, because the RSV is not wired to the hub - this shows the pipe exists
+   and claims nothing about the valve position. */
+function equipValve(w, h) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  const cx = w / 2, cy = h * .66, bw = w * .40, bh = h * .26, stroke = "var(--line-2)";
+  svg.appendChild(el("path", {
+    d: `M ${cx - bw} ${cy - bh} L ${cx - bw} ${cy + bh} L ${cx + bw} ${cy - bh} L ${cx + bw} ${cy + bh} Z`,
+    fill: "var(--panel)", stroke, "stroke-width": 1.3, "stroke-linejoin": "round" }));
+  svg.appendChild(el("rect", { x: cx - w * .22, y: h * .12, width: w * .44, height: h * .26,
+                               rx: 2, fill: "var(--panel)", stroke, "stroke-width": 1.3 }));
+  svg.appendChild(el("path", { d: `M ${cx} ${h * .38} L ${cx} ${cy - bh * .35}`,
+                               fill: "none", stroke, "stroke-width": 1.2 }));
+  return svg;
 }
 
 /* A potted plant. Used twice at different sizes for scale. */
@@ -820,6 +863,28 @@ function hppGlyph({ r, running, dead }) {
 
 // where the base ports sit, as a fraction of the glyph height
 const HPP_PORT = 107 / 128;
+/* Where a delivery pipe lands on a vessel wall, as a fraction of vessel height.
+   Near the rim, because that is what a filling pipe does - it dumps in over the
+   top. The default mid-height anchor drew every inlet tapping the side halfway
+   down, which is a draw-off connection, not a fill. */
+const FILL_PORT = 0.12;
+
+/* Where a submersible pump discharges, as a fraction of the vessel height. Low,
+   because the pump sits on the floor of the sump and its delivery leaves from
+   there - the mid-height default drew it tapping out of the middle of the water. */
+const DRAW_PORT = 0.86;
+
+/* Put a connection at a given height on a unit's side wall. anchorPt() already
+   honours a [data-y] marker for left/right entries - it exists so the HPP can
+   port at its base - so this is that same mechanism, named. */
+function sidePort(cell, id, frac) {
+  const g = cell.querySelector(`[data-g="${id}"]`);
+  if (!g) return;
+  const ym = node("ymark");
+  ym.dataset.y = id;
+  ym.style.top = (frac * 100).toFixed(2) + "%";
+  g.appendChild(ym);
+}
 
 /* ── unit builders ────────────────────────────────────────── */
 function tankUnit(t, cfg) {
@@ -853,7 +918,11 @@ function tankUnit(t, cfg) {
       td.className = "tds none";
       td.textContent = "no reading";
     } else {
-      td.innerHTML = `${cfg.wq.ppm}<u>ppm</u>`;
+      /* Temperature beside the reading, not instead of it: ppm is quoted at 25 C
+         and moves ~2 %/degC, so the number means little without the water
+         temperature it was compensated against. */
+      td.innerHTML = `${cfg.wq.ppm}<u>ppm</u>`
+        + (cfg.wq.t === null ? "" : `<i>·</i>${cfg.wq.t.toFixed(1)}<u>°C</u>`);
     }
     u.appendChild(td);
   }
@@ -972,12 +1041,38 @@ function drawPipes() {
   const horiz = TEE_AXIS === "h";
   const rr = anchorPt("filter", horiz ? "r" : "b", h), hl = anchorPt("mf", horiz ? "l" : "t", h);
   const tee = (rr && hl) ? { x: (rr.x + hl.x) / 2, y: (rr.y + hl.y) / 2 } : null;
+  /* Line the injection point up with the dosing tank so its riser runs straight
+     into the main pipe. The midpoint of filter->MF is not above the tank - the
+     two glyphs are different widths and sit differently in their columns - so
+     the riser stepped sideways ~20px to reach it, a dogleg that says nothing
+     about the plant. Clamped to the run so the marker stays ON the pipe. */
+  if (tee) {
+    const d = anchorPt("dos", horiz ? "t" : "l", h);
+    if (d) {
+      const a = horiz ? rr.x : rr.y, b = horiz ? hl.x : hl.y, m = 10;
+      const v = Math.min(Math.max(horiz ? d.x : d.y, Math.min(a, b) + m), Math.max(a, b) - m);
+      if (horiz) tee.x = v; else tee.y = v;
+    }
+  }
 
   ROUTES.forEach(rt => {
     const a = anchorPt(rt.from, rt.fs, h);
     const b = rt.toTee ? tee : anchorPt(rt.to, rt.ts, h);
     if (!a || !b) return;
     const bs = rt.toTee ? (rt.teeSide || "b") : rt.ts;
+    /* A riser that goes STRAIGHT up into the vessel above it. Without this the
+       entry lands on the target's port fraction, which puts a dogleg in a pipe
+       whose two ends are already nearly in line. Computed here rather than by
+       tuning portx until it looks right: portx is a fraction of the vessel, so
+       the value that lines up depends on the column widths and would need
+       re-tuning every time the grid moved. Clamped to stay on the vessel. */
+    if (rt.straight && (bs === "t" || bs === "b")) {
+      const te = document.querySelector(`[data-g="${rt.to}"]`);
+      if (te) {
+        const tb = layoutBox(te, h), m = 16;
+        b.x = Math.min(Math.max(a.x, tb.x + m), tb.x + tb.w - m);
+      }
+    }
     const W = rt.thin ? [7, 5, 2.8, "5 7"] : [11, 8.4, 4.6, "9 11"];
     const common = { d: routeD(a, rt.fs, b, bs), fill: "none", "stroke-linejoin": "round", "stroke-linecap": "butt" };
     svg.appendChild(el("path", { ...common, stroke: "var(--line-2)", "stroke-width": W[0] }));
@@ -1023,16 +1118,17 @@ function buildPlant(s) {
     /* Concrete, not a moulded cylinder: a rectangular poured tank spanning the
        end of the roof slab. Bigger than the others because it is the biggest
        vessel on the roof, and box-shaped because that is what is up there. */
-    twt:    () => tankUnit(T.twt,    { w: 300, h: 186, shape: "box", fluid: "treated",  label: "Treated Water", id: "twt", stretch: true, corner: 2, portx: 0.08, wq: Q.twt, tdsKind: "clean" }),
+    twt:    () => tankUnit(T.twt,    { w: 300, h: 186, shape: "box", fluid: "treated",  label: "Treated Water", id: "twt", stretch: true, corner: 2, wq: Q.twt, tdsKind: "clean" }),
     dos:    () => tankUnit(T.dosing, { w: 82,  h: 96,  shape: "cyl", fluid: "additive", label: "Dosing",        id: "dos" }),
     sump:   () => tankUnit(T.sump,   { w: 176, h: 146, shape: "box", fluid: "raw",      label: "Sump",          id: "sump" }),
     rwp:    () => machineUnit(P.rwp, "RWP", "rwp", 25, null, s.motors && s.motors.rwp),
     hpp:    () => machineUnit(P.hpp, "HPP", "hpp", 25, hppGlyph, s.motors && s.motors.hpp),
     smotor: () => machineUnit(P.sump_motor, "Sump Motor", "smotor", 26, subPumpGlyph),
-    bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 26),
+    bore:   () => machineUnit(P.borewell, "Borewell Pump", "bore", 26, boreGlyph),
     filter: () => equipUnit(equipFilter, "Filter", "filter", 58, 126),
     mf:     () => equipUnit(equipMF, "MF", "mf", 26, 50),
     memb:   () => equipUnit(equipMembrane, "RO Membrane", "memb", 116, 42),
+    rsv:    () => equipUnit(equipValve, "RSV \u00b7 to drain", "rsv", 34, 46),
   };
   const cell = (k, col, row) => {
     const u = build[k]();
@@ -1105,6 +1201,7 @@ function buildPlant(s) {
     cell("mf", "main", 8);
     cell("hpp", "main", 9);
     cell("memb", "main", 10);
+    cell("rsv", "branch", 10);
     cell("twt", "main", 11).classList.add("wide");
     add(annexBox(), "1 / -1", 12);
 
@@ -1121,11 +1218,11 @@ function buildPlant(s) {
       { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", pump: "rwp", thin: true },
       { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     pump: "hpp" },
       { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", pump: "hpp" },
+      { from: "memb",   fs: "r", to: "rsv",    ts: "l", fluid: "raw",     pump: "hpp", thin: true },
     ];
   } else {
     [["Solar array", "over both tanks", 1, "top"], ["Roof top", "above RO room", 1, "bot"],
-     ["Terrace", "RO room \u00b7 battery room", 2, ""], ["Ground floor", "parking", 3, ""],
-     ["Below ground", "borewell", 5, ""]
+     ["Terrace", "RO room \u00b7 battery room", 2, ""], ["Below ground", "borewell \u00b7 sump", 3, ""]
     ].forEach(([a, b, r, cls]) =>
       add(node("tier " + cls, `<b>${esc(a)}</b><span>${esc(b)}</span>`), "lbl", r));
 
@@ -1136,14 +1233,17 @@ function buildPlant(s) {
 
     // slabs: roof of the RO room, terrace floor, then grade
     add(node("slab roof"), "c3 / -1", 1);
-    add(node("slab"), "1 / -1", 2);
+    /* With no floor between the terrace and the earth, the terrace slab IS
+       grade. Two slabs here would draw a storey that is not in the section. */
     const grade = node("slab grade");
-    add(grade, "1 / -1", 3);
+    add(grade, "1 / -1", 2);
     const earth = node("earth");
     earth.appendChild(txt("legend", "Ground level"));
-    add(earth, "1 / -1", 5);
+    add(earth, "1 / -1", 3);
 
-    cell("rwt", "c3", 1).classList.add("bottom", "onslab");
+    const rwtCell = cell("rwt", "c3", 1);
+    rwtCell.classList.add("bottom", "onslab");
+    sidePort(rwtCell, "rwt", FILL_PORT);
     /* c7 to the end: the tank runs to the right edge of the slab. Nothing else
        occupies c8 in this row - the battery room annex is row 2. */
     cell("twt", "c7 / -1", 1).classList.add("bottom", "wide", "onslab");
@@ -1151,6 +1251,14 @@ function buildPlant(s) {
       const [k, col] = spec.split(" ");
       const c = cell(k, col, 2);
       c.classList.add("top", "line");
+      if (k === "rwp") {
+        c.classList.add("floor");
+        /* Bring the horizontal anchor down with the glyph. Left/right runs use
+           the 152px centreline box by default, which is what keeps the whole
+           train on one line - but this pump is no longer on that line, so its
+           outflow left at the old height and floated above the pump. */
+        sidePort(c, "rwp", 0.5);
+      }
       if (k === "hpp") {
         const ym = node("ymark");
         ym.dataset.y = "hpp";
@@ -1159,12 +1267,22 @@ function buildPlant(s) {
       }
     });
     cell("dos", "c4 / span 2", 2).classList.add("bottom");
+    /* The reject side. Nothing on this branch is sensed - the RSV is not
+       wired to the hub - but the pipe is real, and the drawing showed the
+       membrane with a single outlet, as if every litre in came out as
+       permeate. */
+    /* c6, not c7. The room box spans c3-c7 and its ROOM AIR readout is pinned to
+       the box's bottom-RIGHT corner, which is c7 - so a valve there landed on
+       top of the temperature. c6 puts it between the dosing barrel and the
+       right-hand wall, clear of both. */
+    cell("rsv", "c6", 2).classList.add("bottom");
     add(annexBox(), "c8", 2);
     /* The sump is BELOW GROUND with its top at grade - it is a pit, not a tank
        standing in the car park - so it lives in the earth row, lifted so its rim
        meets the ground line rather than floating under it. */
-    const sumpCell = cell("sump", "c1", 5);
+    const sumpCell = cell("sump", "c1", 3);
     sumpCell.classList.add("sunk", "line");
+    sidePort(sumpCell, "sump", FILL_PORT);
 
     // the sump motor is submersible: draw it inside the sump, not beside it
     const P2 = P.sump_motor, sDead = P2.state && P2.state !== "ONLINE";
@@ -1183,26 +1301,27 @@ function buildPlant(s) {
     cap.appendChild(txt("name", "Sump Motor"));
     cap.appendChild(chip("", ""));
     sumpCell.querySelector('[data-u="sump"]').appendChild(cap);
+    sidePort(sumpCell, "smotor", DRAW_PORT);
 
-    // the terrace has planters; the ground floor is parking
+    // the terrace has planters
     const plants = node("scenery plants");
     plants.appendChild(shrubGlyph(202));
     plants.appendChild(shrubGlyph(96));
     add(plants, "c1", 2);
 
-    const cars = node("scenery cars");
-    cars.appendChild(truckGlyph(506));
-    cars.appendChild(gwagonGlyph(460));
-    cars.appendChild(swiftGlyph(396));
-    add(cars, "c3 / -1", 3);
     /* Beside the sump, not under it, and sitting at the bottom of the earth: the
        borewell pump is down a separate bore and lifts water sideways into the
        sump. Stacking them in one column drew a borehole through the sump floor. */
-    cell("bore", "c2", 5).classList.add("bottom");
+    cell("bore", "c2", 3).classList.add("bottom");
 
     TEE_AXIS = "h";
     ROUTES = [
-      { from: "bore",   fs: "t", to: "sump",   ts: "b", fluid: "raw",     pump: "borewell" },
+      /* Into the sump's SIDE, not its bottom. A borewell discharge rises out of
+         the bore and dumps into the sump - it does not enter underneath it. The
+         bore is bottom-aligned in the earth and the sump hangs from grade, so
+         the sump's bottom anchor sits BELOW the pump's top: routing to it drew
+         a riser pointing up into a pipe that immediately ran downhill. */
+      { from: "bore",   fs: "t", to: "sump",   ts: "r", fluid: "raw",     pump: "borewell" },
       { from: "smotor", fs: "r", to: "rwt",    ts: "l", fluid: "raw",     pump: "sump_motor" },
       { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     pump: "rwp" },
       { from: "rwp",    fs: "r", to: "filter", ts: "l", fluid: "raw",     pump: "rwp" },
@@ -1210,7 +1329,21 @@ function buildPlant(s) {
       { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     pump: "rwp" },
       { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", pump: "rwp", thin: true },
       { from: "hpp",    fs: "r", to: "memb",   ts: "l", fluid: "raw",     pump: "hpp" },
-      { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", pump: "hpp" },
+      /* The one fill that is NOT ported near the rim, and it is a geometry
+         problem rather than an oversight. The membrane sits INSIDE the tank's
+         horizontal span - TWT runs from c7 to the right edge and the membrane is
+         at c7 - so every riser out of it starts under the tank. Routed to the
+         left wall it climbed straight through the vessel (measured: x 1263 from
+         y 411 to 162, against a tank occupying y 140-326), and since pipes draw
+         behind the cells it simply vanished mid-run.
+         Bottom entry with portx 0.08 keeps it clear and reads as a bottom-fed
+         tank, which is a normal thing for a drawing to show. Moving the membrane
+         out from under TWT is what would fix it properly. */
+      { from: "memb",   fs: "t", to: "twt",    ts: "b", fluid: "treated", pump: "hpp", straight: true },
+      /* Concentrate, not permeate, so it carries the raw colour. It flows
+         whenever the HPP does - the valve position only decides whether it
+         goes to drain or recirculates, and the hub cannot see that. */
+      { from: "memb",   fs: "b", to: "rsv",    ts: "t", fluid: "raw",     pump: "hpp", thin: true },
     ];
   }
 }
@@ -1666,23 +1799,52 @@ function stepDemo() {
 }
 
 /* ── live ─────────────────────────────────────────────────── */
-let demoTimer = null;
+/*
+ * There is deliberately NO automatic fall back to the simulator here.
+ *
+ * It used to: any failed fetch - a Wi-Fi blip, a 500, a truncated response -
+ * quietly started stepDemo(), and the page then showed a 44% sump, a running
+ * borewell and 95% salt rejection, with nothing but a small chip in the corner
+ * to say so. Invented numbers wearing the same typeface as real ones.
+ *
+ * That is the failure this firmware refuses everywhere else: null amps rather
+ * than 0.0 for a missing clamp, "--" for a tank that cannot compute a level,
+ * -1 and -99 so RainMaker never shows a plausible zero. The dashboard was the
+ * one place it could still happen, and it is the place a person actually looks.
+ *
+ * On failure the last good render stays on screen - stale data is at least data
+ * that was once true - and the chip goes red to say it is no longer live.
+ */
 async function poll() {
+  const m = $("#mode");
   try {
     const r = await fetch("/api/telemetry", { cache: "no-store" });
     if (!r.ok) throw new Error("telemetry " + r.status);
     const s = await r.json();
-    if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
-    const m = $("#mode");
     m.textContent = "Live";
-    m.classList.add("live");
+    m.className = "mode live";
     render(s);
   } catch {
-    if (!demoTimer) { demoTimer = setInterval(stepDemo, 2000); stepDemo(); }
+    m.textContent = "No data from hub";
+    m.className = "mode dead";
   }
 }
-poll();
-setInterval(poll, 1000);
+
+/* The simulator is opt-in: ?demo=1.
+ *
+ * Kept rather than deleted because it is how this page gets reviewed. A live hub
+ * with nothing wired draws every vessel grey and every reading "--", which tells
+ * you nothing about whether the drawing itself is right - the sump geometry and
+ * the reject branch were both checked in demo mode. It costs 1.5 kB gzipped
+ * against 320 kB of free flash, so the space was never the argument. */
+if (DEMO_FORCE.has("demo")) {
+  $("#mode").textContent = "Demo data";
+  stepDemo();
+  setInterval(stepDemo, 2000);
+} else {
+  poll();
+  setInterval(poll, 1000);
+}
 </script>
 </body>
 </html>
