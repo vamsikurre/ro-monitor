@@ -239,6 +239,33 @@ static void wq_json(char *ppm, size_t ppm_len, char *temp, size_t temp_len,
     snprintf(temp, temp_len, "%d.%d", wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
 }
 
+/* Every browser asks for /favicon.ico on every page, unprompted, and an ESP-IDF
+ * http server logs a warning for each miss:
+ *
+ *     W httpd_uri: URI '/favicon.ico' not found
+ *     W httpd_txrx: httpd_resp_send_err: 404 Not Found
+ *
+ * Two warnings per page load, in a log whose whole value is that a warning in it
+ * means something. Answering costs less than filtering: an inline SVG needs no
+ * file, no SPIFFS, no binary blob in flash, and one route covers the dashboard,
+ * /cal and anything added later - which a <link rel="icon"> in each page would
+ * not.
+ *
+ * A drop, in the treated-water blue the dashboard already uses for permeate.
+ */
+static esp_err_t favicon_get(httpd_req_t *req)
+{
+    static const char ICON[] =
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+        "<path d='M16 3C10 12 7 16 7 20a9 9 0 0 0 18 0c0-4-3-8-9-17z' fill='#2B8FD4'/>"
+        "</svg>";
+    httpd_resp_set_type(req, "image/svg+xml");
+    /* A day: it never changes between reboots, and re-fetching it on every poll
+     * of a page that refreshes once a second would be absurd. */
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    return httpd_resp_send(req, ICON, sizeof(ICON) - 1);
+}
+
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
     static char json[2800];   /* +200 for the quality block */
@@ -727,6 +754,7 @@ esp_err_t web_start(void)
     static const route_t routes[] = {
         { "/",              HTTP_GET,  dashboard_get,  true  },  /* read-only, no password */
         { "/api/telemetry", HTTP_GET,  telemetry_get,  true  },  /* what the dashboard polls */
+        { "/favicon.ico",   HTTP_GET,  favicon_get,    true  },  /* asked for unprompted, by everyone */
         { "/cal",           HTTP_GET,  cal_get,        false },
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
