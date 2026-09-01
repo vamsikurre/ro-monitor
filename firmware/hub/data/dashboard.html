@@ -55,6 +55,7 @@ h1 span{color:var(--ink-3); font-weight:400}
 .hstats{display:flex; flex-wrap:wrap; gap:6px 20px; margin-left:auto; align-items:baseline}
 .hstat{display:flex; gap:7px; align-items:baseline}
 .hstat .readout{font-size:13px; color:var(--ink)}
+.hstat .readout.mono{font-family:var(--mono); font-size:12px; letter-spacing:-.01em}
 .mode{
   font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   border:1px solid var(--line); border-radius:100px; padding:3px 10px; color:var(--ink-2);
@@ -370,6 +371,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
   <h1>Varenyam <span>/ RO Plant · Elevation</span></h1>
   <span class="mode" id="mode">Demo data</span>
   <div class="hstats">
+    <div class="hstat"><span class="legend">Firmware</span><span class="readout mono" id="hFw">–</span></div>
     <div class="hstat"><span class="legend">Bus</span><span class="readout" id="hBus">–</span></div>
     <div class="hstat"><span class="legend">Signal</span><span class="readout" id="hRssi">–</span></div>
     <div class="hstat"><span class="legend">Uptime</span><span class="readout" id="hUp">–</span></div>
@@ -408,7 +410,6 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 </div>
 
 <footer>
-  <span>Firmware <span class="readout" id="fFw">–</span></span>
   <span>Last reset <span class="readout" id="fReset">–</span></span>
   <span>Bus errors <span class="readout" id="fErr">–</span></span>
   <span>Poll <span class="readout" id="fPoll">–</span></span>
@@ -1475,9 +1476,12 @@ function render(s) {
 
   $("#hBus").textContent = `${s.rs485.online}/${s.rs485.total}`;
   $("#hRssi").textContent = `${s.sys.rssi} dBm`;
+  /* A git description - "2e3e447", or "2e3e447-dirty" for a build made from
+     a tree that was not committed. Mono, because it is an identifier to be
+     read character by character and compared, not a number to be skimmed. */
+  $("#hFw").textContent = s.sys.fw;
   $("#hUp").textContent = dur(s.sys.uptime_s);
   $("#hClock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  $("#fFw").textContent = s.sys.fw;
   $("#fReset").textContent = s.sys.reset_reason;
   $("#fErr").textContent = s.rs485.errors;
   $("#fPoll").textContent = s.rs485.last_poll_ms + " ms";
