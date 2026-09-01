@@ -117,6 +117,7 @@ extern "C" {
 #define CMD_READ_LEVEL          0x02
 #define CMD_READ_CLIMATE        0x06
 #define CMD_SET_FAN_RELAY       0x07
+#define CMD_READ_WQ             0x08
 
 #define NODE_ADDR_RWT           0x02
 #define NODE_ADDR_TWT           0x03
@@ -130,6 +131,7 @@ extern "C" {
  * treated as absence rather than as data. */
 #define LEN_LEVEL_REPLY         10
 #define LEN_CLIMATE_REPLY       6
+#define LEN_WQ_REPLY            6
 
 /* ------------------------------------------------------------------- sensing */
 #define BLIND_ZONE_MM           200
@@ -183,6 +185,16 @@ extern "C" {
  * DASHBOARD_AND_RAINMAKER.md §4. Each alert latches and needs the value to come
  * back past a margin before it can fire again — a threshold sitting exactly on
  * the line must not send a notification every cycle. */
+/* TDS limits, shared by the conversion and its checker. TDS_MV_MAX is the
+ * probe's own ceiling (0-2.3 V out); above it the input is miswired, not salty. */
+#define TDS_MV_MAX              2400
+#define TDS_MAX_PPM             3000
+#define TDS_MIN_FEED_PPM        50
+/* Poll cycles between water-quality reads. At POLL_CYCLE_MS this must be at
+ * least the node's own 10 s refresh, or the hub re-reads a number the node has
+ * not updated. */
+#define WQ_POLL_CYCLES          10
+
 #define ALERT_TANK_FULL_PCT     95
 #define ALERT_DOSING_LOW_PCT    20
 #define ALERT_HYST_PCT          5
@@ -215,6 +227,11 @@ extern "C" {
 #define PARAM_RWT_PCT           "Raw Water Level"
 #define PARAM_TWT_PCT           "Treated Water Level"
 #define PARAM_TWT_FLOAT         "TWT Float Full"
+#define PARAM_RWT_TDS           "Raw Water TDS"
+#define PARAM_TWT_TDS           "Treated Water TDS"
+#define PARAM_RWT_WTEMP         "Raw Water Temp"
+#define PARAM_TWT_WTEMP         "Treated Water Temp"
+#define PARAM_REJECTION         "Salt Rejection"
 #define PARAM_DOS_PCT           "Dosing Level"
 #define PARAM_HPP_ON            "HPP Running"
 #define PARAM_RWP_ON            "RWP Running"
@@ -272,6 +289,16 @@ typedef enum {
 } link_state_t;
 
 /* One tank, whether read over RS485 or straight off the hub. */
+/* One TDS probe and its DS18B20, in one tank. Reported together because they
+ * are only meaningful together - see tdsPPM(). */
+typedef struct {
+    uint16_t tds_mv;               /* raw probe output, as the node measured it */
+    int16_t  temp_deci_c;          /* water, not air */
+    uint16_t ppm;                  /* TDS_INVALID when it cannot be computed */
+    bool     fitted;               /* a DS18B20 answered its presence pulse */
+    int64_t  last_ok_us;
+} wq_state_t;
+
 typedef struct {
     uint16_t        distance_mm;   /* transducer face to liquid surface */
     uint16_t        raw_mm;
@@ -303,6 +330,8 @@ typedef struct {
  * read by the web handlers — see the note on locking in app_main.c. */
 typedef struct {
     tank_state_t    rwt, twt, dosing;
+    wq_state_t      rwt_wq, twt_wq;
+    int16_t         rejection_pct;  /* -1 = not computable */
     climate_state_t ro_room, battery_room;
     motor_state_t   hpp, rwp;
 

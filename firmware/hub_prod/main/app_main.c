@@ -458,6 +458,22 @@ static void log_summary(const hub_state_t *s)
              s->rwp.deci_amps < 0 ? "CT --" : "CT ok",
              s->overcurrent ? "  OVER CURRENT" : "");
 
+    /* Printed only when a probe is actually fitted - every node reads "not
+     * fitted" until the hardware goes in, and a permanent "TDS --" line is noise
+     * in a log somebody has to read at 3 am. */
+    if (s->rwt_wq.fitted || s->twt_wq.fitted) {
+        char rej[8];
+        if (s->rejection_pct < 0) {
+            snprintf(rej, sizeof(rej), "--");
+        } else {
+            snprintf(rej, sizeof(rej), "%d%%", s->rejection_pct);
+        }
+        ESP_LOGI(TAG, "quality RWT %u ppm %d.%d C | TWT %u ppm %d.%d C | rejection %s",
+                 s->rwt_wq.ppm, s->rwt_wq.temp_deci_c / 10, abs(s->rwt_wq.temp_deci_c % 10),
+                 s->twt_wq.ppm, s->twt_wq.temp_deci_c / 10, abs(s->twt_wq.temp_deci_c % 10),
+                 rej);
+    }
+
     ESP_LOGI(TAG, "aster   TWT_FLOT %s | RL1 %s | RL2 %s | LPS %s | ALARM %s   rs485 err %lu",
              s->twt_float_closed ? "CLOSED" : "open  ",
              s->rl1_active ? "ACTIVE" : "idle  ",
@@ -524,6 +540,56 @@ static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank
     }
 }
 
+/*
+ * TDS and water temperature, polled only from a node that has the pair fitted.
+ *
+ * Cheap to ask and cheap to ignore: a node with nothing fitted answers with its
+ * status byte set and we mark it unfitted, so this costs one extra frame per
+ * cycle per tank and never invents a reading. Note that a poll failure here does
+ * NOT mark the node offline - the level is what decides that, and a working tank
+ * level with a dead TDS probe is a node that is very much alive.
+ */
+static void read_water_quality(uint8_t addr, wq_state_t *wq, cal_tank_t which)
+{
+    uint8_t p[RS485_MAX_PAYLOAD];
+    int len = rs485_poll(addr, CMD_READ_WQ, NULL, 0, p);
+
+    if (len != LEN_WQ_REPLY) {
+        wq->fitted = false;
+        wq->ppm = TDS_INVALID;
+        return;
+    }
+
+    uint8_t status = p[4];
+    if (status != 0) {
+        /* The node sets both flags together on purpose: TDS without a water
+         * temperature is uncompensated and drifts ~2 %/degC, so it declines to
+         * report either. See sampleWaterQuality() in ro_node.ino. */
+        if (wq->fitted) {
+            ESP_LOGW(TAG, "node 0x%02X water quality went unreadable (status 0x%02X) "
+                          "- check the DS18B20 pullup and the probe lead", addr, status);
+        }
+        wq->fitted = false;
+        wq->ppm = TDS_INVALID;
+        return;
+    }
+
+    bool was = wq->fitted;
+    wq->tds_mv      = ((uint16_t)p[0] << 8) | p[1];
+    wq->temp_deci_c = (int16_t)(((uint16_t)p[2] << 8) | p[3]);
+    wq->fitted      = true;
+    wq->last_ok_us  = esp_timer_get_time();
+
+    const cal_tank_cfg_t *c = cal_tank(which);
+    wq->ppm = tdsPPM(wq->tds_mv, wq->temp_deci_c, c->tds_k_x100);
+
+    if (!was) {
+        ESP_LOGI(TAG, "node 0x%02X water quality online: %u mV at %d.%d C -> %u ppm",
+                 addr, wq->tds_mv, wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10),
+                 wq->ppm);
+    }
+}
+
 static void read_climate_node(hub_state_t *s)
 {
     uint8_t p[RS485_MAX_PAYLOAD];
@@ -551,12 +617,15 @@ static void poll_task(void *arg)
     int   last_rwt = INT32_MIN, last_twt = INT32_MIN, last_dos = INT32_MIN;
     int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
     int   last_twt_float = -1, last_rl1 = -1, last_rl2 = -1;
+    int   last_rwt_tds = -1, last_twt_tds = -1, last_rejection = -1;
     int   last_lps = -1;
     char  last_status[64] = "";
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
     float last_hpp_a = -9999, last_rwp_a = -9999;
+    float last_rwt_wt = -9999, last_twt_wt = -9999;
 
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
+    int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
     int  oc_streak = 0;
 
     while (true) {
@@ -572,6 +641,24 @@ static void poll_task(void *arg)
         read_tank_node(NODE_ADDR_RWT, &local.rwt, &local.rwt_online, CAL_TANK_RWT);
         read_tank_node(NODE_ADDR_TWT, &local.twt, &local.twt_online, CAL_TANK_TWT);
         read_climate_node(&local);
+
+        /* Water quality is two extra frames per tank, and the node only refreshes
+         * it every 10 s anyway - so asking every 2 s cycle would spend bus time to
+         * re-read the same number. Once every WQ_POLL_CYCLES keeps the chain quiet
+         * for the levels, which are what people actually watch. */
+        if (++wq_turn >= WQ_POLL_CYCLES) {
+            wq_turn = 0;
+            /* An offline node has no water quality either. Without this the last
+             * good reading sits in the app looking current, which is the failure
+             * the tank levels already refuse. */
+            if (local.rwt_online) read_water_quality(NODE_ADDR_RWT, &local.rwt_wq, CAL_TANK_RWT);
+            else                  { local.rwt_wq.fitted = false; local.rwt_wq.ppm = TDS_INVALID; }
+            if (local.twt_online) read_water_quality(NODE_ADDR_TWT, &local.twt_wq, CAL_TANK_TWT);
+            else                  { local.twt_wq.fitted = false; local.twt_wq.ppm = TDS_INVALID; }
+            /* Feed and permeate of the same plant. The ratio is the membrane's
+             * health; either number alone mostly tracks the source water. */
+            local.rejection_pct = rejectionPercent(local.rwt_wq.ppm, local.twt_wq.ppm);
+        }
         command_fan(&local);
 
         /* --- hub-local sensing, with the bus now idle for the rest of the cycle --- */
@@ -672,6 +759,23 @@ static void poll_task(void *arg)
         report_bool(s_dev_plant, PARAM_ALARM, local.alarm_active, &last_alarm);
         report_bool(s_dev_plant, PARAM_LPS, local.lps_active, &last_lps);
         report_bool(s_dev_tanks, PARAM_TWT_FLOAT, local.twt_float_closed, &last_twt_float);
+
+        /* Only when there is something to say. An unfitted or faulty probe
+         * reports nothing rather than 0 ppm - same rule as the tank levels and
+         * the CT currents: a missing sensor must not look like clean water. */
+        if (local.rwt_wq.fitted && local.rwt_wq.ppm != TDS_INVALID) {
+            report_int(s_dev_tanks, PARAM_RWT_TDS, local.rwt_wq.ppm, &last_rwt_tds, 5);
+            report_float(s_dev_tanks, PARAM_RWT_WTEMP, local.rwt_wq.temp_deci_c / 10.0f,
+                         &last_rwt_wt, 0.3f);
+        }
+        if (local.twt_wq.fitted && local.twt_wq.ppm != TDS_INVALID) {
+            report_int(s_dev_tanks, PARAM_TWT_TDS, local.twt_wq.ppm, &last_twt_tds, 5);
+            report_float(s_dev_tanks, PARAM_TWT_WTEMP, local.twt_wq.temp_deci_c / 10.0f,
+                         &last_twt_wt, 0.3f);
+        }
+        if (local.rejection_pct >= 0) {
+            report_int(s_dev_tanks, PARAM_REJECTION, local.rejection_pct, &last_rejection, 1);
+        }
         report_bool(s_dev_plant, PARAM_RL1, local.rl1_active, &last_rl1);
         report_bool(s_dev_plant, PARAM_RL2, local.rl2_active, &last_rl2);
 
@@ -767,6 +871,22 @@ static void build_node(esp_rmaker_node_t *node)
                                                       esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_DOS_PCT, "esp.param.water-level",
                                                       esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+    /* Water quality. On the tanks device rather than a new one: a TDS reading is
+     * a fact about a tank, and splitting it out would mean opening two screens
+     * to compare a level with the water in it. */
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_TDS, "esp.param.concentration",
+                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_TDS, "esp.param.concentration",
+                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
+    /* The one number worth looking at daily: permeate TDS rising is only a fault
+     * if the FEED did not rise with it. */
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_REJECTION, "esp.param.percentage",
+                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+
     /* The Aster's own TWT float, next to our ultrasonic reading of the same tank,
      * because the useful thing is the DISAGREEMENT: float closed with the level
      * reading low means one of the two is lying, and until now the app could only

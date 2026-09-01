@@ -32,6 +32,11 @@ typedef enum {
 typedef struct {
     uint16_t full_mm;    /* distance at 100 % */
     uint16_t empty_mm;   /* distance at 0 %   */
+    /* TDS probe scale, x100. 100 = 1.00, the uncalibrated default. Set it by
+     * reading a known solution and scaling: a 707 ppm sachet reading 640 wants
+     * k = 707/640 = 1.10, so 110. Per tank, because two probes of the same part
+     * number do not agree out of the bag. */
+    uint16_t tds_k_x100;
 } cal_tank_cfg_t;
 
 typedef struct {
@@ -51,6 +56,7 @@ const cal_ct_cfg_t   *cal_ct(cal_ct_t c);
 /* Each setter validates before it stores. A typo from a phone must not be able
  * to produce a calibration that reads plausibly and is wrong. */
 esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm);
+esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100);
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps);
 esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c);
 
@@ -78,6 +84,35 @@ const char *cal_ct_label(cal_ct_t c);
  * gauge as a value.
  */
 uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM);
+
+/*
+ * TDS in ppm from what a node actually reports: probe millivolts and water
+ * temperature. Pure, calibration passed in, so docs/check_frame.py compiles it
+ * standalone - the same treatment levelPercent() gets, and for the same reason.
+ *
+ * The node deliberately does not do this: it is a floating-point cubic, and an
+ * ATmega with no float anywhere else is the wrong place for it. Keeping it here
+ * also means the k factor is editable over Wi-Fi instead of by reflashing a
+ * board on a roof.
+ *
+ * Returns TDS_INVALID, never a plausible-looking number, when the probe is
+ * unpowered or absent, when the temperature is outside anything water does, or
+ * when the tank is uncalibrated. The caller shows a fault; it must never reach
+ * a gauge as a value.
+ */
+#define TDS_INVALID  0xFFFF
+uint16_t tdsPPM(uint16_t mv, int16_t water_temp_deci_c, uint16_t k_x100);
+
+/*
+ * Salt rejection, the number that actually says whether the membrane is healthy.
+ *
+ * Permeate TDS rising is not a fault on its own - it rises when the FEED rises,
+ * which is a source-water fact, not a plant one. The ratio removes that, and it
+ * also cancels most of the temperature error, since both probes sit in the same
+ * weather. Returns -1 when either reading is invalid, or when the feed is too
+ * dilute for the ratio to mean anything.
+ */
+int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm);
 
 #ifdef __cplusplus
 }

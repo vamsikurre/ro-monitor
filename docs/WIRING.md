@@ -1033,6 +1033,104 @@ full. That live zero is worth the extra wire.
 
 ---
 
+### 9.5. Water Quality — TDS Probe and DS18B20, per tank
+
+Two probes per tank node, in the water: an analog TDS meter and a DS18B20. **Both
+or neither** — the firmware will not report TDS without a temperature to
+compensate it with, for the reason in §9.5.1.
+
+The point is not either number on its own. It is **salt rejection**:
+
+```
+rejection % = (RWT ppm - TWT ppm) / RWT ppm
+```
+
+Permeate TDS rising is not a fault by itself — it rises when the *feed* rises,
+which is a fact about the borewell, not about the plant. A falling rejection
+percentage is a failing membrane regardless of what the source water is doing,
+and it is the one number worth looking at daily. It needs both tanks, which is
+why the probes come in pairs.
+
+#### 9.5.1. Why the DS18B20 is not optional
+
+Conductivity moves about **2 % per °C**, and every TDS figure is quoted at 25 °C.
+A roof tank in Guntur swings well over 20 °C between a January morning and a May
+afternoon, so an uncompensated probe reads **tens of percent apart** with nothing
+having changed in the water. That is a confidently wrong number of exactly the
+kind §9.3 warns about for the ultrasonic.
+
+So the node gates the whole feature on the DS18B20's 1-Wire presence pulse: no
+temperature sensor, no TDS reading, no invented values. If the water-quality
+figures stop appearing, suspect the DS18B20 and its pullup first.
+
+A useful side effect of the ratio: both probes sit in the same weather at roughly
+the same water temperature, so most of the residual temperature error cancels in
+the rejection figure even though it corrupts either reading alone.
+
+#### 9.5.2. Wiring
+
+```
+   Nano                          DS18B20 (waterproof, 3-wire)
+  +-------------+
+  | +5V     o---+---------------o RED    (VDD - use normal power, NOT parasitic)
+  |             |
+  |          [ 4k7 ]   <-- REQUIRED. 1-Wire is open-drain and does
+  |             |          NOTHING without it. Not supplied with the probe.
+  | D4      o---+---------------o YELLOW (DATA)
+  | GND     o-------------------o BLACK  (GND)
+  +-------------+
+
+   Nano                          TDS board (analog)
+  +-------------+
+  | D5      o-------------------o VCC    (board is powered only while sampling)
+  | A6      o-------------------o AOUT   (0-2.3 V)
+  | GND     o-------------------o GND
+  +-------------+
+```
+
+| Signal | Pin | Note |
+| :--- | :---: | :--- |
+| DS18B20 data | `D4` | **4.7 kΩ pullup to +5 V is mandatory.** Buy two; they are not in the probe's bag |
+| TDS power | `D5` | Drives the board's `VCC`. See below |
+| TDS analog out | `A6` | `A6`/`A7` are **analog-only** on the Nano — no digital function at all — so spending one here costs nothing that could have been used otherwise |
+
+**The TDS board is powered from a GPIO, not from +5 V.** Electrodes sitting in
+water under a continuous DC bias polarise and plate, and the reading drifts over
+months in a way that looks exactly like a real trend. The firmware energises the
+board for one cycle in ten, reads, and switches it off — roughly a 10 % duty
+cycle. The DFRobot-style board draws a few milliamps, well inside a pin's 20 mA;
+**if a different board draws more, drive it through a small MOSFET rather than
+raising the pin current.**
+
+**Both probes must be in the same water**, close together, or the compensation is
+compensating for a temperature the TDS probe never saw.
+
+#### 9.5.3. Calibration and what the numbers can mean
+
+The hub stores a **k factor per tank** (`tds_k_x100`, NVS, default `1.00`).
+Calibrate against a reference solution: if a 707 ppm sachet reads 640, set
+`k = 707 / 640 = 1.10`. The hub clamps k to 0.50–2.00 — a probe needing more
+correction than that is broken or in the wrong solution, and accepting the number
+would bake the fault in.
+
+| Reading | Rated? | Reported? |
+| :--- | :---: | :--- |
+| 0–1000 ppm | yes | yes |
+| 1000–3000 ppm | **no** | **yes** — a brackish source is a fact worth seeing, just a less accurate one |
+| > 3000 ppm | no | no — the cubic is extrapolating, so the figure would be arithmetic rather than a measurement |
+
+> **Meter your borewell with a handheld before trusting the RWT figure.** These
+> probes are rated 0–1000 ppm and groundwater around Guntur can sit above that.
+> A pinned feed reading does not just lose accuracy — it takes the rejection
+> percentage with it, since the feed is the denominator.
+
+**Expect to clean the electrodes.** This is a trend instrument, not an analytical
+one. A slow drift over months is as likely to be deposits on the probe as a
+change in the water; the rejection ratio is more robust to that than either raw
+figure, because both probes foul in the same direction.
+
+---
+
 ## 10. Battery Room Node (0x04: SHT30 & Exhaust Fan)
 
 > **Who decides the fan:** the hub. Thresholds live in hub NVS and are set from the calibration AP (`RS485_PROTOCOL.md` §4.4), so changing them needs a phone, not a programmer on a ladder. The node keeps a hotter backstop — on 40.0 °C, off 37.0 °C — that takes over only if no command arrives for five minutes, plus a fail-safe that ventilates if the SHT30 goes unreadable. The relay is wired so that both of those, and a de-energised board, leave the room ventilated rather than sealed.

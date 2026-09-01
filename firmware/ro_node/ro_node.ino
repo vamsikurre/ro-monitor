@@ -5,6 +5,7 @@
  * AND the personality (phase-B spec 4):
  *
  *   0x02  Raw Water Tank      Nano       AJ-SR04M ultrasonic, end-of-bus 120R
+ *                                           (+ optional TDS/DS18B20 pair, 9.5)
  *   0x03  Treated Water Tank  Nano       AJ-SR04M ultrasonic, or a 4-20 mA
  *                                           submersible transducer if the J-PRESS
  *                                           shunt is on (WIRING.md 9.4)
@@ -45,6 +46,10 @@
 #define PIN_US_ECHO      8   // AJ-SR04M ECHO (tank nodes, 5V - divider on ESP32 only)
 #define PIN_PRESS_SENSE  A2  // J-LOOP pin 2: 4-20 mA loop across the 100R sense resistor
 #define PIN_PRESS_FIT    A3  // J-PRESS shunt to GND = transducer fitted, ignore the ultrasonic
+#define PIN_WATER_TEMP   4   // DS18B20 1-Wire data. NEEDS a 4k7 pullup to +5V
+#define PIN_TDS_POWER    5   // TDS board VCC, driven so the probe is not DC-biased 24/7
+#define PIN_TDS_SENSE    A6  // TDS analog out. A6/A7 are analog-ONLY on the Nano, so
+                             // spending one here costs nothing that could be used otherwise
 #define PIN_FAN_RELAY    9   // 1-ch relay IN, ACTIVE LOW (0x04 only)
 #define PIN_LED          13  // Onboard activity LED
 #define PIN_ADDR_0       A0  // Address jumper bit 0
@@ -61,6 +66,7 @@
 #define CMD_READ_LEVEL      0x02
 #define CMD_READ_CLIMATE    0x06
 #define CMD_SET_FAN_RELAY   0x07
+#define CMD_READ_WQ         0x08   // TDS + water temperature (tank nodes)
 
 #define MAX_PAYLOAD      32
 #define FRAME_TIMEOUT_MS 20   // gap that abandons a half-received frame
@@ -92,6 +98,29 @@
 #define PRESS_MIN_UA     3500    // under this the loop is open or unpowered, not empty
 #define PRESS_MAX_UA     21000   // over this it is shorted or miswired
 #define PRESS_SAMPLES    8       // averaged per cycle; the median window rides on top of that
+
+// Water quality - TDS probe + DS18B20, one pair per tank (WIRING.md 9.5).
+//
+// The node reports MILLIVOLTS and a temperature, never ppm. Same rule as the
+// tank levels: a node measures, the hub converts against calibration that can be
+// changed over Wi-Fi. It also keeps the ppm cubic - which is floating point -
+// off an ATmega that deliberately has no float anywhere else.
+//
+// Nothing here runs unless a DS18B20 answers its presence pulse. That single
+// check gates the whole feature: the two sensors are installed together, in the
+// same water, and TDS without a temperature is uncompensated by ~2 %/degC, which
+// over a seasonal swing is tens of percent of confidently wrong reading. No
+// temperature therefore means no TDS either, deliberately.
+#define WQ_PERIOD_MS     10000UL // TDS moves slowly; 10 s is generous
+#define WQ_CONV_MS       760     // DS18B20 12-bit conversion, +10 ms margin. This
+                                 // doubles as the TDS board's settling time, which
+                                 // is why neither costs a blocking delay.
+#define TDS_SAMPLES      8
+#define TDS_ADC_MV       5000    // AVcc. Probe and ADC share the buck's 5 V rail,
+                                 // so the reading is ratiometric and supply droop
+                                 // largely cancels.
+#define WQ_FAULT_TDS     0x01
+#define WQ_FAULT_TEMP    0x02
 
 // No tank calibration here on purpose. A node reports millimetres; the hub turns
 // them into a percentage against calibration you can change over Wi-Fi. Tanks get
@@ -130,6 +159,13 @@ static const uint8_t ADDR_MAP[4] = {
 uint8_t  MY_NODE_ID  = 0x00;
 bool     isClimate   = false;   // 0x04 runs the climate personality
 bool     pressureFitted = false; // A3 jumpered: level comes from the 4-20 mA loop
+
+uint16_t tdsMV       = 0;
+int16_t  waterTempDeciC = 0;
+uint8_t  wqStatus    = WQ_FAULT_TDS | WQ_FAULT_TEMP;  // nothing fitted until proven
+bool     wqBusy      = false;
+unsigned long wqLastMs = 0;
+unsigned long wqStartedMs = 0;
 
 SoftwareSerial rs485(PIN_RS485_RX, PIN_RS485_TX);
 
@@ -264,6 +300,145 @@ void sampleTank() {
   sensorStatus = (medianMM < BLIND_ZONE_MM) ? 1 : 0;
 }
 
+// ------------------------------------------------------------ water quality
+// 1-Wire, bit-banged. No library, for the same reason readSHT30() hand-rolls its
+// I2C: one device on a dedicated pin with SKIP ROM is the simplest case the bus
+// has - no search, no multi-drop, no parasitic power - and every reply is CRC
+// checked, so a timing bug shows up as a reported fault rather than a plausible
+// wrong temperature.
+//
+// Interrupts are masked only inside each time slot (~15 us), never across a whole
+// byte. At 9600 baud a SoftwareSerial bit is 104 us, so that jitter is harmless -
+// and this only ever runs from measurePending, after a reply, which is where the
+// 35 ms pulseIn already lives.
+
+void owDriveLow() {
+  digitalWrite(PIN_WATER_TEMP, LOW);   // clears the pullup too, when it goes INPUT
+  pinMode(PIN_WATER_TEMP, OUTPUT);
+}
+
+void owRelease() {
+  pinMode(PIN_WATER_TEMP, INPUT);      // external 4k7 pulls it back up
+}
+
+bool owReset() {
+  owDriveLow();
+  delayMicroseconds(480);
+  owRelease();
+  delayMicroseconds(70);
+  bool present = (digitalRead(PIN_WATER_TEMP) == LOW);
+  delayMicroseconds(410);
+  return present;
+}
+
+void owWriteBit(uint8_t b) {
+  noInterrupts();
+  owDriveLow();
+  delayMicroseconds(b ? 6 : 60);
+  owRelease();
+  interrupts();
+  delayMicroseconds(b ? 64 : 10);
+}
+
+uint8_t owReadBit() {
+  noInterrupts();
+  owDriveLow();
+  delayMicroseconds(3);
+  owRelease();
+  delayMicroseconds(10);
+  uint8_t b = (uint8_t)digitalRead(PIN_WATER_TEMP);
+  interrupts();
+  delayMicroseconds(53);
+  return b;
+}
+
+void owWrite(uint8_t v) {
+  for (uint8_t i = 0; i < 8; i++) { owWriteBit(v & 0x01); v >>= 1; }
+}
+
+uint8_t owRead() {
+  uint8_t v = 0;
+  for (uint8_t i = 0; i < 8; i++) { v >>= 1; if (owReadBit()) v |= 0x80; }
+  return v;
+}
+
+// Dallas CRC-8: the same polynomial as the SHT30's, reflected. Not the same
+// function - do not be tempted to share sht30Crc8(), the bit order differs.
+uint8_t owCrc8(const uint8_t *d, uint8_t n) {
+  uint8_t crc = 0;
+  while (n--) {
+    uint8_t b = *d++;
+    for (uint8_t i = 0; i < 8; i++) {
+      uint8_t mix = (uint8_t)((crc ^ b) & 0x01);
+      crc >>= 1;
+      if (mix) crc ^= 0x8C;
+      b >>= 1;
+    }
+  }
+  return crc;
+}
+
+uint16_t readTdsMV() {
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < TDS_SAMPLES; i++) sum += (uint32_t)analogRead(PIN_TDS_SENSE);
+  return (uint16_t)(((sum / TDS_SAMPLES) * TDS_ADC_MV) / 1023UL);
+}
+
+// Two-stage and non-blocking. Stage one starts the DS18B20 conversion and powers
+// the TDS board; stage two, a cycle later, collects both. The 750 ms the sensor
+// needs is time this node was going to spend anyway.
+void sampleWaterQuality() {
+  unsigned long now = millis();
+
+  if (!wqBusy) {
+    if (wqLastMs != 0 && now - wqLastMs < WQ_PERIOD_MS) return;
+
+    // Presence pulse first, so a node with nothing fitted - which is every node
+    // today - does one 1 ms reset every 10 s and touches nothing else.
+    if (!owReset()) {
+      wqStatus = WQ_FAULT_TDS | WQ_FAULT_TEMP;
+      tdsMV = 0;
+      waterTempDeciC = 0;
+      wqLastMs = now;
+      return;
+    }
+    owWrite(0xCC);            // SKIP ROM - the only device on this pin
+    owWrite(0x44);            // CONVERT T, and do NOT wait for it
+    digitalWrite(PIN_TDS_POWER, HIGH);
+    wqBusy = true;
+    wqStartedMs = now;
+    return;
+  }
+
+  if (now - wqStartedMs < WQ_CONV_MS) return;
+
+  uint16_t mv = readTdsMV();              // read before removing power
+  digitalWrite(PIN_TDS_POWER, LOW);
+  wqBusy = false;
+  wqLastMs = now;
+
+  uint8_t sp[9];
+  if (!owReset()) { wqStatus = WQ_FAULT_TDS | WQ_FAULT_TEMP; return; }
+  owWrite(0xCC);
+  owWrite(0xBE);                          // READ SCRATCHPAD
+  for (uint8_t i = 0; i < 9; i++) sp[i] = owRead();
+
+  if (owCrc8(sp, 8) != sp[8]) {
+    // A corrupt scratchpad is a wiring or pullup problem, and it must not become
+    // a temperature. Both flags again: see the coupling note above.
+    wqStatus = WQ_FAULT_TDS | WQ_FAULT_TEMP;
+    return;
+  }
+
+  int16_t raw = (int16_t)(((uint16_t)sp[1] << 8) | sp[0]);   // 1/16 degC, signed
+  waterTempDeciC = (int16_t)(((int32_t)raw * 10) / 16);
+  tdsMV = mv;
+
+  // 85.0 C is the DS18B20's power-on scratchpad default. Reading exactly that
+  // means the conversion never ran, not that the tank is boiling.
+  wqStatus = (waterTempDeciC == 850) ? (WQ_FAULT_TDS | WQ_FAULT_TEMP) : 0;
+}
+
 // ---------------------------------------------------------------- climate
 uint8_t sht30Crc8(uint8_t hi, uint8_t lo) {
   uint8_t data[2] = { hi, lo };
@@ -353,8 +528,12 @@ void printDeci(int16_t deci) {
 }
 
 void sampleSensors() {
-  if (isClimate) sampleClimate();
-  else           sampleTank();
+  if (isClimate) {
+    sampleClimate();
+  } else {
+    sampleTank();
+    sampleWaterQuality();
+  }
 }
 
 // ---------------------------------------------------------------- framing
@@ -398,6 +577,16 @@ void handleCommand(uint8_t cmd, const uint8_t *payload, uint8_t len) {
       out[7] = 0;                            // reserved
       out[8] = (uint8_t)(uptime >> 8);    out[9] = (uint8_t)(uptime & 0xFF);
       sendFrame(cmd, out, 10);
+      break;
+    }
+
+    case CMD_READ_WQ: {
+      if (isClimate) return;                 // tank personality only
+      out[0] = (uint8_t)(tdsMV >> 8);            out[1] = (uint8_t)(tdsMV & 0xFF);
+      out[2] = (uint8_t)(waterTempDeciC >> 8);   out[3] = (uint8_t)(waterTempDeciC & 0xFF);
+      out[4] = wqStatus;
+      out[5] = 0;                            // reserved
+      sendFrame(cmd, out, 6);
       break;
     }
 
@@ -473,6 +662,13 @@ void setup() {
   pinMode(PIN_US_TRIG, OUTPUT);
   pinMode(PIN_US_ECHO, INPUT);
   pinMode(PIN_PRESS_FIT, INPUT_PULLUP);
+
+  // TDS board de-energised before the pin becomes an output, so a reset does not
+  // put a DC bias across the probe for however long the boot takes.
+  digitalWrite(PIN_TDS_POWER, LOW);
+  pinMode(PIN_TDS_POWER, OUTPUT);
+  digitalWrite(PIN_TDS_POWER, LOW);
+  pinMode(PIN_WATER_TEMP, INPUT);
   digitalWrite(PIN_US_TRIG, LOW);
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
@@ -519,6 +715,9 @@ void setup() {
     } else {
       Serial.println(F("AJ-SR04M ultrasonic on D7/D8"));
     }
+    Serial.print(F("Water quality: "));
+    Serial.println(owReset() ? F("DS18B20 present, TDS enabled")
+                             : F("no DS18B20 - TDS and water temp not reported"));
   }
 
 #if ENABLE_WATCHDOG
@@ -566,7 +765,15 @@ void loop() {
     } else {
       Serial.print(medianMM);
       Serial.print(pressureFitted ? F(" mm(P) q=") : F(" mm  q="));
-      Serial.println(quality);
+      Serial.print(quality);
+      if (wqStatus == 0) {
+        Serial.print(F("  TDS "));
+        Serial.print(tdsMV);
+        Serial.print(F(" mV @ "));
+        printDeci(waterTempDeciC);
+        Serial.print(F(" C"));
+      }
+      Serial.println();
     }
   }
 }

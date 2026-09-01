@@ -23,9 +23,9 @@ static const char *NVS_NS = "ro_cal";
  * does not silently move a calibrated tank. WIRING.md §13 explains the dosing
  * figures: the sensor sits on a bracket 250-300 mm above the barrel mouth. */
 static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
-    [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500 },
-    [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500 },
-    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 900  },
+    [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
+    [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
+    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 900,  .tds_k_x100 = 100 },
 };
 
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
@@ -101,6 +101,7 @@ esp_err_t cal_init(void)
     for (int i = 0; i < CAL_TANK_COUNT; i++) {
         load_u16(h, s_tank_keys[i], "f", &s_tanks[i].full_mm);
         load_u16(h, s_tank_keys[i], "e", &s_tanks[i].empty_mm);
+        load_u16(h, s_tank_keys[i], "k", &s_tanks[i].tds_k_x100);
     }
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         load_u16(h, s_ct_keys[i], "s", &s_cts[i].amps_per_volt_x100);
@@ -149,6 +150,21 @@ esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm)
     }
     ESP_LOGI(TAG, "%s: full %u mm, empty %u mm", s_tank_keys[t], full_mm, empty_mm);
     return err;
+}
+
+esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100)
+{
+    if (t >= CAL_TANK_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* A probe needing more than a 2x correction is not calibrated, it is broken
+     * or in the wrong solution - and accepting the number would bake that in. */
+    if (k_x100 < 50 || k_x100 > 200) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_tanks[t].tds_k_x100 = k_x100;
+    ESP_LOGI(TAG, "%s TDS k: %u.%02u", s_tank_keys[t], k_x100 / 100, k_x100 % 100);
+    return store_u16(s_tank_keys[t], "k", k_x100);
 }
 
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps)
@@ -271,4 +287,66 @@ uint8_t levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)
 
     long span = (long)emptyMM - (long)fullMM;
     return (uint8_t)(((long)emptyMM - (long)distanceMM) * 100L / span);
+}
+
+uint16_t tdsPPM(uint16_t mv, int16_t water_temp_deci_c, uint16_t k_x100)
+{
+    /* 0 mV is an unpowered or absent probe, not perfectly pure water. The node
+     * only ever sends a real reading with its status byte clear, but this must
+     * hold on its own - it is the function a checker exercises. */
+    if (mv == 0 || mv > TDS_MV_MAX) {
+        return TDS_INVALID;
+    }
+    if (k_x100 == 0) {
+        return TDS_INVALID;
+    }
+    /* Liquid water in a roof tank. Outside this the DS18B20 is faulty, not the
+     * weather - 85.0 C in particular is its power-on default, which the node
+     * already rejects, and this is the second net under it. */
+    if (water_temp_deci_c < 0 || water_temp_deci_c > 600) {
+        return TDS_INVALID;
+    }
+
+    /* Standard EC compensation: conductivity moves about 2 % per degree, and
+     * everything is quoted at 25 C. Without this a tank reads ~40 % apart
+     * between a January morning and a May afternoon with nothing having changed
+     * in the water, which is precisely the kind of confident wrongness the level
+     * maths refuses elsewhere. */
+    float coeff = 1.0f + 0.02f * ((water_temp_deci_c / 10.0f) - 25.0f);
+    if (coeff < 0.1f) {
+        return TDS_INVALID;
+    }
+
+    float v = (mv / 1000.0f) / coeff;
+    float ppm = (133.42f * v * v * v - 255.86f * v * v + 857.39f * v) * 0.5f;
+    ppm = ppm * ((float)k_x100 / 100.0f);
+
+    if (ppm < 0.0f) {
+        return 0;
+    }
+    /* Past this the cubic is extrapolating well beyond anything the probe was
+     * fitted to measure, so the number would be arithmetic rather than a
+     * measurement. Note that readings between the probe's rated 1000 ppm and
+     * this ceiling ARE reported: a brackish source is a fact worth seeing, just
+     * a less accurate one. */
+    if (ppm > (float)TDS_MAX_PPM) {
+        return TDS_INVALID;
+    }
+    return (uint16_t)(ppm + 0.5f);
+}
+
+int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm)
+{
+    if (feed_ppm == TDS_INVALID || permeate_ppm == TDS_INVALID) {
+        return -1;
+    }
+    /* Below this the ratio is mostly probe noise: a 20 ppm feed and a 4 ppm
+     * permeate is arithmetically 80 % rejection and means nothing. */
+    if (feed_ppm < TDS_MIN_FEED_PPM) {
+        return -1;
+    }
+    if (permeate_ppm >= feed_ppm) {
+        return 0;               /* no rejection at all, or the probes are swapped */
+    }
+    return (int16_t)(((uint32_t)(feed_ppm - permeate_ppm) * 100U) / feed_ppm);
 }

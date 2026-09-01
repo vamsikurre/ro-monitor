@@ -59,8 +59,8 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | :---: | :--- | :--- | :--- | :--- |
 | `0x00` | **ESP32 HUB (Master)** | RO Room Core | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs, 4-Ch Relays |
 | ~~`0x01`~~ | **Dosing Chemical Tank** | *Retired — sensor wired direct to hub* | — | Waterproof Ultrasonic (AJ-SR04M) on hub `GPIO 5` / `GPIO 4` |
-| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) + 120Ω end-of-bus termination |
-| `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) |
+| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) + 120Ω end-of-bus termination. Optional TDS + DS18B20 pair (§4.5) |
+| `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). Optional TDS + DS18B20 pair (§4.5) |
 | `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
 | `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi | ESP32 | Waterproof Ultrasonic (AJ-SR04M - 3.5m Sump) |
 | `0x06` | **Ground Motors & Interlock** | Ground Floor Wi-Fi | ESP32 | 2x 220V AC Optos (Sump/Borewell) + 4-Ch Relays |
@@ -122,6 +122,27 @@ dangerous state by a hub that is confused.
 
 **Threshold values are validated at the hub, not trusted:** 25.0–55.0 °C, with `ON` at
 least 1.0 °C above `OFF`. A typo on a phone must not be able to disable ventilation.
+
+### 4.5. `CMD_READ_WATER_QUALITY` (`0x08`) — Tank Nodes (`0x02`, `0x03`)
+
+Requests TDS and water temperature from a tank node that has the optional probe pair fitted (`WIRING.md` §9.5). A node without it answers with both fault bits set, so the command is always safe to send.
+
+- **Request Payload:** None ($N=0$).
+- **Response Payload (6 Bytes):**
+  - `uint16_t tds_mv`: Raw TDS probe output in millivolts. **Not ppm** — see below.
+  - `int16_t water_temp_deci_c`: Water temperature in tenths of °C, from the DS18B20 in the same tank.
+  - `uint8_t status`: Bitfield. `0x01` = TDS unusable, `0x02` = temperature unusable. **`0` is the only value that makes the other fields meaningful.**
+  - `uint8_t reserved`: Reserved byte.
+
+**Millivolts, not ppm — the same division of labour as §4.2.** Converting to ppm is a floating-point cubic with a per-probe calibration factor, and two probes of the same part number do not agree out of the bag. Putting it on the hub keeps float off an ATmega that deliberately has none anywhere else, and it means recalibrating a probe against a reference solution is a form on `/cal` rather than a laptop on a roof. The hub's `tdsPPM()` does the conversion and refuses to produce a number it cannot justify, exactly as `levelPercent()` does.
+
+**The two fault bits are set and cleared together, on purpose.** Conductivity moves about **2 % per °C** and every TDS figure is quoted at 25 °C, so an uncompensated reading drifts tens of percent across a season with nothing having changed in the water. A node that cannot read its DS18B20 therefore declines to report TDS either, rather than publishing a number that looks like a measurement. The presence pulse on the 1-Wire bus is what gates the whole feature: no sensor, no readings, no invented values.
+
+**Two things the node refuses to report as temperature:** a scratchpad that fails its Dallas CRC-8, and exactly `85.0 °C` — the DS18B20's power-on default, which means the conversion never ran rather than that the tank is boiling.
+
+**Polling cadence.** The node refreshes this every **10 s** (a 12-bit conversion alone takes 750 ms, so it is started on one cycle and collected on the next — it never blocks the poll loop). The hub asks every **10 poll cycles**, i.e. ~20 s. Asking faster only re-reads a number the node has not updated, at the cost of bus time the tank levels want.
+
+**A failure here does not mark the node offline.** The level does that. A tank node with a working ultrasonic and a dead TDS probe is a node that is very much alive, and conflating the two would raise a bus alert for a water-quality fault.
 
 ---
 

@@ -11,6 +11,7 @@ esp32_hub_test.ino, and the SAME TWO from the production hub firmware
   * a built request frame verifies, and one flipped bit fails it
   * the hub's tank level maths holds at its boundaries, including uncalibrated
     and inverted calibration (the nodes no longer compute this at all)
+  * the node's Dallas CRC-8, which gates every DS18B20 reading
   * the node's 4-20 mA pressure conversion (the TWT fallback sensor) lands on
     RANGE at 4 mA and near zero at 20 mA, and refuses a broken loop -- the
     numbers it returns are indistinguishable from an ultrasonic distance, which
@@ -32,6 +33,7 @@ NODE = 'firmware/ro_node/ro_node.ino'
 HUB = 'firmware/esp32_hub_test/esp32_hub_test.ino'
 PROD_RS485 = 'firmware/hub_prod/main/app_rs485.c'
 PROD_CAL = 'firmware/hub_prod/main/app_cal.c'
+PROD_PRIV = 'firmware/hub_prod/main/app_priv.h'
 
 HARNESS = """
 #include <stdint.h>
@@ -41,6 +43,13 @@ HARNESS = """
 /* Both copies of levelPercent() reference this, so the harness must define it.
    It is the AJ-SR04M's minimum usable range - WIRING.md section 9.0. */
 #define BLIND_ZONE_MM 200
+
+/* Same for the TDS limits, lifted from app_priv.h by the extractor below so the
+   checker cannot disagree with the firmware about where "out of range" is. */
+%s
+
+/* --- lifted from the production firmware: the TDS maths --- */
+%s
 
 /* --- lifted from ro_node.ino --- */
 %s
@@ -200,9 +209,60 @@ int main(void) {
     /* the whole point of the live zero: empty and cut-cable are different states */
     if (pressureMM(counts_for_ua(4000)) == pressureMM(0)) fail("pressure: empty and a cut cable must differ");
 
+    /* The DS18B20's Dallas CRC-8 is not the SHT30's, despite the same polynomial:
+       it is reflected, and getting that wrong rejects every scratchpad the probe
+       ever sends. The failure is total and silent - no temperature, therefore no
+       TDS either - so it gets the same known-answer test the Modbus CRC gets.
+       CRC-8/MAXIM of "123456789" is 0xA1. */
+    if (owCrc8(known, 9) != 0xA1) fail("1-Wire crc8 fails the Dallas/MAXIM known answer");
+
+    /* --- TDS: a number that will be shown as water quality, so the refusals
+       matter more than the arithmetic. k=100 is the uncalibrated default. --- */
+    if (tdsPPM(0, 250, 100) != TDS_INVALID)     fail("tds: an unpowered probe must not read as pure water");
+    if (tdsPPM(3000, 250, 100) != TDS_INVALID)  fail("tds: over-range mV must not become a reading");
+    if (tdsPPM(500, 250, 0) != TDS_INVALID)     fail("tds: a zero k factor must not read a level");
+    if (tdsPPM(500, -50, 100) != TDS_INVALID)   fail("tds: sub-zero water is a faulty sensor");
+    if (tdsPPM(500, 850, 100) != TDS_INVALID)   fail("tds: the DS18B20 85 C default must not be a reading");
+    {
+        /* Monotonic in millivolts: more conductive water must never read lower. */
+        int prev = -1;
+        for (uint16_t mv = 1; mv <= TDS_MV_MAX; mv++) {
+            int p = tdsPPM(mv, 250, 100);
+            if (p == TDS_INVALID) continue;
+            if (p < prev) { fail("tds: ppm is not monotonic in millivolts"); break; }
+            prev = p;
+        }
+        if (prev <= 0) fail("tds: nothing in the probe's range produced a reading");
+
+        /* Temperature compensation must actually compensate. The SAME water at
+           15 C and 35 C is more conductive when warm, so the raw millivolts
+           differ - and the compensated ppm must not. This is the whole reason
+           the DS18B20 is in the bill of materials. */
+        int cold = tdsPPM(400, 150, 100);
+        int warm = tdsPPM(400, 350, 100);
+        if (cold == TDS_INVALID || warm == TDS_INVALID) {
+            fail("tds: plain readings at 15 C and 35 C should both be valid");
+        } else if (cold <= warm) {
+            fail("tds: compensation runs backwards - warm water must need a smaller correction");
+        }
+
+        /* And the k factor has to scale it, or calibration does nothing. */
+        int k100 = tdsPPM(400, 250, 100), k150 = tdsPPM(400, 250, 150);
+        if (k150 <= k100) fail("tds: the calibration factor does not scale the result");
+    }
+
+    /* --- rejection: the number that says whether the membrane is healthy --- */
+    if (rejectionPercent(TDS_INVALID, 20) != -1) fail("rejection: an invalid feed must not yield a figure");
+    if (rejectionPercent(600, TDS_INVALID) != -1) fail("rejection: an invalid permeate must not yield a figure");
+    if (rejectionPercent(10, 2) != -1)           fail("rejection: too dilute a feed is not a measurement");
+    if (rejectionPercent(600, 600) != 0)         fail("rejection: equal readings are zero rejection");
+    if (rejectionPercent(600, 900) != 0)         fail("rejection: permeate above feed must not go negative");
+    if (rejectionPercent(1000, 50) != 95)        fail("rejection: 1000 -> 50 is 95 %%");
+    if (rejectionPercent(600, 300) != 50)        fail("rejection: half the feed is 50 %%");
+
     if (failures) return 1;
     printf("OK: node, bench hub and production hub agree on CRC-16/Modbus;\\n");
-    printf("    framing and level maths hold across all three.\\n");
+    printf("    framing, level and TDS maths hold across all three.\\n");
     return 0;
 }
 """
@@ -230,6 +290,7 @@ def main():
         '\n'.join(re.findall(r'^#define PRESS_\w+.*$', node, re.M)) + '\n\n'
         + func(node, 'uint16_t crc16(const uint8_t *buf, uint8_t len)')
         + func(node, 'uint16_t pressureMM(uint16_t counts)')
+        + func(node, 'uint8_t owCrc8(const uint8_t *d, uint8_t n)')
     )
     hub_src = (
         func(hub, 'uint16_t crc16(const uint8_t *buf, uint8_t len)',
@@ -244,10 +305,21 @@ def main():
                'uint8_t prod_levelPercent(uint16_t distanceMM, uint16_t fullMM, uint16_t emptyMM)')
     )
 
+    # The TDS maths and the constants it is bounded by, taken from the firmware
+    # rather than restated here - a checker with its own copy of a limit proves
+    # nothing about the firmware's.
+    priv_defines = re.findall(r'^#define TDS_\w+\s+\d+.*$', read(PROD_PRIV), re.M)
+    tds_defines = chr(10).join(priv_defines) + chr(10) + '#define TDS_INVALID 0xFFFF'
+    tds_src = (
+        func(prod_cal, 'uint16_t tdsPPM(uint16_t mv, int16_t water_temp_deci_c, uint16_t k_x100)')
+        + func(prod_cal, 'int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm)')
+    )
+
     tmp = tempfile.mkdtemp()
     c_path = os.path.join(tmp, 'frame.c')
     exe = os.path.join(tmp, 'frame.exe')
-    io.open(c_path, 'w', encoding='utf-8').write(HARNESS % (node_src, hub_src, prod_src))
+    io.open(c_path, 'w', encoding='utf-8').write(
+        HARNESS % (tds_defines, tds_src, node_src, hub_src, prod_src))
 
     if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-o', exe, c_path]) != 0:
         print('gcc refused the extracted code -- that is the finding.')
