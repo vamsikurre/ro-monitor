@@ -27,7 +27,35 @@ bool sht30_read(int16_t *temp_deci_c, uint16_t *hum_deci_pct);
 
 /* Dosing tank, direct to the hub. 0 means no echo. Blocks for up to 35 ms, so
  * call it in the idle part of the cycle, never between a poll and its reply. */
+/*
+ * Rolling median over the last SENSOR_WINDOW samples.
+ *
+ * The RS485 tank nodes have filtered this way since they were written - five
+ * samples, one per cycle, take the middle one - because these sensors throw
+ * single wild outliers and averaging drags the result toward them instead of
+ * discarding them. The hub's OWN sensors did not, and the difference showed:
+ * RWT and TWT sat steady while the dosing tank, read raw, produced four "dosing
+ * chemical low" notifications in forty minutes at 15%, 19%, 13% and 0%.
+ *
+ * A zero means "no reading" and never counts as a sample - it is not a short
+ * distance, and letting it into the median would drag every figure down.
+ * Returns 0 only when the whole window is empty.
+ */
+#define SENSOR_WINDOW 5
+
+typedef struct {
+    uint16_t v[SENSOR_WINDOW];
+    uint8_t  n;      /* how many slots are filled */
+    uint8_t  next;
+} median_u16_t;
+
+uint16_t median_u16_push(median_u16_t *m, uint16_t sample);
+
+/* One raw ping. Prefer dosing_read_median_mm() - see above. */
 uint16_t dosing_read_mm(void);
+
+/* Filtered, and what the poll loop should use. */
+uint16_t dosing_read_median_mm(void);
 
 /* The four PC817 dry-contact channels. All active LOW through INPUT_PULLUP. */
 bool opto_twt_float_closed(void);

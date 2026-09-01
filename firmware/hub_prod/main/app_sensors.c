@@ -253,6 +253,44 @@ bool sht30_read(int16_t *temp_deci_c, uint16_t *hum_deci_pct)
 
 /* --------------------------------------------------------------- ultrasonic */
 
+uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
+{
+    m->v[m->next] = sample;
+    m->next = (uint8_t)((m->next + 1) % SENSOR_WINDOW);
+    if (m->n < SENSOR_WINDOW) {
+        m->n++;
+    }
+
+    /* Zeros are "no reading", not "zero distance". Copy out only real samples. */
+    uint16_t valid[SENSOR_WINDOW];
+    uint8_t k = 0;
+    for (uint8_t i = 0; i < m->n; i++) {
+        if (m->v[i] > 0) {
+            valid[k++] = m->v[i];
+        }
+    }
+    if (k == 0) {
+        return 0;
+    }
+
+    for (uint8_t i = 1; i < k; i++) {          /* insertion sort, k <= 5 */
+        uint16_t x = valid[i];
+        int8_t j = (int8_t)i - 1;
+        while (j >= 0 && valid[j] > x) {
+            valid[j + 1] = valid[j];
+            j--;
+        }
+        valid[j + 1] = x;
+    }
+    return valid[k / 2];
+}
+
+uint16_t dosing_read_median_mm(void)
+{
+    static median_u16_t win;
+    return median_u16_push(&win, dosing_read_mm());
+}
+
 uint16_t dosing_read_mm(void)
 {
     gpio_set_level(GPIO_US_TRIG_DOS, 0);
@@ -373,5 +411,17 @@ int16_t ct_read_deci_amps(int gpio, cal_ct_t which)
 
     if (amps < 0) amps = 0;
     if (amps > 999.0) amps = 999.0;
-    return (int16_t)(amps * 10.0 + 0.5);
+
+    /* A median across calls, on top of the RMS within one. The RMS already
+     * rejects noise WITHIN a burst; it cannot reject a whole bad burst - a
+     * contactor closing mid-window, a loose 3.5 mm plug, a floating pin drifting
+     * through the pedestal band. One window per channel, hence the index. */
+    static median_u16_t win[CAL_CT_COUNT];
+    uint16_t deci = (uint16_t)(amps * 10.0 + 0.5);
+    /* Nudge a genuine zero to 1 so it is not mistaken for "no reading" by the
+     * median, which discards zeros. 0.1 A is below anything this measures. */
+    if (deci == 0) {
+        deci = 1;
+    }
+    return (int16_t)median_u16_push(&win[which < CAL_CT_COUNT ? which : 0], deci);
 }

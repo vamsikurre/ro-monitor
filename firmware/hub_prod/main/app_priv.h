@@ -228,6 +228,12 @@ typedef enum {
 #define ALERT_TANK_FULL_PCT     95
 #define ALERT_DOSING_LOW_PCT    20
 #define ALERT_HYST_PCT          5
+/* Consecutive cycles a level condition must hold before it is believed. At
+ * POLL_CYCLE_MS that is about a minute - invisible against a tank that drains
+ * over days, and longer than any flapping sensor stays on one side of a
+ * threshold. Hysteresis cannot do this job: a reading that crosses BOTH
+ * thresholds makes every swing a genuine new trip. */
+#define ALERT_LEVEL_CONFIRM     30
 #define ALERT_REARM_MS          300000  /* 5 min floor between repeats of one alert */
 /* Hourly reminder, for the conditions that stay true until somebody walks over
  * and does something. Most alerts must NOT use this - see alert_eval(). */

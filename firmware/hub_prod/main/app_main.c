@@ -160,8 +160,9 @@ static void report_str(esp_rmaker_device_t *dev, const char *name, const char *v
  * muted app protects nothing.
  */
 typedef struct {
-    bool    latched;
-    int64_t last_fired_us;
+    bool     latched;
+    int64_t  last_fired_us;
+    uint16_t streak;          /* consecutive cycles the condition has held */
 } alert_t;
 
 static alert_t s_al_twt_full, s_al_rwt_full, s_al_dos_low, s_al_bat_hot;
@@ -171,13 +172,37 @@ static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle;
  * A non-zero value re-notifies on that interval for as long as the condition
  * holds, and is for the small number of faults that stay true until a person
  * physically intervenes. Everything else passes 0 on purpose. */
-static void alert_eval(alert_t *a, bool tripped, const char *msg, uint32_t repeat_ms)
+/*
+ * `confirm` is how many CONSECUTIVE cycles the condition must hold before it is
+ * believed. 1 means "trust the first sample".
+ *
+ * Added 2026-09-02 after four "dosing chemical low" notifications in forty
+ * minutes at 15%, 19%, 13% and 0%, from an unmounted sensor on a bench swinging
+ * between a nearby object and the far wall. Hysteresis alone could not damp it:
+ * the readings crossed BOTH the trip and the clear threshold, so each swing was
+ * a genuine new trip, and the rearm floor only silences trips inside five
+ * minutes. What was missing is the idea the over-current path already had - a
+ * condition is not a fault until it has persisted.
+ *
+ * This costs nothing real. A dosing barrel drains over days; a minute of
+ * confirmation is invisible against that, and no flapping sensor holds one side
+ * of a threshold for thirty cycles running.
+ */
+static void alert_eval(alert_t *a, bool tripped, const char *msg,
+                       uint32_t repeat_ms, uint16_t confirm)
 {
     int64_t now = esp_timer_get_time();
 
     if (!tripped) {
         a->latched = false;
+        a->streak = 0;
         return;
+    }
+    if (a->streak < 0xFFFF) {
+        a->streak++;
+    }
+    if (a->streak < confirm) {
+        return;                    /* real, perhaps, but not yet believable */
     }
     /* One notification per trip, unless this alert asked for reminders.
      * Re-notifying about a fault somebody already knows about is how people
@@ -243,21 +268,21 @@ static void evaluate_alerts(const hub_state_t *s)
         bool full = s->twt.pct > ALERT_TANK_FULL_PCT;
         if (s->twt.pct < ALERT_TANK_FULL_PCT - ALERT_HYST_PCT) full = false;
         snprintf(msg, sizeof(msg), "Treated water tank full (%d%%). RO plant entering standby.", s->twt.pct);
-        alert_eval(&s_al_twt_full, full, msg, 0);
+        alert_eval(&s_al_twt_full, full, msg, 0, ALERT_LEVEL_CONFIRM);
     }
 
     if (s->rwt.pct >= 0 && s->rwt_online) {
         bool full = s->rwt.pct > ALERT_TANK_FULL_PCT;
         if (s->rwt.pct < ALERT_TANK_FULL_PCT - ALERT_HYST_PCT) full = false;
         snprintf(msg, sizeof(msg), "Raw water tank full (%d%%). Check the float and the sump motor.", s->rwt.pct);
-        alert_eval(&s_al_rwt_full, full, msg, 0);
+        alert_eval(&s_al_rwt_full, full, msg, 0, ALERT_LEVEL_CONFIRM);
     }
 
     if (s->dosing.pct >= 0) {
         bool low = s->dosing.pct < ALERT_DOSING_LOW_PCT;
         if (s->dosing.pct > ALERT_DOSING_LOW_PCT + ALERT_HYST_PCT) low = false;
         snprintf(msg, sizeof(msg), "Dosing chemical low (%d%%). Replenish the anti-scalant.", s->dosing.pct);
-        alert_eval(&s_al_dos_low, low, msg, 0);
+        alert_eval(&s_al_dos_low, low, msg, 0, ALERT_LEVEL_CONFIRM);
     }
 
     if (!s->battery_room.fault && s->battery_online) {
@@ -265,7 +290,7 @@ static void evaluate_alerts(const hub_state_t *s)
         snprintf(msg, sizeof(msg), "Battery room %d.%d C. Exhaust fan %s.",
                  s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10),
                  s->fan_on ? "ON" : "not running");
-        alert_eval(&s_al_bat_hot, hot, msg, 0);
+        alert_eval(&s_al_bat_hot, hot, msg, 0, ALERT_LEVEL_CONFIRM);
     }
 
     /* The Aster multiplexes every fault condition onto the one AUX OP contact, so
@@ -280,11 +305,11 @@ static void evaluate_alerts(const hub_state_t *s)
     if (s->alarm_active && s->lps_active) {
         alert_eval(&s_al_fault, true,
                    "RO controller fault: LOW FEED PRESSURE. Check the feed pump, "
-                   "the filters and the LPS setting.", ALERT_REPEAT_MS);
+                   "the filters and the LPS setting.", ALERT_REPEAT_MS, 1);
     } else {
         alert_eval(&s_al_fault, s->alarm_active,
                    "RO controller fault, cause unknown. Check panel: dosing, "
-                   "pump overload, interlocks.", ALERT_REPEAT_MS);
+                   "pump overload, interlocks.", ALERT_REPEAT_MS, 1);
     }
 
     if (s->overcurrent) {
@@ -293,9 +318,9 @@ static void evaluate_alerts(const hub_state_t *s)
                  s->hpp.deci_amps < 0 ? 0 : s->hpp.deci_amps % 10,
                  s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps / 10,
                  s->rwp.deci_amps < 0 ? 0 : s->rwp.deci_amps % 10);
-        alert_eval(&s_al_overcurrent, true, msg, 0);
+        alert_eval(&s_al_overcurrent, true, msg, 0, 1);
     } else {
-        alert_eval(&s_al_overcurrent, false, NULL, 0);
+        alert_eval(&s_al_overcurrent, false, NULL, 0, 1);
     }
 
     /* The plant is idle while the treated water tank still has room for water.
@@ -333,14 +358,14 @@ static void evaluate_alerts(const hub_state_t *s)
                                s->twt_float_closed && idle_long_enough;
     alert_eval(&s_al_idle, should_be_producing,
                "RO idle 15 min, treated water tank has room. "
-               "Is the Aster still in MANUAL?", ALERT_REPEAT_MS);
+               "Is the Aster still in MANUAL?", ALERT_REPEAT_MS, 1);
 
     bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online;
     snprintf(msg, sizeof(msg), "RS485 node offline: %s%s%s. Check the bus and the terminators.",
              s->rwt_online ? "" : "0x02 RWT ",
              s->twt_online ? "" : "0x03 TWT ",
              s->battery_online ? "" : "0x04 Battery ");
-    alert_eval(&s_al_node_lost, any_lost, msg, 0);
+    alert_eval(&s_al_node_lost, any_lost, msg, 0, 1);
 }
 
 /* ------------------------------------------------------------- event stamps */
@@ -737,6 +762,8 @@ static void poll_task(void *arg)
     s_state.fan_last_on   = cal_event_get(CAL_EVT_FAN_ON);
     hub_state_unlock();
 
+    static median_u16_t s_dosing_win;
+
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
     int  oc_streak = 0;
@@ -786,8 +813,12 @@ static void poll_task(void *arg)
             local.ro_room.fault = true;
         }
 
-        local.dosing.distance_mm = dosing_read_mm();
-        local.dosing.raw_mm = local.dosing.distance_mm;
+        /* raw_mm is the unfiltered ping and distance_mm the median, which is
+         * the same split the RS485 nodes report - the raw figure is what tells
+         * you a sensor is bouncing, and it is the first thing worth looking at
+         * when a level looks wrong. */
+        local.dosing.raw_mm = dosing_read_mm();
+        local.dosing.distance_mm = median_u16_push(&s_dosing_win, local.dosing.raw_mm);
         if (local.dosing.distance_mm == 0) {
             local.dosing.sensor = SENSOR_NO_ECHO;
             local.dosing.pct = -1;
@@ -832,9 +863,23 @@ static void poll_task(void *arg)
         /* Over-current has to persist. A single bad RMS read — a contactor
          * closing mid-window, a loose 3.5 mm plug — is not a fault, and a
          * notification for one is how people learn to ignore them. */
+        /* Gated on the motor actually RUNNING, which is the check that was
+         * missing. Observed 2026-09-02: "Motor over-current. HPP 0.0 A, RWP
+         * 24.7 A" on a bench hub with no CT breakout fitted and neither pump
+         * energised. GPIO 39 is a floating input-only pin; ct_read_deci_amps()
+         * rejects it by testing the bias pedestal, but a floating pin WANDERS,
+         * and when it drifted through the 1250-2050 mV window the RMS of its own
+         * pickup came out as 24.7 A and held for the three cycles OC_CONFIRM
+         * asks for.
+         *
+         * The pedestal test is a good check and stays. This is the one that
+         * cannot be fooled: current only flows when the contactor is closed, and
+         * that comes from the AC opto, not from the ADC. */
         bool oc_now =
-            (local.hpp.deci_amps > 0 && local.hpp.deci_amps > (int16_t)cal_ct(CAL_CT_HPP)->oc_deci_amps) ||
-            (local.rwp.deci_amps > 0 && local.rwp.deci_amps > (int16_t)cal_ct(CAL_CT_RWP)->oc_deci_amps);
+            (local.hpp.running && local.hpp.deci_amps > 0 &&
+             local.hpp.deci_amps > (int16_t)cal_ct(CAL_CT_HPP)->oc_deci_amps) ||
+            (local.rwp.running && local.rwp.deci_amps > 0 &&
+             local.rwp.deci_amps > (int16_t)cal_ct(CAL_CT_RWP)->oc_deci_amps);
         oc_streak = oc_now ? (oc_streak + 1) : 0;
         local.overcurrent = (oc_streak >= OC_CONFIRM_CYCLES);
 
