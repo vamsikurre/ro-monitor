@@ -1046,7 +1046,14 @@ void app_main(void)
 
     ESP_LOGI(TAG, "==========================================");
     ESP_LOGI(TAG, "  Dashboard : http://%s.local/", MDNS_HOSTNAME);
+#if CONFIG_ESP_WIFI_SOFTAP_SUPPORT && AP_MODE_ENABLED
     ESP_LOGI(TAG, "  Fallback  : SSID %s -> http://192.168.4.1/", AP_SSID);
+#else
+    /* Printed, not omitted. "There is no fallback" is the single most useful
+     * thing this banner can say to somebody standing in front of a hub whose
+     * router is down, and a missing line says nothing at all. */
+    ESP_LOGI(TAG, "  Fallback  : none - LAN only, AP_MODE_ENABLED=0");
+#endif
     ESP_LOGI(TAG, "  Calibrate : /cal  (user %s)", CAL_USER);
     ESP_LOGI(TAG, "  Pairing   : RainMaker app, PoP rohub1234");
     ESP_LOGI(TAG, "==========================================");
