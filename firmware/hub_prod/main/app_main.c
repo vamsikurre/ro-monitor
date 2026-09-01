@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "driver/gpio.h"
 #include "esp_event.h"
@@ -68,11 +69,11 @@ hub_state_t *hub_state(void) { return &s_state; }
 
 /* --------------------------------------------------------- RainMaker handles */
 
-static esp_rmaker_device_t *s_dev_tanks;
-static esp_rmaker_device_t *s_dev_pumps;
-static esp_rmaker_device_t *s_dev_climate;
-static esp_rmaker_device_t *s_dev_vent;
-static esp_rmaker_device_t *s_dev_plant;
+static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
+static esp_rmaker_device_t *s_dev_ro_room;
+static esp_rmaker_device_t *s_dev_ro_room;
+static esp_rmaker_device_t *s_dev_battery;
+static esp_rmaker_device_t *s_dev_ro_room;
 
 static bool s_cloud_up = false;
 
@@ -342,6 +343,65 @@ static void evaluate_alerts(const hub_state_t *s)
     alert_eval(&s_al_node_lost, any_lost, msg, 0);
 }
 
+/* ------------------------------------------------------------- event stamps */
+
+/*
+ * Wall clock, or 0 if we do not have one yet.
+ *
+ * Recording an event before SNTP has synchronised would stamp it in 1970, and a
+ * plant that "last ran in 1970" is worse than one that has never run: the first
+ * is a bug someone has to chase, the second is a fact. The threshold is simply a
+ * date safely in the past - anything below it is the epoch default, not a time.
+ */
+static uint32_t now_epoch(void)
+{
+    time_t now = time(NULL);
+    return (now > 1700000000) ? (uint32_t)now : 0;
+}
+
+static void stamp_text(char *out, size_t len, uint32_t epoch)
+{
+    if (epoch == 0) {
+        snprintf(out, len, "--");
+        return;
+    }
+    time_t t = (time_t)epoch;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    if (strftime(out, len, "%d %b %H:%M", &tm) == 0) {
+        snprintf(out, len, "--");
+    }
+}
+
+/* Record on the RISING edge only. `prev` is the caller's memory of last cycle. */
+static void stamp_on_rise(bool now_true, int *prev, cal_event_t e, uint32_t *dst)
+{
+    if (now_true && *prev != 1) {
+        uint32_t t = now_epoch();
+        if (t != 0 && cal_event_set(e, t) == ESP_OK) {
+            *dst = t;
+        }
+    }
+    *prev = now_true ? 1 : 0;
+}
+
+/* Publishes only when the stamp actually changes - which is a few times a day,
+ * not every cycle. `sent` is the caller's memory of what the cloud already has. */
+static void report_stamp(esp_rmaker_device_t *dev, const char *name,
+                         uint32_t epoch, uint32_t *sent)
+{
+    if (epoch == *sent) {
+        return;
+    }
+    char text[24];
+    stamp_text(text, sizeof(text), epoch);
+    esp_rmaker_param_t *p = esp_rmaker_device_get_param_by_name(dev, name);
+    if (p) {
+        esp_rmaker_param_update_and_report(p, esp_rmaker_str(text));
+        *sent = epoch;
+    }
+}
+
 /* -------------------------------------------------------------- fan policy */
 
 /*
@@ -354,6 +414,21 @@ static void evaluate_alerts(const hub_state_t *s)
  * "leave it as is" — after five quiet minutes the node stops believing us and
  * falls back to its own thresholds.
  */
+static int64_t s_fan_mode_set_us = 0;
+
+static const char *fan_mode_str(fan_mode_t m)
+{
+    return (m == FAN_MODE_ON) ? "On" : (m == FAN_MODE_OFF) ? "Off" : "Auto";
+}
+
+static void report_fan_mode(fan_mode_t m)
+{
+    esp_rmaker_param_t *p = esp_rmaker_device_get_param_by_name(s_dev_battery, PARAM_FAN_MODE);
+    if (p) {
+        esp_rmaker_param_update_and_report(p, esp_rmaker_str(fan_mode_str(m)));
+    }
+}
+
 static void command_fan(hub_state_t *s)
 {
     static int64_t last_cmd_us = 0;
@@ -362,9 +437,34 @@ static void command_fan(hub_state_t *s)
         return;   /* no trustworthy temperature; the node's own fail-safe covers this */
     }
 
+    /* A manual mode is a temporary instruction, not a new policy: it expires back
+     * to Auto so that a hub left in Force Off by somebody who has gone home does
+     * not quietly become the ventilation strategy for a battery room. */
+    if (s->fan_mode != FAN_MODE_AUTO &&
+        (esp_timer_get_time() - s_fan_mode_set_us) > (int64_t)FAN_FORCE_MS * 1000) {
+        ESP_LOGI(TAG, "fan override expired — back to Auto");
+        s->fan_mode = FAN_MODE_AUTO;
+        report_fan_mode(s->fan_mode);
+    }
+
     bool want = s->fan_on;
-    if (!s->fan_on && s->battery_room.temp_deci_c >= (int16_t)cal_fan_on_deci_c())  want = true;
-    if (s->fan_on  && s->battery_room.temp_deci_c <= (int16_t)cal_fan_off_deci_c()) want = false;
+    if (s->fan_mode == FAN_MODE_ON) {
+        want = true;                       /* always allowed: ventilating is the safe direction */
+    } else if (s->fan_mode == FAN_MODE_OFF &&
+               s->battery_room.temp_deci_c < FAN_FORCE_OFF_CEILING_DECI) {
+        want = false;
+    } else {
+        /* Auto, or Force Off overridden because the room is too hot for it to be
+         * a convenience any more. See FAN_FORCE_OFF_CEILING_DECI. */
+        if (s->fan_mode == FAN_MODE_OFF) {
+            ESP_LOGW(TAG, "Force Off ignored at %d.%d C — reverting to Auto",
+                     s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10));
+            s->fan_mode = FAN_MODE_AUTO;
+            report_fan_mode(s->fan_mode);
+        }
+        if (!s->fan_on && s->battery_room.temp_deci_c >= (int16_t)cal_fan_on_deci_c())  want = true;
+        if (s->fan_on  && s->battery_room.temp_deci_c <= (int16_t)cal_fan_off_deci_c()) want = false;
+    }
 
     bool changed = (want != s->fan_on);
     int64_t now = esp_timer_get_time();
@@ -618,11 +718,24 @@ static void poll_task(void *arg)
     int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
     int   last_twt_float = -1, last_rl1 = -1, last_rl2 = -1;
     int   last_rwt_tds = -1, last_twt_tds = -1, last_rejection = -1;
+    /* -1 rather than 0: "not seen yet" must differ from "seen, and it was off",
+     * or the first cycle records a rising edge that never happened. */
+    int   prev_hpp_run = -1, prev_rwp_run = -1, prev_fan_run = -1, prev_twt_full = -1;
+    uint32_t sent_hpp_t = 0, sent_rwp_t = 0, sent_twt_t = 0, sent_fan_t = 0;
     int   last_lps = -1;
     char  last_status[64] = "";
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
     float last_hpp_a = -9999, last_rwp_a = -9999;
     float last_rwt_wt = -9999, last_twt_wt = -9999;
+
+    /* Survives a power cut: without this the first thing a returning hub reports
+     * is that the plant has never run. */
+    hub_state_lock();
+    s_state.hpp_last_on   = cal_event_get(CAL_EVT_HPP_ON);
+    s_state.rwp_last_on   = cal_event_get(CAL_EVT_RWP_ON);
+    s_state.twt_last_full = cal_event_get(CAL_EVT_TWT_FULL);
+    s_state.fan_last_on   = cal_event_get(CAL_EVT_FAN_ON);
+    hub_state_unlock();
 
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
@@ -737,27 +850,27 @@ static void poll_task(void *arg)
         if (local.twt.pct >= 0) report_int(s_dev_tanks, PARAM_TWT_PCT, local.twt.pct, &last_twt, 1);
         if (local.dosing.pct >= 0) report_int(s_dev_tanks, PARAM_DOS_PCT, local.dosing.pct, &last_dos, 1);
 
-        report_bool(s_dev_pumps, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
-        report_bool(s_dev_pumps, PARAM_RWP_ON, local.rwp.running, &last_rwp_on);
+        report_bool(s_dev_ro_room, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
+        report_bool(s_dev_ro_room, PARAM_RWP_ON, local.rwp.running, &last_rwp_on);
         if (local.hpp.deci_amps >= 0) {
-            report_float(s_dev_pumps, PARAM_HPP_AMPS, local.hpp.deci_amps / 10.0f, &last_hpp_a, 0.3f);
+            report_float(s_dev_ro_room, PARAM_HPP_AMPS, local.hpp.deci_amps / 10.0f, &last_hpp_a, 0.3f);
         }
         if (local.rwp.deci_amps >= 0) {
-            report_float(s_dev_pumps, PARAM_RWP_AMPS, local.rwp.deci_amps / 10.0f, &last_rwp_a, 0.3f);
+            report_float(s_dev_ro_room, PARAM_RWP_AMPS, local.rwp.deci_amps / 10.0f, &last_rwp_a, 0.3f);
         }
-        report_bool(s_dev_pumps, PARAM_OVERCURRENT, local.overcurrent, &last_oc);
+        report_bool(s_dev_ro_room, PARAM_OVERCURRENT, local.overcurrent, &last_oc);
 
         if (!local.ro_room.fault) {
-            report_float(s_dev_climate, PARAM_RO_TEMP, local.ro_room.temp_deci_c / 10.0f, &last_ro_t, 0.3f);
-            report_float(s_dev_climate, PARAM_RO_HUM, local.ro_room.hum_deci_pct / 10.0f, &last_ro_h, 1.0f);
+            report_float(s_dev_ro_room, PARAM_RO_TEMP, local.ro_room.temp_deci_c / 10.0f, &last_ro_t, 0.3f);
+            report_float(s_dev_ro_room, PARAM_RO_HUM, local.ro_room.hum_deci_pct / 10.0f, &last_ro_h, 1.0f);
         }
         if (local.battery_online && !local.battery_room.fault) {
-            report_float(s_dev_climate, PARAM_BAT_TEMP, local.battery_room.temp_deci_c / 10.0f, &last_bat_t, 0.3f);
-            report_float(s_dev_climate, PARAM_BAT_HUM, local.battery_room.hum_deci_pct / 10.0f, &last_bat_h, 1.0f);
+            report_float(s_dev_battery, PARAM_BAT_TEMP, local.battery_room.temp_deci_c / 10.0f, &last_bat_t, 0.3f);
+            report_float(s_dev_battery, PARAM_BAT_HUM, local.battery_room.hum_deci_pct / 10.0f, &last_bat_h, 1.0f);
         }
-        report_bool(s_dev_vent, PARAM_FAN_ON, local.fan_on, &last_fan);
-        report_bool(s_dev_plant, PARAM_ALARM, local.alarm_active, &last_alarm);
-        report_bool(s_dev_plant, PARAM_LPS, local.lps_active, &last_lps);
+        report_bool(s_dev_battery, PARAM_FAN_ON, local.fan_on, &last_fan);
+        report_bool(s_dev_ro_room, PARAM_ALARM, local.alarm_active, &last_alarm);
+        report_bool(s_dev_ro_room, PARAM_LPS, local.lps_active, &last_lps);
         report_bool(s_dev_tanks, PARAM_TWT_FLOAT, local.twt_float_closed, &last_twt_float);
 
         /* Only when there is something to say. An unfitted or faulty probe
@@ -776,8 +889,26 @@ static void poll_task(void *arg)
         if (local.rejection_pct >= 0) {
             report_int(s_dev_tanks, PARAM_REJECTION, local.rejection_pct, &last_rejection, 1);
         }
-        report_bool(s_dev_plant, PARAM_RL1, local.rl1_active, &last_rl1);
-        report_bool(s_dev_plant, PARAM_RL2, local.rl2_active, &last_rl2);
+        /* --- when things last happened ---
+         *
+         * Rising edges only, and only once the clock is real. TWT "full" is taken
+         * from the LEVEL, not from the Aster float: TWT FLOTY is a C/NC contact
+         * whose OPEN state means full, and an unwired input reads open (WIRING.md
+         * 0.3.2) - so trusting the float would stamp "tank full" at every boot of
+         * every hub that has not been wired to the panel yet. */
+        stamp_on_rise(local.hpp.running, &prev_hpp_run, CAL_EVT_HPP_ON, &local.hpp_last_on);
+        stamp_on_rise(local.rwp.running, &prev_rwp_run, CAL_EVT_RWP_ON, &local.rwp_last_on);
+        stamp_on_rise(local.fan_on,      &prev_fan_run, CAL_EVT_FAN_ON, &local.fan_last_on);
+        stamp_on_rise(local.twt.pct >= ALERT_TANK_FULL_PCT, &prev_twt_full,
+                      CAL_EVT_TWT_FULL, &local.twt_last_full);
+
+        report_stamp(s_dev_ro_room, PARAM_HPP_LAST_ON,   local.hpp_last_on,   &sent_hpp_t);
+        report_stamp(s_dev_ro_room, PARAM_RWP_LAST_ON,   local.rwp_last_on,   &sent_rwp_t);
+        report_stamp(s_dev_ro_room, PARAM_TWT_LAST_FULL, local.twt_last_full, &sent_twt_t);
+        report_stamp(s_dev_battery, PARAM_FAN_LAST_ON,   local.fan_last_on,   &sent_fan_t);
+
+        report_bool(s_dev_ro_room, PARAM_RL1, local.rl1_active, &last_rl1);
+        report_bool(s_dev_ro_room, PARAM_RL2, local.rl2_active, &last_rl2);
 
         /* A one-line summary is what the app shows without opening anything. */
         char status[64];
@@ -803,7 +934,7 @@ static void poll_task(void *arg)
             snprintf(status, sizeof(status), "%s - TWT %s",
                      local.hpp.running ? "Producing" : "Idle", twt);
         }
-        report_str(s_dev_plant, PARAM_STATUS, status, last_status, sizeof(last_status));
+        report_str(s_dev_ro_room, PARAM_STATUS, status, last_status, sizeof(last_status));
 
         evaluate_alerts(&local);
 
@@ -833,11 +964,52 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     const char *name = esp_rmaker_param_get_name(param);
     ESP_LOGI(TAG, "write %s from %s", name, ctx ? esp_rmaker_device_cb_src_to_str(ctx->src) : "?");
 
-    /* The only writable parameter is the fan-on threshold. Everything else this
-     * hub publishes is a measurement, and a measurement is not a control.
+    /* Three writable parameters, all of them the fan: the switch, the mode and
+     * the threshold. Everything else this hub publishes is a measurement, and a
+     * measurement is not a control.
      * Calibration deliberately lives on /cal rather than in the app: it needs a
      * live distance reading next to the tank, which a phone notification cannot
      * give you. */
+    /* The toggle is a shortcut into the same mode machinery below - never a
+     * fourth opinion about the relay. Note it can be REFUSED: Force Off above
+     * the ceiling is not a thing this hub will do (FAN_FORCE_OFF_CEILING_DECI),
+     * and command_fan() will revert it on the next cycle and say so. */
+    if (strcmp(name, PARAM_FAN_ON) == 0) {
+        fan_mode_t m = val.val.b ? FAN_MODE_ON : FAN_MODE_OFF;
+        hub_state_lock();
+        s_state.fan_mode = m;
+        hub_state_unlock();
+        s_fan_mode_set_us = esp_timer_get_time();
+        ESP_LOGI(TAG, "fan switched %s from the app (expires to Auto in %lu min)",
+                 val.val.b ? "ON" : "OFF", (unsigned long)(FAN_FORCE_MS / 60000));
+        esp_rmaker_param_update_and_report(param, val);
+        report_fan_mode(m);
+        return ESP_OK;
+    }
+
+    if (strcmp(name, PARAM_FAN_MODE) == 0) {
+        const char *v = val.val.s ? val.val.s : "Auto";
+        fan_mode_t m = FAN_MODE_AUTO;
+        if (strcmp(v, "On") == 0)       m = FAN_MODE_ON;
+        else if (strcmp(v, "Off") == 0) m = FAN_MODE_OFF;
+        else if (strcmp(v, "Auto") != 0) {
+            ESP_LOGW(TAG, "unknown fan mode %s", v);
+            return ESP_ERR_INVALID_ARG;
+        }
+        hub_state_lock();
+        s_state.fan_mode = m;
+        hub_state_unlock();
+        s_fan_mode_set_us = esp_timer_get_time();
+        /* Take effect on the next cycle rather than commanding the relay here:
+         * the poll task owns the bus, and a write callback runs on the RainMaker
+         * work queue. Two tasks driving one RS485 chain is a race, and the cycle
+         * is 2 s away. */
+        ESP_LOGI(TAG, "fan mode -> %s (expires to Auto in %lu min)",
+                 v, (unsigned long)(FAN_FORCE_MS / 60000));
+        esp_rmaker_param_update_and_report(param, val);
+        return ESP_OK;
+    }
+
     if (strcmp(name, PARAM_FAN_THRESHOLD) == 0) {
         uint16_t on_deci = (uint16_t)(val.val.i * 10);
         uint16_t off_deci = (on_deci > FAN_MIN_HYST_DECI + 10) ? (uint16_t)(on_deci - 20) : on_deci;
@@ -863,100 +1035,133 @@ static esp_rmaker_param_t *ro_param(const char *name, const char *type,
 
 static void build_node(esp_rmaker_node_t *node)
 {
-    /* --- tanks --- */
-    s_dev_tanks = esp_rmaker_device_create(DEV_TANKS, "esp.device.water-tank", NULL);
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_PCT, "esp.param.water-level",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_PCT, "esp.param.water-level",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_DOS_PCT, "esp.param.water-level",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
-    /* Water quality. On the tanks device rather than a new one: a TDS reading is
-     * a fact about a tank, and splitting it out would mean opening two screens
-     * to compare a level with the water in it. */
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_TDS, "esp.param.concentration",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_TDS, "esp.param.concentration",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
-                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
-                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    /* The one number worth looking at daily: permeate TDS rising is only a fault
-     * if the FEED did not rise with it. */
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_REJECTION, "esp.param.percentage",
-                                                      esp_rmaker_int(0), ESP_RMAKER_UI_TEXT));
+    /* ================================ RO ROOM ================================
+     * Everything in the room on one screen: what the plant is doing, what the
+     * Aster contacts say, what the pumps are drawing, and the air around them.
+     * Split by signal type it was three screens for one physical place. */
+    s_dev_ro_room = esp_rmaker_device_create(DEV_RO_ROOM, "esp.device.other", NULL);
 
-    /* The Aster's own TWT float, next to our ultrasonic reading of the same tank,
-     * because the useful thing is the DISAGREEMENT: float closed with the level
-     * reading low means one of the two is lying, and until now the app could only
-     * see one of them. */
-    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_FLOAT, "esp.param.toggle",
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_node_add_device(node, s_dev_tanks);
+    esp_rmaker_param_t *st = ro_param(PARAM_STATUS, "esp.param.status",
+                                      esp_rmaker_str("Starting"), ESP_RMAKER_UI_TEXT);
+    esp_rmaker_device_add_param(s_dev_ro_room, st);
+    esp_rmaker_device_assign_primary_param(s_dev_ro_room, st);
 
-    /* --- pumps and current --- */
-    s_dev_pumps = esp_rmaker_device_create(DEV_PUMPS, "esp.device.other", NULL);
-    esp_rmaker_device_add_param(s_dev_pumps, ro_param(PARAM_HPP_ON, ESP_RMAKER_PARAM_POWER,
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_device_add_param(s_dev_pumps, ro_param(PARAM_RWP_ON, ESP_RMAKER_PARAM_POWER,
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_device_add_param(s_dev_pumps, ro_param(PARAM_HPP_AMPS, "esp.param.current",
-                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_pumps, ro_param(PARAM_RWP_AMPS, "esp.param.current",
-                                                      esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_pumps, ro_param(PARAM_OVERCURRENT, "esp.param.alert",
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_node_add_device(node, s_dev_pumps);
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_ALARM, "esp.param.alert",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_LPS, "esp.param.alert",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    /* Not alerts - the multiport valve position, which is how you tell
+     * "producing" from "backwashing" without standing in the room. */
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RL1, "esp.param.toggle",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RL2, "esp.param.toggle",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
 
-    /* --- climate --- */
-    s_dev_climate = esp_rmaker_device_create(DEV_CLIMATE, ESP_RMAKER_DEVICE_TEMP_SENSOR, NULL);
-    esp_rmaker_param_t *ro_t = ro_param(PARAM_RO_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
-                                        esp_rmaker_float(0), ESP_RMAKER_UI_TEXT);
-    esp_rmaker_device_add_param(s_dev_climate, ro_t);
-    esp_rmaker_device_assign_primary_param(s_dev_climate, ro_t);
-    esp_rmaker_device_add_param(s_dev_climate, ro_param(PARAM_RO_HUM, "esp.param.humidity",
-                                                        esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_climate, ro_param(PARAM_BAT_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
-                                                        esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_device_add_param(s_dev_climate, ro_param(PARAM_BAT_HUM, "esp.param.humidity",
-                                                        esp_rmaker_float(0), ESP_RMAKER_UI_TEXT));
-    esp_rmaker_node_add_device(node, s_dev_climate);
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_HPP_ON, ESP_RMAKER_PARAM_POWER,
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RWP_ON, ESP_RMAKER_PARAM_POWER,
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    /* A pump with no clamp fitted reports nothing, so these show the sentinel
+     * until one is: 0.0 A is exactly what an idle pump reads. */
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_HPP_AMPS, "esp.param.current",
+                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RWP_AMPS, "esp.param.current",
+                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_OVERCURRENT, "esp.param.alert",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
 
-    /* --- ventilation: the fan state is read-only here because the node owns the
-     *     relay and this hub owns the policy. Exposing a manual ON/OFF in the app
-     *     would create a third opinion about a fan in a battery room. The
-     *     threshold is the honest control. --- */
-    s_dev_vent = esp_rmaker_device_create(DEV_VENT, ESP_RMAKER_DEVICE_FAN, NULL);
-    esp_rmaker_device_add_cb(s_dev_vent, write_cb, NULL);
-    esp_rmaker_device_add_param(s_dev_vent, ro_param(PARAM_FAN_ON, ESP_RMAKER_PARAM_POWER,
-                                                     esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RO_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RO_HUM, "esp.param.humidity",
+                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+
+    /* "When did it last run" answers the question people open the app to ask,
+     * and a live boolean cannot: a pump that is off right now tells you nothing
+     * about whether the plant has been working today. */
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_HPP_LAST_ON, "esp.param.status",
+                                                        esp_rmaker_str("--"), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RWP_LAST_ON, "esp.param.status",
+                                                        esp_rmaker_str("--"), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_TWT_LAST_FULL, "esp.param.status",
+                                                        esp_rmaker_str("--"), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_node_add_device(node, s_dev_ro_room);
+
+    /* ============================= BATTERY ROOM ============================= */
+    s_dev_battery = esp_rmaker_device_create(DEV_BATTERY_ROOM, ESP_RMAKER_DEVICE_TEMP_SENSOR, NULL);
+    esp_rmaker_device_add_cb(s_dev_battery, write_cb, NULL);
+
+    esp_rmaker_param_t *bt = ro_param(PARAM_BAT_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                      esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT);
+    esp_rmaker_device_add_param(s_dev_battery, bt);
+    esp_rmaker_device_assign_primary_param(s_dev_battery, bt);
+    esp_rmaker_device_add_param(s_dev_battery, ro_param(PARAM_BAT_HUM, "esp.param.humidity",
+                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    /* Writable: this is the switch, and tapping it is what people will actually
+     * do. It sets the mode underneath - on means Force On, off means Force Off -
+     * so there is still only ONE opinion about the relay at any moment, and it
+     * still expires back to Auto rather than becoming permanent policy. */
+    esp_rmaker_param_t *fan = esp_rmaker_param_create(PARAM_FAN_ON, ESP_RMAKER_PARAM_POWER,
+                                                      esp_rmaker_bool(false),
+                                                      PROP_FLAG_READ | PROP_FLAG_WRITE);
+    esp_rmaker_param_add_ui_type(fan, ESP_RMAKER_UI_TOGGLE);
+    esp_rmaker_device_add_param(s_dev_battery, fan);
+
+    /* The mode beside it, so the toggle is never ambiguous: it says whether the
+     * fan is where it is because a thermostat put it there or because a person
+     * did, and how long that will last. A plain toggle beside a thermostat
+     * is two opinions about one relay with no way to say which wins; a mode says
+     * outright who is in charge. Auto is the resting state and both overrides
+     * expire back to it - FAN_FORCE_MS and FAN_FORCE_OFF_CEILING_DECI. */
+    esp_rmaker_param_t *fm = esp_rmaker_param_create(PARAM_FAN_MODE, "esp.param.mode",
+                                                     esp_rmaker_str("Auto"),
+                                                     PROP_FLAG_READ | PROP_FLAG_WRITE);
+    esp_rmaker_param_add_ui_type(fm, ESP_RMAKER_UI_DROPDOWN);
+    static const char *fan_modes[] = { "Auto", "On", "Off" };
+    esp_rmaker_param_add_valid_str_list(fm, fan_modes, 3);
+    esp_rmaker_device_add_param(s_dev_battery, fm);
+
     esp_rmaker_param_t *thr = esp_rmaker_param_create(PARAM_FAN_THRESHOLD, "esp.param.temperature",
                                                       esp_rmaker_int(cal_fan_on_deci_c() / 10),
                                                       PROP_FLAG_READ | PROP_FLAG_WRITE);
     esp_rmaker_param_add_ui_type(thr, ESP_RMAKER_UI_SLIDER);
     esp_rmaker_param_add_bounds(thr, esp_rmaker_int(FAN_LIMIT_LOW_DECI / 10),
                                 esp_rmaker_int(FAN_LIMIT_HIGH_DECI / 10), esp_rmaker_int(1));
-    esp_rmaker_device_add_param(s_dev_vent, thr);
-    esp_rmaker_node_add_device(node, s_dev_vent);
+    esp_rmaker_device_add_param(s_dev_battery, thr);
 
-    /* --- plant status and the fault flag --- */
-    s_dev_plant = esp_rmaker_device_create(DEV_PLANT, "esp.device.other", NULL);
-    esp_rmaker_param_t *st = ro_param(PARAM_STATUS, "esp.param.status",
-                                      esp_rmaker_str("Starting"), ESP_RMAKER_UI_TEXT);
-    esp_rmaker_device_add_param(s_dev_plant, st);
-    esp_rmaker_device_assign_primary_param(s_dev_plant, st);
-    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_ALARM, "esp.param.alert",
+    esp_rmaker_device_add_param(s_dev_battery, ro_param(PARAM_FAN_LAST_ON, "esp.param.status",
+                                                        esp_rmaker_str("--"), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_node_add_device(node, s_dev_battery);
+
+    /* ============================== WATER TANKS ==============================
+     * Levels, and the water in them. Every figure starts at the sentinel: 0 %
+     * is an empty tank, 0 ppm is distilled water and 0 % rejection is a
+     * destroyed membrane, so none of them may be what the app shows before
+     * anything has been measured. */
+    s_dev_tanks = esp_rmaker_device_create(DEV_TANKS, "esp.device.water-tank", NULL);
+    esp_rmaker_param_t *twt = ro_param(PARAM_TWT_PCT, "esp.param.water-level",
+                                       esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT);
+    esp_rmaker_device_add_param(s_dev_tanks, twt);
+    esp_rmaker_device_assign_primary_param(s_dev_tanks, twt);
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_PCT, "esp.param.water-level",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_DOS_PCT, "esp.param.water-level",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    /* The Aster own TWT float, next to our ultrasonic reading of the same tank,
+     * because the useful thing is the DISAGREEMENT: float closed with the level
+     * reading low means one of the two is lying. */
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_FLOAT, "esp.param.toggle",
                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_LPS, "esp.param.alert",
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    /* Not alerts - these two are just the multiport valve's position, which is
-     * how you tell "producing" from "backwashing" without standing in the room. */
-    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_RL1, "esp.param.toggle",
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_device_add_param(s_dev_plant, ro_param(PARAM_RL2, "esp.param.toggle",
-                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
-    esp_rmaker_node_add_device(node, s_dev_plant);
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_TDS, "esp.param.concentration",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_TDS, "esp.param.concentration",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                      esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_WTEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                      esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_REJECTION, "esp.param.percentage",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_node_add_device(node, s_dev_tanks);
 }
 
 /* ------------------------------------------------------------- connectivity */

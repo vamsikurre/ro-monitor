@@ -102,6 +102,72 @@ ESP RainMaker automatically dispatches native push notifications to all paired m
 
 ---
 
+## 4.9. What the App Shows — devices are rooms
+
+RainMaker groups by *device*, so the devices are named after **places**, not
+signal types. Someone standing in the RO room wants one screen with everything
+in that room on it.
+
+| Device | Primary | Carries |
+| :--- | :--- | :--- |
+| **RO Room** | `Status` | HPP/RWP running + current, over-current, RL1/RL2, LPS, controller fault, room temp/RH, and **HPP / RWP last run, TWT last full** |
+| **Battery Room** | `Battery Room Temp` | temp/RH, **the exhaust fan switch**, fan mode, fan-on threshold, fan last run |
+| **Water Tanks** | `Treated Water Level` | RWT/TWT/dosing levels, TWT float, TDS ×2, water temp ×2, salt rejection |
+
+### 4.9.1. Nothing shows a plausible zero before it has been measured
+
+**RainMaker has no null**, and a parameter's initial value is published at boot
+whether or not anything has ever measured it. Zero is a *plausible reading* for
+every figure here — 0 ppm is distilled water, 0 % rejection is a destroyed
+membrane, 0 A is an idle pump, 0 °C is a cold room — so unmeasured parameters
+start at **`-1`** (integers) or **`-99`** (temperatures and currents), values
+nobody can mistake for data.
+
+The report guards already refuse to *send* a reading that does not exist; these
+sentinels are what the app shows until one does. **Seeing `-1` or `-99` means the
+sensor is not fitted or its node is offline — it is not a fault in the hub.**
+
+### 4.9.2. The exhaust fan: one opinion at a time
+
+The fan can be switched from the app, and there are three ways to look at it:
+
+| Control | Does |
+| :--- | :--- |
+| **Exhaust Fan** (toggle) | The switch. On sets Force On, off sets Force Off |
+| **Fan Mode** (Auto / On / Off) | The same thing, said explicitly — and it is what tells you *why* the fan is where it is |
+| **Fan On Above** (slider) | The Auto threshold, 25–55 °C |
+
+**Both overrides expire back to Auto after 30 minutes** (`FAN_FORCE_MS`). A
+battery room must not inherit its ventilation policy from somebody who set a
+toggle and went home.
+
+**Force Off is refused above 40.0 °C** (`FAN_FORCE_OFF_CEILING_DECI`) — the hub
+reverts to Auto and logs it. That figure matches `BACKSTOP_ON_DECI_C` in
+`ro_node.ino` exactly, and the coupling is the point: while the hub is talking,
+the node obeys it and stands its own backstop down (§4.4), so a hub commanding
+OFF at 45 °C would suppress the very fail-safe that exists for a room making
+hydrogen. Forcing the fan **on** is never restricted — ventilating is the safe
+direction.
+
+### 4.9.3. "Last run" times
+
+`HPP Last Run`, `RWP Last Run`, `TWT Last Full` and `Fan Last Run` are wall-clock
+strings — RainMaker has no timestamp type, and "02 Sep 14:32" is what someone
+wants to read. They answer the question a live boolean cannot: a pump that is off
+*right now* says nothing about whether the plant has worked today.
+
+- Recorded on the **rising edge**, stored in NVS, so a power cut does not erase
+  when the plant last ran.
+- **`--` until observed with a synchronised clock.** An event stamped before SNTP
+  syncs would read 1970, and a plant that "last ran in 1970" is a bug someone has
+  to chase; one that has never run is a fact.
+- **TWT full comes from the level, not the Aster float.** `TWT FLOTY` is a C/NC
+  contact whose *open* state means full, and an unwired input reads open
+  (`WIRING.md` §0.3.2) — so trusting the float would stamp "tank full" at every
+  boot of every hub not yet wired to the panel.
+
+---
+
 ## 5. Provisioning & Pairing Procedure
 
 1. **BLE pairing — not SoftAP.** A hub that has never been provisioned is already in pairing mode at boot and stays there **30 minutes** (`CONFIG_APP_NETWORK_PROV_TIMEOUT_PERIOD`). To re-arm it afterwards, **hold `BOOT` for ~5 seconds and release** — the action fires on release, and the accepted window is **3 to 9 seconds**:

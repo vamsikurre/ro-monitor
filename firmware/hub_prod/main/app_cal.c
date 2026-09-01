@@ -37,6 +37,9 @@ static uint16_t s_fan_on_deci_c  = FAN_ON_DECI_C_DEFAULT;
 static uint16_t s_fan_off_deci_c = FAN_OFF_DECI_C_DEFAULT;
 static char     s_cal_pass[33]   = CAL_PASS_DEFAULT;
 
+static const char *s_evt_keys[CAL_EVT_COUNT]     = { "t_hpp", "t_rwp", "t_twtf", "t_fan" };
+static uint32_t    s_evt[CAL_EVT_COUNT];
+
 static const char *s_tank_keys[CAL_TANK_COUNT]   = { "rwt", "twt", "dos" };
 static const char *s_tank_labels[CAL_TANK_COUNT] = { "Raw Water", "Treated Water", "Dosing" };
 static const char *s_ct_keys[CAL_CT_COUNT]       = { "hpp", "rwp" };
@@ -109,6 +112,9 @@ esp_err_t cal_init(void)
         uint16_t turns = s_cts[i].turns;
         load_u16(h, s_ct_keys[i], "t", &turns);
         s_cts[i].turns = (turns >= 1 && turns <= 10) ? (uint8_t)turns : 1;
+    }
+    for (int i = 0; i < CAL_EVT_COUNT; i++) {
+        nvs_get_u32(h, s_evt_keys[i], &s_evt[i]);   /* absent leaves it 0 = never */
     }
     load_u16(h, "fan", "on", &s_fan_on_deci_c);
     load_u16(h, "fan", "off", &s_fan_off_deci_c);
@@ -349,4 +355,35 @@ int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm)
         return 0;               /* no rejection at all, or the probes are swapped */
     }
     return (int16_t)(((uint32_t)(feed_ppm - permeate_ppm) * 100U) / feed_ppm);
+}
+
+uint32_t cal_event_get(cal_event_t e)
+{
+    return (e < CAL_EVT_COUNT) ? s_evt[e] : 0;
+}
+
+esp_err_t cal_event_set(cal_event_t e, uint32_t epoch)
+{
+    if (e >= CAL_EVT_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Callers pass 0 when the clock has not synchronised yet. Storing that would
+     * overwrite a good stamp with "never", which is worse than not recording the
+     * event at all - so refuse it here rather than trusting every caller. */
+    if (epoch == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_evt[e] = epoch;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u32(h, s_evt_keys[e], epoch);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
 }

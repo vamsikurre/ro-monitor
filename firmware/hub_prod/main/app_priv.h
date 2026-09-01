@@ -180,6 +180,26 @@ extern "C" {
 #define FAN_MIN_HYST_DECI       10
 #define FAN_REFRESH_MS          60000
 
+/* Manual fan override. Auto is the resting state and everything returns to it:
+ * a mode left set by somebody who has gone home must not become the permanent
+ * policy for a battery room. */
+typedef enum {
+    FAN_MODE_AUTO = 0,
+    FAN_MODE_ON,
+    FAN_MODE_OFF,
+} fan_mode_t;
+
+#define FAN_FORCE_MS            1800000  /* 30 min, then back to Auto */
+/* Force Off is a convenience, not an override of a safety system. Above this the
+ * hub reverts to Auto regardless of what the app asked for.
+ *
+ * It is 40.0 C to match BACKSTOP_ON_DECI_C in ro_node.ino EXACTLY, and the
+ * coupling is the whole point: while the hub is talking, the node obeys it and
+ * stands its own backstop down (RS485_PROTOCOL.md 4.4). So a hub that commanded
+ * OFF at 45 C would suppress the very fail-safe that exists for a room making
+ * hydrogen. If that constant ever moves, this one moves with it. */
+#define FAN_FORCE_OFF_CEILING_DECI  400
+
 /* ------------------------------------------------------------------- alerting */
 /* Thresholds behind the RainMaker push notifications in
  * DASHBOARD_AND_RAINMAKER.md §4. Each alert latches and needs the value to come
@@ -187,6 +207,16 @@ extern "C" {
  * the line must not send a notification every cycle. */
 /* TDS limits, shared by the conversion and its checker. TDS_MV_MAX is the
  * probe's own ceiling (0-2.3 V out); above it the input is miswired, not salty. */
+/* RainMaker has no null, and a parameter's initial value is published at boot
+ * whether or not anything has ever measured it. Zero is a PLAUSIBLE reading for
+ * every figure this hub publishes - 0 ppm is distilled water, 0 % rejection is a
+ * destroyed membrane, 0 A is an idle pump - so an unmeasured parameter must
+ * start at a value nobody can mistake for data. The report guards already refuse
+ * to SEND a reading that does not exist; these are what the app shows until one
+ * does. */
+#define VAL_NO_READING_INT      (-1)
+#define VAL_NO_READING_FLOAT    (-99.0f)
+
 #define TDS_MV_MAX              2400
 #define TDS_MAX_PPM             3000
 #define TDS_MIN_FEED_PPM        50
@@ -218,11 +248,12 @@ extern "C" {
 /* ------------------------------------------------------- RainMaker parameters */
 /* These strings are the keys the cloud and phone app use. Changing one orphans
  * its history in the app, so they are append-only in practice. */
+/* Devices are ROOMS, not functions. Someone standing in the RO room wants one
+ * screen with everything in that room on it - the pumps, the contacts, the
+ * climate - rather than three screens split by what kind of signal it is. */
+#define DEV_RO_ROOM             "RO Room"
+#define DEV_BATTERY_ROOM        "Battery Room"
 #define DEV_TANKS               "Water Tanks"
-#define DEV_PUMPS               "Pumps & Motors"
-#define DEV_CLIMATE             "Environment"
-#define DEV_VENT                "Ventilation"
-#define DEV_PLANT               "RO Plant"
 
 #define PARAM_RWT_PCT           "Raw Water Level"
 #define PARAM_TWT_PCT           "Treated Water Level"
@@ -249,6 +280,14 @@ extern "C" {
 #define PARAM_RL1               "RL1 Multiport"
 #define PARAM_RL2               "RL2 Multiport"
 #define PARAM_STATUS            "Status"
+/* Wall-clock strings, not numbers: RainMaker has no timestamp type, and "02 Sep
+ * 14:32" is what someone actually wants to read. Em-dash until the event has
+ * been observed at least once with a synchronised clock. */
+#define PARAM_HPP_LAST_ON       "HPP Last Run"
+#define PARAM_RWP_LAST_ON       "RWP Last Run"
+#define PARAM_TWT_LAST_FULL     "TWT Last Full"
+#define PARAM_FAN_LAST_ON       "Fan Last Run"
+#define PARAM_FAN_MODE          "Fan Mode"
 
 /* ------------------------------------------------------------------ web server */
 #define WEB_PORT                80
@@ -341,6 +380,11 @@ typedef struct {
     bool     rl2_active;
     bool     alarm_active;
     bool     lps_active;
+
+    /* Epoch seconds, 0 = never observed with a synchronised clock. Persisted, so
+     * a power cut does not erase when the plant last ran. */
+    uint32_t hpp_last_on, rwp_last_on, twt_last_full, fan_last_on;
+    fan_mode_t fan_mode;
 
     bool     rwt_online, twt_online, battery_online;
     uint32_t rs485_errors;

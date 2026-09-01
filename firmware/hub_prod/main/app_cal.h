@@ -60,6 +60,26 @@ esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100);
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps);
 esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c);
 
+/*
+ * "Last seen" wall-clock stamps, in the same NVS namespace because it is already
+ * open and these have the same lifetime as a calibration: they must survive a
+ * power cut, or the first thing a returning hub reports is that the plant has
+ * never run.
+ *
+ * Epoch seconds; 0 means never observed. Written only on a transition - a few
+ * times a day - so NVS wear is not a consideration.
+ */
+typedef enum {
+    CAL_EVT_HPP_ON = 0,
+    CAL_EVT_RWP_ON,
+    CAL_EVT_TWT_FULL,
+    CAL_EVT_FAN_ON,
+    CAL_EVT_COUNT,
+} cal_event_t;
+
+uint32_t  cal_event_get(cal_event_t e);
+esp_err_t cal_event_set(cal_event_t e, uint32_t epoch);
+
 uint16_t cal_fan_on_deci_c(void);
 uint16_t cal_fan_off_deci_c(void);
 
