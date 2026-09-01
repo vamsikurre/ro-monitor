@@ -43,7 +43,7 @@
 #define PIN_RS485_TX     3   // XY-485 TXD
 #define PIN_US_TRIG      7   // AJ-SR04M TRIG (tank nodes)
 #define PIN_US_ECHO      8   // AJ-SR04M ECHO (tank nodes, 5V - divider on ESP32 only)
-#define PIN_PRESS_SENSE  A2  // J-LOOP pin 2: 4-20 mA loop across the 150R sense resistor
+#define PIN_PRESS_SENSE  A2  // J-LOOP pin 2: 4-20 mA loop across the 100R sense resistor
 #define PIN_PRESS_FIT    A3  // J-PRESS shunt to GND = transducer fitted, ignore the ultrasonic
 #define PIN_FAN_RELAY    9   // 1-ch relay IN, ACTIVE LOW (0x04 only)
 #define PIN_LED          13  // Onboard activity LED
