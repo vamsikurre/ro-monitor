@@ -918,7 +918,15 @@ static void poll_task(void *arg)
         } else if (local.overcurrent) {
             snprintf(status, sizeof(status), "Over-current");
         } else if (!local.rwt_online || !local.twt_online || !local.battery_online) {
-            snprintf(status, sizeof(status), "Node offline");
+            /* NAME them. "Node offline" was ambiguous when this device was called
+             * "RO Plant" and is actively wrong now it is called "RO Room": read
+             * on that card it says the hub is down, which is the one thing it
+             * cannot mean - the hub is what published the message. Say which
+             * remote nodes are missing, which is also the actionable part. */
+            snprintf(status, sizeof(status), "Waiting for%s%s%s",
+                     local.rwt_online ? "" : " RWT",
+                     local.twt_online ? "" : " TWT",
+                     local.battery_online ? "" : " Battery");
         } else {
             /* "0%" and "no reading" are different facts and must not print the
              * same. pct < 0 means levelPercent() refused to compute one - no
