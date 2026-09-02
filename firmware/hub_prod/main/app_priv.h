@@ -180,8 +180,13 @@ extern "C" {
  * looks the same either way. Three lines every 30 s stays legible for months and
  * still answers "what is that sensor actually seeing".
  *
- * Drop this to 5000 while standing in front of the plant, then put it back. */
-#define LOG_SUMMARY_MS          30000
+ * Drop this to 5000 while standing in front of the plant, then put it back.
+ *
+ * COMMISSIONING VALUE IS SET, 2026-09-03. Put it back to 30000 once the nodes
+ * are up and the tanks are calibrated. At 5 s this is roughly 17k lines a day,
+ * which buries anything worth reading - and the reason for the frequency is
+ * gone the moment you are no longer standing next to the sensor. */
+#define LOG_SUMMARY_MS          5000    /* COMMISSIONING - restore to 30000 */
 #define NODE_STALE_MS           10000   /* dashboard shows STALE past this */
 #define NODE_OFFLINE_MS         30000   /* ...and OFFLINE past this        */
 
