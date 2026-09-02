@@ -308,7 +308,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
     int n = snprintf(json, sizeof(json),
         "{"
-        "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\"},"
+        "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\",\"heap_free\":%u,\"heap_min\":%u},"
         "\"rs485\":{\"online\":%d,\"total\":3,\"errors\":%lu,\"last_poll_ms\":%lu},"
         "\"tanks\":{"
           "\"sump\":{\"pct\":0,\"distance_mm\":0,\"state\":\"OFFLINE\",\"sensor\":\"Phase 2\"},"
@@ -348,6 +348,12 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "}",
         esp_timer_get_time() / 1000000, wifi_rssi(),
         esp_app_get_description()->version, reset_word(),
+        /* Both, because they answer different questions. free_heap bounces with
+         * every HTTP response and says almost nothing on its own; the minimum
+         * EVER seen since boot only moves one way, so a slow leak shows there
+         * long before it shows as a reboot - which is the failure this hub would
+         * otherwise announce by simply restarting one night. */
+        (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
         (s->rwt_online ? 1 : 0) + (s->twt_online ? 1 : 0) + (s->battery_online ? 1 : 0),
         (unsigned long)rs485_error_count(), (unsigned long)s->last_cycle_ms,
 

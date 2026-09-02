@@ -41,6 +41,7 @@ REQUIRED = [
     'pumps.sump_motor.on', 'pumps.sump_motor.state',
     'pumps.rwp.on', 'pumps.rwp.state',
     'pumps.hpp.on', 'pumps.hpp.state',
+    'sys.heap_free', 'sys.heap_min',
     'quality.rwt.ppm', 'quality.rwt.t', 'quality.rwt.fitted',
     'quality.twt.ppm', 'quality.twt.t', 'quality.twt.fitted',
     'quality.rejection',
