@@ -428,7 +428,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<title>RO Hub calibration</title>"
         "<style>body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;padding:16px;max-width:44rem}"
         "h2{margin:0 0 4px}h3{margin:20px 0 6px}input{padding:4px;font:inherit}"
-        "form{margin:6px 0}small{color:#666}fieldset{border:1px solid #ccc;border-radius:6px;margin:10px 0}"
+        "form{margin:6px 0}small{color:#666}fieldset{border:1px solid #ccc;border-radius:6px;margin:10px 0}fieldset{scroll-margin-top:12px}"
         "</style>"
         "<h2>RO Hub calibration</h2>"
         "<p><small>Distances are transducer face to liquid surface, in millimetres. "
@@ -444,7 +444,7 @@ static esp_err_t cal_get(httpd_req_t *req)
     int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps };
     hub_state_unlock();
 
-    n += snprintf(page + n, sizeof(page) - n, "<fieldset><legend>Tank levels</legend>");
+    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=tanks><legend>Tank levels</legend>");
     for (int i = 0; i < CAL_TANK_COUNT; i++) {
         const cal_tank_cfg_t *c = cal_tank(i);
 
@@ -478,7 +478,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<p><small>Empty must be a longer distance than full, and full must be "
         "outside the %d mm blind zone.</small></p></fieldset>", BLIND_ZONE_MM);
 
-    n += snprintf(page + n, sizeof(page) - n, "<fieldset><legend>Current clamps</legend>");
+    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=clamps><legend>Current clamps</legend>");
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         const cal_ct_cfg_t *c = cal_ct(i);
         n += snprintf(page + n, sizeof(page) - n,
@@ -504,7 +504,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "no current will be reported at all.</small></p></fieldset>");
 
     n += snprintf(page + n, sizeof(page) - n,
-        "<fieldset><legend>Battery room fan</legend>"
+        "<fieldset id=fan><legend>Battery room fan</legend>"
         "<form method=post action='/api/cal/fan'>"
         "on above <input name=on size=5 value='%u.%u'> &deg;C, "
         "off below <input name=off size=5 value='%u.%u'> &deg;C "
@@ -519,7 +519,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
 
     n += snprintf(page + n, sizeof(page) - n,
-        "<fieldset><legend>Relay test</legend>");
+        "<fieldset id=relays><legend>Relay test</legend>");
     for (int i = 0; i < RELAY_HUB_COUNT; i++) {
         n += snprintf(page + n, sizeof(page) - n,
             "<form method=post action='/api/cal/relay' style='display:inline'>"
@@ -530,8 +530,12 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<form method=post action='/api/cal/relay' style='display:inline'>"
         "<input type=hidden name=n value='%d'>"
         "<button>%d &middot; Battery fan</button></form>"
-        "<p><small>Each button energises that relay for <b>%d.%d s</b> and the hub "
-        "releases it. There is no latch and no off button on purpose: relays 1&ndash;4 "
+        "<p><small>Each button energises that relay for <b>about %d s</b> and the hub "
+        "releases it &mdash; the release runs from the poll loop, so it lands on the "
+        "next cycle and the pulse is %d&ndash;%d s rather than exact. That is the "
+        "right trade: a timer of its own could be missed, whereas the poll loop runs "
+        "whatever else fails, and a watchdog reset de-energises every relay anyway. "
+        "There is no latch and no off button on purpose: relays 1&ndash;4 "
         "are float emulation, and energised is what tells the Aster the tank is full, "
         "the raw water is empty, or the dosing is low (&sect;7.2) &mdash; one left on "
         "stops the plant. Listen for the click and meter <code>COM</code>&ndash;"
@@ -539,7 +543,8 @@ static esp_err_t cal_get(httpd_req_t *req)
         "answers on the next poll rather than instantly, and a test will not override "
         "a fan you have deliberately forced OFF.</small></p></fieldset>",
         RELAY_HUB_COUNT + 1, RELAY_HUB_COUNT + 1,
-        RELAY_TEST_MS / 1000, (RELAY_TEST_MS % 1000) / 100);
+        RELAY_TEST_MS / 1000, RELAY_TEST_MS / 1000,
+        (RELAY_TEST_MS + POLL_CYCLE_MS) / 1000);
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset><legend>This page's password</legend>"
@@ -603,10 +608,19 @@ static esp_err_t read_body(httpd_req_t *req, char *buf, size_t len)
     return ESP_OK;
 }
 
-static esp_err_t redirect_back(httpd_req_t *req)
+/*
+ * Post/Redirect/Get, back to the SECTION the form was in rather than the top of
+ * the page. Every form here reloads /cal, and without a fragment you land at the
+ * top each time - worst for the relay test, where the whole point is pressing
+ * several buttons in a row while listening for clicks.
+ *
+ * `location` must outlive the response: httpd_resp_set_hdr stores the pointer
+ * rather than copying it. Every caller passes a string literal, so it does.
+ */
+static esp_err_t redirect_to(httpd_req_t *req, const char *location)
 {
     httpd_resp_set_status(req, "303 See Other");
-    httpd_resp_set_hdr(req, "Location", "/cal");
+    httpd_resp_set_hdr(req, "Location", location);
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
@@ -696,7 +710,7 @@ static esp_err_t cal_tank_post(httpd_req_t *req)
     if (cal_set_tank((cal_tank_t)idx, (uint16_t)full, (uint16_t)empty) != ESP_OK) {
         return bad(req, "rejected: empty must exceed full, and full must clear the blind zone");
     }
-    return redirect_back(req);
+    return redirect_to(req, "/cal#tanks");
 }
 
 static esp_err_t cal_ct_post(httpd_req_t *req)
@@ -723,7 +737,7 @@ static esp_err_t cal_ct_post(httpd_req_t *req)
     if (cal_set_ct((cal_ct_t)idx, apv_x100, (uint8_t)t, oc_deci) != ESP_OK) {
         return bad(req, "rejected: check A/V (1-200), turns (1-10) and trip (1.0-30.0 A)");
     }
-    return redirect_back(req);
+    return redirect_to(req, "/cal#clamps");
 }
 
 static esp_err_t cal_fan_post(httpd_req_t *req)
@@ -742,7 +756,7 @@ static esp_err_t cal_fan_post(httpd_req_t *req)
     if (cal_set_fan(on_deci, off_deci) != ESP_OK) {
         return bad(req, "rejected: 25.0-55.0 C, and ON at least 1.0 C above OFF");
     }
-    return redirect_back(req);
+    return redirect_to(req, "/cal#fan");
 }
 
 /*
@@ -767,7 +781,7 @@ static esp_err_t cal_relay_post(httpd_req_t *req)
     if (!relay_test_start(n)) {
         return bad(req, "relay must be 1-5");
     }
-    return redirect_back(req);
+    return redirect_to(req, "/cal#relays");
 }
 
 static esp_err_t cal_pass_post(httpd_req_t *req)

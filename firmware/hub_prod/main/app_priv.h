@@ -113,6 +113,11 @@ extern "C" {
  * Five seconds is long enough to hear the click and get a meter on the contact,
  * and short enough that forgetting costs nothing.
  */
+/* Nominal. The release runs from the poll loop, so the pulse actually lands
+ * between this and this + POLL_CYCLE_MS - measured 6970 ms for a 5000 ms
+ * request. Deliberate: a dedicated timer is one more thing that can fail to
+ * fire, and the poll loop runs whatever else goes wrong. If it stopped
+ * running the watchdog resets the hub, and boot de-energises every relay. */
 #define RELAY_TEST_MS           5000
 #define RELAY_HUB_COUNT         4       /* the fan on node 0x04 is the fifth */
 
