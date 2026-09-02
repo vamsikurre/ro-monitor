@@ -34,6 +34,10 @@
 #include "app_sensors.h"
 #include "app_web.h"
 
+/* Implemented in app_main.c: the poll task owns the relays and the RS485 bus,
+ * so a web handler asks rather than drives. */
+bool relay_test_start(int n);
+
 static const char *TAG = "web";
 
 /* dashboard.html is gzipped and embedded at build time - see main/CMakeLists.txt.
@@ -405,7 +409,12 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 static esp_err_t cal_get(httpd_req_t *req)
 {
-    static char page[4096];
+    /* 8 K, not 4 K. The page was 4027 bytes against a 4096 buffer before the relay
+     * test was added - 69 bytes of headroom, and one more sentence anywhere would
+     * have tipped it. The guard at the end turns an overflow into a 500 rather
+     * than a truncated page, which is the right failure, but it is still /cal
+     * simply not opening. Static, so this is BSS rather than stack. */
+    static char page[8192];
     int n = 0;
 
     n += snprintf(page + n, sizeof(page) - n,
@@ -502,6 +511,29 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_LIMIT_LOW_DECI / 10, FAN_LIMIT_LOW_DECI % 10,
         FAN_LIMIT_HIGH_DECI / 10, FAN_LIMIT_HIGH_DECI % 10,
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
+
+    n += snprintf(page + n, sizeof(page) - n,
+        "<fieldset><legend>Relay test</legend>");
+    for (int i = 0; i < RELAY_HUB_COUNT; i++) {
+        n += snprintf(page + n, sizeof(page) - n,
+            "<form method=post action='/api/cal/relay' style='display:inline'>"
+            "<input type=hidden name=n value='%d'>"
+            "<button>%d &middot; %s</button></form> ", i + 1, i + 1, relay_name(i));
+    }
+    n += snprintf(page + n, sizeof(page) - n,
+        "<form method=post action='/api/cal/relay' style='display:inline'>"
+        "<input type=hidden name=n value='%d'>"
+        "<button>%d &middot; Battery fan</button></form>"
+        "<p><small>Each button energises that relay for <b>%d.%d s</b> and the hub "
+        "releases it. There is no latch and no off button on purpose: relays 1&ndash;4 "
+        "are float emulation, and energised is what tells the Aster the tank is full, "
+        "the raw water is empty, or the dosing is low (&sect;7.2) &mdash; one left on "
+        "stops the plant. Listen for the click and meter <code>COM</code>&ndash;"
+        "<code>NC</code>; de-energised is closed. The fan is on node 0x04, so it "
+        "answers on the next poll rather than instantly, and a test will not override "
+        "a fan you have deliberately forced OFF.</small></p></fieldset>",
+        RELAY_HUB_COUNT + 1, RELAY_HUB_COUNT + 1,
+        RELAY_TEST_MS / 1000, (RELAY_TEST_MS % 1000) / 100);
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset><legend>This page's password</legend>"
@@ -707,6 +739,31 @@ static esp_err_t cal_fan_post(httpd_req_t *req)
     return redirect_back(req);
 }
 
+/*
+ * Momentary relay test. One button, one pulse, and the firmware releases it -
+ * there is deliberately no "off" button and no latch.
+ *
+ * Every hub relay reads as a FAULT at the Aster when energised (WIRING.md 7.2),
+ * so a latching control here would let somebody stop the plant by clicking a
+ * thing and walking away. RELAY_TEST_MS is long enough to hear the click and get
+ * a meter on the contact.
+ *
+ * Behind the password like everything else that changes something. That is not a
+ * per-handler decision any more - gate() refuses anything not marked .open.
+ */
+static esp_err_t cal_relay_post(httpd_req_t *req)
+{
+    char body[64], nbuf[8];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "n", nbuf, sizeof(nbuf))) return bad(req, "need n");
+
+    int n = atoi(nbuf);
+    if (!relay_test_start(n)) {
+        return bad(req, "relay must be 1-5");
+    }
+    return redirect_back(req);
+}
+
 static esp_err_t cal_pass_post(httpd_req_t *req)
 {
     char body[128], pass[48];
@@ -759,6 +816,7 @@ esp_err_t web_start(void)
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
         { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
+        { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

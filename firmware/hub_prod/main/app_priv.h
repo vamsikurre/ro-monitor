@@ -100,6 +100,22 @@ extern "C" {
 #define RELAY_ON                0
 #define RELAY_OFF               1
 
+/*
+ * Field relay test - MOMENTARY, and that is a safety property rather than a
+ * convenience.
+ *
+ * Every one of these relays tells the Aster that something is WRONG when it is
+ * energised: tank full, raw water empty, dosing low, pressure trip (WIRING.md
+ * 7.2). De-energised means "plant permitted to run", which is why a hub crash
+ * leaves the panel working. A latching test button would hand somebody the
+ * ability to stop the plant by clicking a thing and walking away.
+ *
+ * Five seconds is long enough to hear the click and get a meter on the contact,
+ * and short enough that forgetting costs nothing.
+ */
+#define RELAY_TEST_MS           5000
+#define RELAY_HUB_COUNT         4       /* the fan on node 0x04 is the fifth */
+
 #define GPIO_LED_STATUS         2
 #define GPIO_BOOT_BUTTON        0
 #define WIFI_RESET_HOLD_SEC     3

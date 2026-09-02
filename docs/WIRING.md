@@ -527,6 +527,15 @@ Polarity follows Section 6.1 and is **not** interchangeable between terminals. E
 | **Relay 3** | **GPIO 18** | `DOS LVL [ C ]` & `[ NC ]`   | `COM` & `NC` | **Closed** = chemical OK | **Open** = dosing low |
 | **Relay 4** | **GPIO 19** | Spare — see note below | `COM` & `NC` for `LPS`, `COM` & `NO` for `HPS` | `LPS` form: **closed** = pressure OK. `HPS` form: **open** = pressure OK | trip |
 
+**Testing them in the field: `/cal` has a Relay test panel.** Five buttons — the
+four hub relays and the battery-room fan — each of which energises its relay for
+**5 s** and then releases it. There is no latch and no off button, deliberately:
+energised is the *fault* state on every one of these lines, so a control that
+stayed on would let somebody stop the plant by clicking a button and walking
+away. Listen for the click and meter `COM`–`NC`; **de-energised is closed**. The
+fan is on node `0x04`, so it answers on the next poll rather than instantly, and
+a test will not override a fan deliberately forced OFF from the app.
+
 > **Never substitute a hub relay for the real `LPS` or `HPS` switch.** Doing so hands dry-run and over-pressure protection to an ESP32. If a remote stop is wanted, wire Relay 4 **in series** with the real `LPS` loop (`COM`/`NC`, either the switch or the hub can open it) or **in parallel** across `HPS` (`COM`/`NO`, either can close it). The mechanical switch keeps its authority in both arrangements.
 
 ```

@@ -94,6 +94,15 @@ void ac_probe(int gpio, bool *running, bool *floating, uint32_t *mv_lo, uint32_t
  */
 int16_t ct_read_deci_amps(int gpio, cal_ct_t which);
 
+/*
+ * Drive one of the four hub float-emulation relays, 0-3 in the order they are
+ * documented in WIRING.md 7.2: TWT, RWT, DOS, AUX. Out-of-range indices are
+ * ignored rather than wrapped - a typo must not silently energise a different
+ * contact from the one the caller named.
+ */
+void relay_set(int idx, bool on);
+const char *relay_name(int idx);
+
 /* Raw pedestal figures for the calibration page, so the breakout can be proven
  * before any clamp is fitted — ~1650 mV steady is correct. */
 void ct_probe(int gpio, uint32_t *mv_lo, uint32_t *mv_hi);

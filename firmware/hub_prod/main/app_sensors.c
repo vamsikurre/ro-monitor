@@ -253,6 +253,28 @@ bool sht30_read(int16_t *temp_deci_c, uint16_t *hum_deci_pct)
 
 /* --------------------------------------------------------------- ultrasonic */
 
+static const int s_relay_gpio[RELAY_HUB_COUNT] = {
+    GPIO_RLY_TWT, GPIO_RLY_RWT, GPIO_RLY_DOS, GPIO_RLY_AUX,
+};
+/* The Aster terminal each one emulates, so the test page can say what a click
+ * is about to claim rather than just "relay 2". */
+static const char *s_relay_name[RELAY_HUB_COUNT] = {
+    "TWT FLOTY", "RWT FLOTY", "DOS LVL", "Spare / AUX",
+};
+
+void relay_set(int idx, bool on)
+{
+    if (idx < 0 || idx >= RELAY_HUB_COUNT) {
+        return;
+    }
+    gpio_set_level(s_relay_gpio[idx], on ? RELAY_ON : RELAY_OFF);
+}
+
+const char *relay_name(int idx)
+{
+    return (idx >= 0 && idx < RELAY_HUB_COUNT) ? s_relay_name[idx] : "?";
+}
+
 uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
 {
     m->v[m->next] = sample;

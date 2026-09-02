@@ -439,6 +439,55 @@ static void report_stamp(esp_rmaker_device_t *dev, const char *name,
  * "leave it as is" — after five quiet minutes the node stops believing us and
  * falls back to its own thresholds.
  */
+/* When each test pulse ends. 0 = not under test. Written by the web handler,
+ * cleared by the poll task - the only two things that touch the relays. */
+static int64_t s_relay_test_until_us[RELAY_HUB_COUNT];
+static int64_t s_fan_test_until_us = 0;
+
+/*
+ * Start a momentary pulse. n is 1-5 as the page labels them: 1-4 are the hub's
+ * own relays, 5 is the battery room fan on node 0x04.
+ *
+ * The fan is not a GPIO here - it lives at the far end of the RS485 chain - so
+ * it is requested rather than driven, and command_fan() actions it on the next
+ * cycle. Driving the bus from a web handler while the poll task owns it is a
+ * race for the sake of two seconds.
+ */
+bool relay_test_start(int n)
+{
+    int64_t until = esp_timer_get_time() + (int64_t)RELAY_TEST_MS * 1000;
+    if (n >= 1 && n <= RELAY_HUB_COUNT) {
+        relay_set(n - 1, true);
+        s_relay_test_until_us[n - 1] = until;
+        ESP_LOGW(TAG, "RELAY TEST: %s energised for %d ms - the Aster reads this as a fault",
+                 relay_name(n - 1), RELAY_TEST_MS);
+        return true;
+    }
+    if (n == RELAY_HUB_COUNT + 1) {
+        s_fan_test_until_us = until;
+        ESP_LOGW(TAG, "RELAY TEST: battery room fan on for %d ms", RELAY_TEST_MS);
+        return true;
+    }
+    return false;
+}
+
+/* Called every cycle. Reverting is not optional and not best-effort: a relay
+ * left energised is a stopped plant. */
+static void relay_test_expire(void)
+{
+    int64_t now = esp_timer_get_time();
+    for (int i = 0; i < RELAY_HUB_COUNT; i++) {
+        if (s_relay_test_until_us[i] != 0 && now >= s_relay_test_until_us[i]) {
+            s_relay_test_until_us[i] = 0;
+            relay_set(i, false);
+            ESP_LOGI(TAG, "RELAY TEST: %s released", relay_name(i));
+        }
+    }
+    if (s_fan_test_until_us != 0 && now >= s_fan_test_until_us) {
+        s_fan_test_until_us = 0;
+    }
+}
+
 static int64_t s_fan_mode_set_us = 0;
 
 static const char *fan_mode_str(fan_mode_t m)
@@ -473,7 +522,12 @@ static void command_fan(hub_state_t *s)
     }
 
     bool want = s->fan_on;
-    if (s->fan_mode == FAN_MODE_ON) {
+    /* A field test outranks Auto for its few seconds, but not Force Off - if
+     * somebody has deliberately held the fan off, a test button should not
+     * quietly override them. */
+    if (s_fan_test_until_us != 0 && s->fan_mode != FAN_MODE_OFF) {
+        want = true;
+    } else if (s->fan_mode == FAN_MODE_ON) {
         want = true;                       /* always allowed: ventilating is the safe direction */
     } else if (s->fan_mode == FAN_MODE_OFF &&
                s->battery_room.temp_deci_c < FAN_FORCE_OFF_CEILING_DECI) {
@@ -799,6 +853,7 @@ static void poll_task(void *arg)
              * health; either number alone mostly tracks the source water. */
             local.rejection_pct = rejectionPercent(local.rwt_wq.ppm, local.twt_wq.ppm);
         }
+        relay_test_expire();
         command_fan(&local);
 
         /* --- hub-local sensing, with the bus now idle for the rest of the cycle --- */
