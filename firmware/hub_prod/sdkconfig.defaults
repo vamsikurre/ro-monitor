@@ -14,6 +14,35 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # --- ESP RainMaker ---
 # Assisted Claiming: the original ESP32-WROOM-32 does NOT support Self-Claiming.
 CONFIG_ESP_RMAKER_ASSISTED_CLAIM=y
+
+# Challenge-response node association OFF, and this is not a preference.
+#
+# Its Kconfig default is `y`, so it was on without anyone choosing it, and its own
+# help text says: "Traditional user-node mapping provisioning is automatically
+# disabled when this option is enabled". That #if compiles out
+# esp_rmaker_user_mapping_prov_init(), so the `cloud_user_assoc` endpoint is
+# never created - and the phone app, which uses the traditional flow, writes to a
+# GATT handle that does not exist.
+#
+# Observed 2026-09-02, after the hub's Wi-Fi credentials were cleared and it had
+# to re-provision for the first time since it was built:
+#
+#   I NimBLE: ATT write: invalid handle; conn_handle=0x0000 attr_handle=0x0015
+#   app: "Confirming Node Association - ESPProvision.ESPSessionError error 0"
+#
+# The BLE session itself was fine ("Secured session established"), so the PoP and
+# the security2 handshake were never the problem - only the endpoint behind them.
+#
+# It also does not suit this node: challenge-response signs with a private key the
+# node is expected to already hold, and its own help says it "cannot be enabled if
+# the node is not already claimed". This hub is assisted-claim precisely because a
+# WROOM-32 cannot self-claim, so its credentials arrive from the cloud rather than
+# from the factory.
+#
+# Nothing was ever exercised until now: the hub provisioned once, then reported
+# "Already provisioned" on every boot after. The first re-provision is the first
+# time this path ran.
+CONFIG_ESP_RMAKER_ENABLE_CHALLENGE_RESPONSE=n
 CONFIG_ESP_RMAKER_USE_NVS=y
 
 # RainMaker's own local-control HTTP service is OFF. This hub already serves a
