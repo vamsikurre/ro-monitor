@@ -255,6 +255,9 @@ typedef enum {
  * threshold. Hysteresis cannot do this job: a reading that crosses BOTH
  * thresholds makes every swing a genuine new trip. */
 #define ALERT_LEVEL_CONFIRM     30
+/* Quiet period on the CONSOLE line for an alert that cannot be delivered yet.
+ * Does not affect delivery - only how often the same warning is printed. */
+#define ALERT_LOG_QUIET_MS      60000
 #define ALERT_REARM_MS          300000  /* 5 min floor between repeats of one alert */
 /* Hourly reminder, for the conditions that stay true until somebody walks over
  * and does something. Most alerts must NOT use this - see alert_eval(). */

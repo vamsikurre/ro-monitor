@@ -178,6 +178,20 @@ wants to read. They answer the question a live boolean cannot: a pump that is of
    | **3-9 s** | **Wi-Fi reset → pairing mode** | The one you want. `esp_rmaker_wifi_reset(2, 2)` |
    | **≥ 10 s** | **factory reset** | `esp_rmaker_factory_reset(2, 2)` — also unclaims the node from the RainMaker account, and re-claiming needs the app and internet again. **Let go before ten.** |
 
+   > **Releasing `BOOT` after a flash no longer erases the Wi-Fi credentials.** The
+   > flash sequence is *hold `BOOT`, tap `EN`, release `BOOT`*, and `idf.py` hard-resets
+   > the board over RTS when it finishes — so a hub could come back up with the button
+   > still held, count to three, and treat the release as a deliberate Wi-Fi reset.
+   > **This happened on 2026-09-02:** a reflashed hub came back advertising over BLE
+   > with its provisioning gone. The button is now armed only after it has been seen
+   > *released* at least once since boot, so a press has to have a beginning.
+   >
+   > **If it does happen** (older firmware, or a genuine long press): only the Wi-Fi
+   > credentials are cleared, **not** the node claim. Re-pair with **Add Device →
+   > `PROV_xxxxxx`**, PoP `rohub1234`, and the same node comes back with its devices,
+   > calibration and schedules intact. `esp_rmaker_factory_reset` is the one that
+   > unclaims, and that needs a ten-second hold.
+
    > **`BOOT` held while the board is reset is NOT pairing mode — it is flash download mode.** `GPIO 0` is a strapping pin. Press and hold `BOOT` on an already-running hub; never combine it with `EN` or a power cycle. Easy to get wrong with the FTDI sitting right there (`WIRING.md` §0.3.1).
 
    > **The blue LED is not a pairing indicator.** `GPIO 2` is driven only by the poll loop — one blink per 2 s cycle, provisioned or not. It says the poll task is alive and nothing else. Judge pairing from the serial log or from the app, never from the LED. *(This line previously claimed a "flashing Blue Status LED" marked pairing mode. It never did.)*

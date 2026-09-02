@@ -162,6 +162,7 @@ static void report_str(esp_rmaker_device_t *dev, const char *name, const char *v
 typedef struct {
     bool     latched;
     int64_t  last_fired_us;
+    int64_t  last_log_us;     /* throttles the console line, not the alert */
     uint16_t streak;          /* consecutive cycles the condition has held */
 } alert_t;
 
@@ -242,7 +243,16 @@ static void alert_eval(alert_t *a, bool tripped, const char *msg,
         return;
     }
 
-    ESP_LOGW(TAG, "ALERT: %s", msg);
+    /* Throttled, because an alert that cannot be delivered yet is retried every
+     * cycle by design (see below) and was therefore printing every two seconds.
+     * With Wi-Fi down that is forever, and it buries the sensor summaries that
+     * are the whole reason the console exists during commissioning. The RETRY is
+     * right; repeating the line is not. */
+    if (a->last_log_us == 0 ||
+        (now - a->last_log_us) >= (int64_t)ALERT_LOG_QUIET_MS * 1000) {
+        a->last_log_us = now;
+        ESP_LOGW(TAG, "ALERT: %s", msg);
+    }
 
     /* Only latch if it could actually be delivered. Latching an alert raised
      * before MQTT is up means the cloud never hears about it and the latch
@@ -1366,8 +1376,33 @@ static void button_task(void *arg)
     };
     gpio_config(&cfg);
 
+    /*
+     * A press must be a NEW press.
+     *
+     * The flash sequence is "hold BOOT, tap EN, release BOOT", and idf.py then
+     * hard-resets the board over RTS when it finishes. If BOOT is still down
+     * three seconds into that reboot - which is simply someone not having let go
+     * yet - releasing it used to read as a deliberate Wi-Fi reset and wipe the
+     * credentials. Observed 2026-09-02: a hub came back from a reflash
+     * advertising over BLE with its provisioning gone, which on a roof means a
+     * trip with a phone.
+     *
+     * So the button is not armed until it has been seen UP at least once. That
+     * is exactly the property wanted - a press has to have a beginning - and it
+     * costs nothing to a person deliberately pressing it later.
+     */
+    bool armed = false;
+
     int held = 0;
     while (true) {
+        if (!armed) {
+            if (gpio_get_level(GPIO_BOOT_BUTTON) != 0) {
+                armed = true;
+            }
+            held = 0;
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
         if (gpio_get_level(GPIO_BOOT_BUTTON) == 0) {
             held++;
             if (held == WIFI_RESET_HOLD_SEC) {
