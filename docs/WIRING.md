@@ -1214,6 +1214,45 @@ This node is the one Pro Mini in the fleet; the other three RS485 nodes are Nano
 
 **As-built 2026-08-26:** the bench FTDI adapter in use has **`DTR` unconnected**. Uploads to this board therefore need the reset button tapped the instant the IDE switches from *Compiling* to *Uploading*, and opening the Serial Monitor does not restart the sketch. Symptom when mistimed: `not in sync: resp=0x00`, ten attempts. One wire from the adapter's `DTR` (or `RTS`) to the `DTR`/`GRN` pad ends it — the 100 nF cap is already on the board.
 
+**Failed 2026-09-04 — the shared +5V feed.** The §10 block diagram has the
+XY-485 module, the GY-SHT30-D and the relay board all taking `VCC` from the same
++5V point. That one wire came off while this node was being reflashed, and the
+failure it produces is worth knowing by its signature, because it took a long
+detour to find:
+
+| What you see | Where |
+| :--- | :--- |
+| Node silent on the bus — answers nothing, not one command | hub: `RS485 node offline: 0x04 Battery` |
+| Battery room temperature and humidity gone, fan drops to OFF | hub: `BAT 0.0 C 0.0 %RH fan OFF NODE 0x04 OFFLINE` |
+| The MCU is alive and talking normally over USB | `Node ID: 0x04  fw 1.01  role: Battery Room climate + fan` |
+
+**That third line is the trap.** With the buck's 5V disconnected for programming
+(as the table above requires) the Pro Mini runs happily on the adapter's 5V and
+prints its boot banner, while the XY-485 has no supply to drive the bus with and
+the SHT30 has none to be read. From the hub the node is simply dead. From a
+serial terminal it is perfectly healthy. Nothing distinguishes it from a bus
+fault, a dead transceiver, or stale node firmware — all three of which were
+investigated first.
+
+**Check this before firmware.** If a node is reachable over USB but invisible on
+the bus, the shared +5V is the first thing to meter, not the last. The boot
+banner already proves the MCU runs and the address jumpers read correctly (§9.1),
+so it narrows the fault to power or the transceiver in one line.
+
+**What isolated it:** the hub's per-node, per-command failure counters
+(`rs485_error_report()`). `0x04/CLIMATE` failing 100% of polls with zero failures
+on any other node or command rules out the bus, the terminators and the trunk in
+one reading — a cable fault does not pick one node and spare the two sharing its
+wire pair. The aggregate `rs485 err` count could not have shown that.
+
+**For the PCB:** this is the second hand-wiring fault of the class
+`PCB_HUB_MOTHERBOARD.md` §1 cites as the board's justification, after the broken
+wire at a 240 V opto module. Note that spec covers the **hub only** — §11 scopes
+node circuitry out — so the nodes still carry this exact risk, on flying leads,
+in the hottest room in the building. Keyed connectors and a per-module supply pin
+would have made this failure a non-event. The node boards deserve the same
+treatment, and this is the second data point saying so.
+
 ---
 
 ## 11. Ground Floor Wi-Fi Nodes Wiring (Parking)
