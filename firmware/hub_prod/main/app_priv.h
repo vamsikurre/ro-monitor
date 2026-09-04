@@ -187,6 +187,42 @@ extern "C" {
 
 /* ------------------------------------------------------------------- sensing */
 #define BLIND_ZONE_MM           200
+
+/*
+ * Minimum agreement, as the node reports it, for a level to be believed.
+ *
+ * The node computes quality as agreement across its rolling median window:
+ * q100 is five samples within AGREE_MM of the median, q20 is one. Until
+ * 2026-09-04 nothing looked at it. On that day the cloud was told both tanks
+ * were at 0% - empty - from a run of q20 and q40 readings marked OK, alongside
+ * a 21% salt rejection. Every one of those numbers was arithmetically correct
+ * and none of them was true.
+ *
+ * q60 is three of five agreeing. Every good reading on this plant has been q60
+ * or better; the garbage has been q20-q40. Two things produce a low score and
+ * both are real faults worth refusing: a sensor with nothing solid in front of
+ * it, and two nodes answering one address, which interleaves readings from
+ * different sensors into the same median window.
+ *
+ * ponytail: a #define, matching BLIND_ZONE_MM. This wants to become a /cal knob
+ * eventually - a rippling surface on a real tank may legitimately sit at q40,
+ * and that is a field-tuning question rather than a constant - but a fixed floor
+ * that refuses obvious rubbish beats a knob nobody has set yet.
+ */
+#define MIN_LEVEL_QUALITY       60
+
+/*
+ * Plausible water temperature, in tenths of a degree C.
+ *
+ * TDS is temperature compensated and drifts ~2 %/degC, so a TDS figure with a
+ * wrong temperature is worse than no figure. The node is supposed to refuse
+ * both together for exactly that reason, but on 2026-09-04 it reported status 0
+ * with a water temperature of 0.0 C, and the hub published 2494 ppm and a 21%
+ * salt rejection computed against it. An RO plant in this building does not see
+ * 0 C, so treat it as the absent-probe signature it is.
+ */
+#define WATER_TEMP_MIN_DECI_C   50      /* 5.0 C */
+#define WATER_TEMP_MAX_DECI_C   500     /* 50.0 C */
 #define US_TRIG_WIDTH_US        10      /* some AJ-SR04M batches want 20 — WIRING.md §9.0 */
 #define US_TIMEOUT_US           35000   /* ~6 m of flight time */
 

@@ -592,6 +592,20 @@ static const char *status_word(sensor_status_t s)
     }
 }
 
+/* One water-quality pair as "2494 ppm 28.4 C", or "--" when it is not usable.
+ * TDS_INVALID is 0xFFFF, and printing it with %u reads as "65535 ppm" - a
+ * sentinel wearing the clothes of a measurement, which is how it came to be
+ * believed on 2026-09-04. */
+static void wq_word(char *out, size_t n, const wq_state_t *wq)
+{
+    if (!wq->fitted || wq->ppm == TDS_INVALID) {
+        snprintf(out, n, "--");
+        return;
+    }
+    snprintf(out, n, "%u ppm %d.%d C", wq->ppm,
+             wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
+}
+
 /* One tank as "2304 mm q100 OK -> 0%", or why there is no level. The distance
  * comes first on purpose: it is the measurement, and the percentage is an
  * interpretation of it through a calibration that may well be wrong. */
@@ -651,16 +665,18 @@ static void log_summary(const hub_state_t *s)
      * fitted" until the hardware goes in, and a permanent "TDS --" line is noise
      * in a log somebody has to read at 3 am. */
     if (s->rwt_wq.fitted || s->twt_wq.fitted) {
+        /* TDS_INVALID is a sentinel, not a reading. Printed as a number it reads
+         * as "65535 ppm", which is how a sentinel ends up being believed. */
         char rej[8];
         if (s->rejection_pct < 0) {
             snprintf(rej, sizeof(rej), "--");
         } else {
             snprintf(rej, sizeof(rej), "%d%%", s->rejection_pct);
         }
-        ESP_LOGI(TAG, "quality RWT %u ppm %d.%d C | TWT %u ppm %d.%d C | rejection %s",
-                 s->rwt_wq.ppm, s->rwt_wq.temp_deci_c / 10, abs(s->rwt_wq.temp_deci_c % 10),
-                 s->twt_wq.ppm, s->twt_wq.temp_deci_c / 10, abs(s->twt_wq.temp_deci_c % 10),
-                 rej);
+        char rwtq[28], twtq[28];
+        wq_word(rwtq, sizeof(rwtq), &s->rwt_wq);
+        wq_word(twtq, sizeof(twtq), &s->twt_wq);
+        ESP_LOGI(TAG, "quality RWT %s | TWT %s | rejection %s", rwtq, twtq, rej);
     }
 
     ESP_LOGI(TAG, "aster   TWT_FLOT %s | RL1 %s | RL2 %s | LPS %s | ALARM %s   rs485 err %lu",
@@ -751,16 +767,37 @@ static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank
 
     const cal_tank_cfg_t *c = cal_tank(which);
     uint8_t pct = levelPercent(t->distance_mm, c->full_mm, c->empty_mm);
+
+    /* Agreement gate. levelPercent() only sees a distance, so it cannot know the
+     * node had to disagree with itself four times out of five to produce it. A
+     * reading nobody can reproduce is not a level, whatever it converts to. */
+    if (pct != 255 && t->quality < MIN_LEVEL_QUALITY) {
+        pct = 255;
+    }
+
     int16_t was = t->pct;
     t->pct = (pct == 255) ? -1 : (int16_t)pct;
 
     /* A node that answers but cannot yield a level is the confusing case: the
      * bus is healthy, the parameter simply never appears. Say why, once, on the
-     * transition - the distance is the diagnostic, not the percentage. */
+     * transition - and say which of the three reasons it was. The old message
+     * blamed calibration for everything, which sent a whole evening looking at
+     * calibration on 2026-09-03 when the reading was inside the blind zone. */
     if (t->pct < 0 && was >= 0) {
-        ESP_LOGW(TAG, "node 0x%02X answers but gives no level: %u mm is outside "
-                      "its calibration (full %u / empty %u), sensor status %d",
-                 addr, t->distance_mm, c->full_mm, c->empty_mm, (int)t->sensor);
+        if (t->quality < MIN_LEVEL_QUALITY) {
+            ESP_LOGW(TAG, "node 0x%02X level rejected: %u mm agreed by only q%u, "
+                          "minimum is q%u. A sensor with nothing solid in front of "
+                          "it looks like this, and so do two nodes on one address",
+                     addr, t->distance_mm, t->quality, MIN_LEVEL_QUALITY);
+        } else if (t->distance_mm < BLIND_ZONE_MM) {
+            ESP_LOGW(TAG, "node 0x%02X level rejected: %u mm is inside the %u mm "
+                          "blind zone - fouling, splash, or aimed at something close",
+                     addr, t->distance_mm, BLIND_ZONE_MM);
+        } else {
+            ESP_LOGW(TAG, "node 0x%02X answers but gives no level: %u mm is outside "
+                          "its calibration (full %u / empty %u), sensor status %d",
+                     addr, t->distance_mm, c->full_mm, c->empty_mm, (int)t->sensor);
+        }
     } else if (t->pct >= 0 && was < 0) {
         ESP_LOGI(TAG, "node 0x%02X level readable again: %u mm -> %d%%",
                  addr, t->distance_mm, t->pct);
@@ -804,6 +841,28 @@ static void read_water_quality(uint8_t addr, wq_state_t *wq, cal_tank_t which)
     bool was = wq->fitted;
     wq->tds_mv      = ((uint16_t)p[0] << 8) | p[1];
     wq->temp_deci_c = (int16_t)(((uint16_t)p[2] << 8) | p[3]);
+
+    /* The node is supposed to refuse TDS and temperature together, because TDS
+     * without a temperature is uncompensated and drifts ~2 %/degC. On 2026-09-04
+     * it sent status 0 with 0.0 C anyway, and 2494 ppm plus a 21% salt rejection
+     * reached the cloud on the strength of it. Enforce here what the node
+     * intends: an implausible temperature makes the whole pair unusable, not
+     * just the temperature. */
+    if (wq->temp_deci_c < WATER_TEMP_MIN_DECI_C ||
+        wq->temp_deci_c > WATER_TEMP_MAX_DECI_C) {
+        if (was) {
+            ESP_LOGW(TAG, "node 0x%02X water quality unusable: %d.%d C is outside "
+                          "%d-%d C, so its %u mV cannot be compensated - check the "
+                          "DS18B20 and its pullup",
+                     addr, wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10),
+                     WATER_TEMP_MIN_DECI_C / 10, WATER_TEMP_MAX_DECI_C / 10,
+                     wq->tds_mv);
+        }
+        wq->fitted = false;
+        wq->ppm = TDS_INVALID;
+        return;
+    }
+
     wq->fitted      = true;
     wq->last_ok_us  = esp_timer_get_time();
 
