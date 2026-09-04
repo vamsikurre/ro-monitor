@@ -45,8 +45,11 @@ static uint32_t s_errors = 0;
 static struct {
     uint8_t  addr;
     uint8_t  cmd;
-    uint32_t polls;
-    uint32_t fails;
+    uint32_t polls;      /* frames actually sent */
+    uint32_t fails;      /* of those, ones that got no valid reply */
+    uint32_t skips;      /* suppressed without sending - not counted as failures */
+    uint16_t retry_in;   /* skips remaining before the next re-probe */
+    bool     announced;  /* the "not answering this command" line is printed once */
 } s_stat[RS485_STAT_SLOTS];
 static uint8_t s_stat_used = 0;
 
@@ -69,6 +72,46 @@ static int stat_slot(uint8_t addr, uint8_t cmd)
 uint32_t rs485_error_count(void) { return s_errors; }
 
 /* Short mnemonic per command, so a log line reads without the protocol doc. */
+static const char *cmd_word(uint8_t cmd);
+
+/*
+ * True when this poll should be suppressed rather than sent.
+ *
+ * Only ever true for a pair that has failed every single time it was tried - see
+ * RS485_GIVEUP_POLLS. A pair that has answered even once is never suppressed,
+ * however badly it is failing now, because that is a bus problem and retrying is
+ * the right response to a bus problem.
+ */
+static bool suppress_poll(int i)
+{
+    if (s_stat[i].polls < RS485_GIVEUP_POLLS) {
+        return false;
+    }
+    if (s_stat[i].fails != s_stat[i].polls) {
+        return false;                     /* answered at least once: keep trying */
+    }
+
+    if (!s_stat[i].announced) {
+        s_stat[i].announced = true;
+        ESP_LOGW(TAG, "node 0x%02X never answers %s (%lu/%lu) - suppressing it and "
+                      "re-probing every %d polls. A node running firmware older "
+                      "than this command replies to nothing, so this is almost "
+                      "certainly a node that needs reflashing.",
+                 s_stat[i].addr, cmd_word(s_stat[i].cmd),
+                 (unsigned long)s_stat[i].fails, (unsigned long)s_stat[i].polls,
+                 RS485_LATCH_RETRY);
+    }
+
+    if (s_stat[i].retry_in > 0) {
+        s_stat[i].retry_in--;
+        return true;
+    }
+    /* Let this one through, then go quiet again. A reflashed node comes back on
+     * its own; it does not need the hub restarted. */
+    s_stat[i].retry_in = RS485_LATCH_RETRY;
+    return false;
+}
+
 static const char *cmd_word(uint8_t cmd)
 {
     switch (cmd) {
@@ -93,11 +136,25 @@ int rs485_error_report(char *buf, size_t len)
         if (s_stat[i].fails == 0) {
             continue;                     /* silent when healthy */
         }
-        int n = snprintf(buf + at, len - at, "%s0x%02X/%s %lu/%lu",
+        /* Skips are reported separately from failures on purpose: a suppressed
+         * poll was never sent, so folding it into either side of the ratio
+         * would misreport the bus. "5/5 +148skip" is a command given up on;
+         * "3/1480" is a bus dropping the odd frame. */
+        int n;
+        if (s_stat[i].skips > 0) {
+            n = snprintf(buf + at, len - at, "%s0x%02X/%s %lu/%lu +%luskip",
+                         shown ? "  " : "",
+                         s_stat[i].addr, cmd_word(s_stat[i].cmd),
+                         (unsigned long)s_stat[i].fails,
+                         (unsigned long)s_stat[i].polls,
+                         (unsigned long)s_stat[i].skips);
+        } else {
+            n = snprintf(buf + at, len - at, "%s0x%02X/%s %lu/%lu",
                          shown ? "  " : "",
                          s_stat[i].addr, cmd_word(s_stat[i].cmd),
                          (unsigned long)s_stat[i].fails,
                          (unsigned long)s_stat[i].polls);
+        }
         if (n < 0 || (size_t)n >= len - at) {
             break;                        /* truncated: report what fitted */
         }
@@ -151,6 +208,10 @@ int rs485_poll(uint8_t addr, uint8_t cmd, const uint8_t *req, uint8_t req_len, u
      * three would hide exactly the ratio this table exists to show. */
     const int slot = stat_slot(addr, cmd);
     if (slot >= 0) {
+        if (suppress_poll(slot)) {
+            s_stat[slot].skips++;
+            return -1;      /* absence, same as a timeout, and no frame sent */
+        }
         s_stat[slot].polls++;
     }
 

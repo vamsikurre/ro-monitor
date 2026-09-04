@@ -148,11 +148,42 @@ extern "C" {
 #define RS485_POLL_ATTEMPTS     3
 #define RS485_GUARD_MS          5
 
+/*
+ * Giving up on a command a node has never once answered.
+ *
+ * ro_node.ino's dispatcher ends in `default: break;` - no reply to an unknown
+ * command. So a node running a build that predates a command is not slow or
+ * flaky, it is silent, and retrying it three times every cycle forever buys
+ * nothing but wasted bus time and a poisoned error counter. That is exactly what
+ * CMD_READ_WQ did to nodes 0x02 and 0x03: 57 polls, 57 failures, 100%.
+ *
+ * The condition is deliberately "never answered", not "failing a lot". One
+ * successful reply and this never engages again, so a genuinely intermittent
+ * node keeps being retried - which is the behaviour you want from a bus fault.
+ * Latched pairs are still re-probed periodically, so reflashing a node is picked
+ * up on its own without restarting the hub.
+ */
+#define RS485_GIVEUP_POLLS      5     /* all-failed polls before suppressing */
+#define RS485_LATCH_RETRY       30    /* skipped polls between re-probes */
+
 /* Payload lengths, per RS485_PROTOCOL.md §4. Anything else is a bad reply and is
  * treated as absence rather than as data. */
 #define LEN_LEVEL_REPLY         10
 #define LEN_CLIMATE_REPLY       6
 #define LEN_WQ_REPLY            6
+#define LEN_PING_REPLY          3
+
+/*
+ * The node firmware version this hub was written against - ro_node.ino's
+ * FW_VERSION. Logged against what each node actually reports, because nothing in
+ * this system could answer "is that node running what I think it is", and three
+ * wrong hypotheses were spent on a silent CMD_READ_WQ before that gap showed up.
+ *
+ * Duplicated from the node sketch by hand. If these drift, the warning below
+ * fires on a healthy node, which is annoying but visible - unlike the silence it
+ * replaces.
+ */
+#define NODE_FW_EXPECTED        0x0101
 
 /* ------------------------------------------------------------------- sensing */
 #define BLIND_ZONE_MM           200

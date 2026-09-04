@@ -683,6 +683,43 @@ static void log_summary(const hub_state_t *s)
  * "why am I not getting RWT readings" became a question with no answer in the log
  * (2026-08-28).
  */
+/*
+ * Ask a node what firmware it is running, once, when it comes online.
+ *
+ * Nothing in this system could answer "is that node running what I think it is".
+ * That gap cost three wrong hypotheses: nodes 0x02 and 0x03 answered CMD_READ_LEVEL
+ * perfectly while ignoring CMD_READ_WQ 57 times out of 57, and the explanation was
+ * simply a deployed build older than that command - which ro_node.ino's
+ * `default: break;` turns into silence rather than an error. One PING says so.
+ *
+ * Not fatal, and deliberately not gating anything: a version mismatch is a thing
+ * to tell somebody about, not a reason to refuse a node that is working.
+ */
+static void log_node_firmware(uint8_t addr)
+{
+    uint8_t p[RS485_MAX_PAYLOAD];
+    int len = rs485_poll(addr, CMD_PING, NULL, 0, p);
+
+    if (len != LEN_PING_REPLY) {
+        ESP_LOGW(TAG, "node 0x%02X answers but will not say what firmware it runs "
+                      "(CMD_PING %s) - assume it is older than this hub",
+                 addr, len < 0 ? "timeout" : "bad payload length");
+        return;
+    }
+
+    uint16_t fw = ((uint16_t)p[1] << 8) | p[2];
+    if (fw == NODE_FW_EXPECTED) {
+        ESP_LOGI(TAG, "node 0x%02X firmware %u.%02u, status 0x%02X",
+                 addr, fw >> 8, fw & 0xFF, p[0]);
+    } else {
+        ESP_LOGW(TAG, "node 0x%02X firmware %u.%02u but this hub expects %u.%02u - "
+                      "commands added since its build get no reply at all, not an "
+                      "error. Reflash the node.",
+                 addr, fw >> 8, fw & 0xFF,
+                 NODE_FW_EXPECTED >> 8, NODE_FW_EXPECTED & 0xFF);
+    }
+}
+
 static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank_t which)
 {
     bool was_online = *online;
@@ -700,6 +737,7 @@ static void read_tank_node(uint8_t addr, tank_state_t *t, bool *online, cal_tank
     }
     if (!was_online) {
         ESP_LOGI(TAG, "node 0x%02X answering again", addr);
+        log_node_firmware(addr);
     }
     *online = true;
 
@@ -788,7 +826,11 @@ static void read_climate_node(hub_state_t *s)
         s->battery_online = false;
         return;
     }
+    const bool was_online = s->battery_online;
     s->battery_online = true;
+    if (!was_online) {
+        log_node_firmware(NODE_ADDR_BATTERY);
+    }
     s->battery_room.temp_deci_c  = (int16_t)(((uint16_t)p[0] << 8) | p[1]);
     s->battery_room.hum_deci_pct = ((uint16_t)p[2] << 8) | p[3];
     s->fan_on                    = (p[4] != 0);
