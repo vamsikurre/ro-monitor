@@ -306,10 +306,17 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         snprintf(rejection, sizeof(rejection), "%d", s->rejection_pct);
     }
 
+    /* Safe to interpolate into JSON unescaped: rs485_error_report() emits only
+     * hex addresses, fixed command mnemonics, digits, '/' and spaces. If a new
+     * command name ever contains a quote or a backslash, escape it here. */
+    char rs485_failures[160];
+    rs485_error_report(rs485_failures, sizeof(rs485_failures));
+
     int n = snprintf(json, sizeof(json),
         "{"
         "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\",\"heap_free\":%u,\"heap_min\":%u},"
-        "\"rs485\":{\"online\":%d,\"total\":3,\"errors\":%lu,\"last_poll_ms\":%lu},"
+        "\"rs485\":{\"online\":%d,\"total\":3,\"errors\":%lu,\"last_poll_ms\":%lu,"
+          "\"failures\":\"%s\"},"
         "\"tanks\":{"
           "\"sump\":{\"pct\":0,\"distance_mm\":0,\"state\":\"OFFLINE\",\"sensor\":\"Phase 2\"},"
           "\"rwt\":{\"pct\":%d,\"distance_mm\":%u,\"state\":\"%s\",\"sensor\":\"%s\"},"
@@ -356,6 +363,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
         (s->rwt_online ? 1 : 0) + (s->twt_online ? 1 : 0) + (s->battery_online ? 1 : 0),
         (unsigned long)rs485_error_count(), (unsigned long)s->last_cycle_ms,
+        /* Empty string on a healthy bus. A plain string rather than nested JSON
+         * on purpose: it is a diagnostic to read, not a series to chart, and the
+         * dashboard shows it verbatim. */
+        rs485_failures,
 
         s->rwt.pct < 0 ? 0 : s->rwt.pct, s->rwt.distance_mm,
         tank_state_word(&s->rwt, s->rwt_online), sensor_word(s->rwt.sensor),

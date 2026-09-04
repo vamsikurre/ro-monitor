@@ -21,7 +21,91 @@
 static const char *TAG = "rs485";
 static uint32_t s_errors = 0;
 
+/*
+ * Per-node, per-command attribution.
+ *
+ * The aggregate counter said "err 300" and could not say anything else. Three
+ * hundred failures on a wired bus reads as degradation, so it sends you to the
+ * terminators and the trunk. It took dividing by uptime by hand to notice the
+ * rate was exactly +2 every 20 s - dead regular, which no cable fault is - and
+ * that 20 s is POLL_CYCLE_MS * WQ_POLL_CYCLES. The number was pointing at one
+ * command on two nodes the whole time and had no way to say so.
+ *
+ * So: count polls as well as failures. A failure count alone cannot answer "is
+ * this bad" - 148 failures is meaningless, 148/148 is a command that has never
+ * once worked, and 3/1480 is a healthy bus. The ratio is the diagnosis.
+ *
+ * ponytail: fixed table, linear scan. Three nodes x a handful of commands fits
+ * in 16 slots with room to spare; if it ever fills, the aggregate still counts
+ * everything and only the breakdown loses the overflow. Per-node arrays if the
+ * bus ever grows past a dozen node/command pairs.
+ */
+#define RS485_STAT_SLOTS 16
+
+static struct {
+    uint8_t  addr;
+    uint8_t  cmd;
+    uint32_t polls;
+    uint32_t fails;
+} s_stat[RS485_STAT_SLOTS];
+static uint8_t s_stat_used = 0;
+
+/* Returns the slot index for this pair, or -1 when the table is full. */
+static int stat_slot(uint8_t addr, uint8_t cmd)
+{
+    for (uint8_t i = 0; i < s_stat_used; i++) {
+        if (s_stat[i].addr == addr && s_stat[i].cmd == cmd) {
+            return i;
+        }
+    }
+    if (s_stat_used >= RS485_STAT_SLOTS) {
+        return -1;
+    }
+    s_stat[s_stat_used].addr = addr;
+    s_stat[s_stat_used].cmd = cmd;
+    return s_stat_used++;
+}
+
 uint32_t rs485_error_count(void) { return s_errors; }
+
+/* Short mnemonic per command, so a log line reads without the protocol doc. */
+static const char *cmd_word(uint8_t cmd)
+{
+    switch (cmd) {
+    case CMD_PING:          return "PING";
+    case CMD_READ_LEVEL:    return "LEVEL";
+    case CMD_READ_CLIMATE:  return "CLIMATE";
+    case CMD_READ_WQ:       return "WQ";
+    default:                return "CMD?";
+    }
+}
+
+int rs485_error_report(char *buf, size_t len)
+{
+    if (buf == NULL || len == 0) {
+        return 0;
+    }
+    buf[0] = '\0';
+    size_t at = 0;
+    int shown = 0;
+
+    for (uint8_t i = 0; i < s_stat_used; i++) {
+        if (s_stat[i].fails == 0) {
+            continue;                     /* silent when healthy */
+        }
+        int n = snprintf(buf + at, len - at, "%s0x%02X/%s %lu/%lu",
+                         shown ? "  " : "",
+                         s_stat[i].addr, cmd_word(s_stat[i].cmd),
+                         (unsigned long)s_stat[i].fails,
+                         (unsigned long)s_stat[i].polls);
+        if (n < 0 || (size_t)n >= len - at) {
+            break;                        /* truncated: report what fitted */
+        }
+        at += (size_t)n;
+        shown++;
+    }
+    return shown;
+}
 
 esp_err_t rs485_init(void)
 {
@@ -59,7 +143,15 @@ uint16_t crc16(const uint8_t *buf, uint8_t len)
 int rs485_poll(uint8_t addr, uint8_t cmd, const uint8_t *req, uint8_t req_len, uint8_t *out)
 {
     if (req_len > RS485_MAX_PAYLOAD || out == NULL) {
-        return -1;
+        return -1;   /* a caller bug, not a bus event: not counted either way */
+    }
+
+    /* Counted once per poll, not once per attempt. A poll that succeeds on its
+     * third try is a working bus with a retry, and inflating the denominator by
+     * three would hide exactly the ratio this table exists to show. */
+    const int slot = stat_slot(addr, cmd);
+    if (slot >= 0) {
+        s_stat[slot].polls++;
     }
 
     uint8_t frame[7 + RS485_MAX_PAYLOAD];
@@ -115,5 +207,8 @@ int rs485_poll(uint8_t addr, uint8_t cmd, const uint8_t *req, uint8_t req_len, u
     }
 
     s_errors++;
+    if (slot >= 0) {
+        s_stat[slot].fails++;
+    }
     return -1;
 }

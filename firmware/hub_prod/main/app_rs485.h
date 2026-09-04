@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 
@@ -33,6 +34,20 @@ int rs485_poll(uint8_t addr, uint8_t cmd, const uint8_t *req, uint8_t req_len, u
 /* Cumulative failed polls since boot. Surfaced on the dashboard: a bus that works
  * but is degrading shows up here long before it shows up as an offline node. */
 uint32_t rs485_error_count(void);
+
+/*
+ * Per-node, per-command breakdown of those failures, as "0x02/WQ 148/148" pairs
+ * (fails/polls), space separated. Only pairs that have failed at least once are
+ * listed, so a healthy bus writes an empty string and returns 0.
+ *
+ * The ratio is the point. The aggregate count cannot distinguish one command
+ * that has never worked from a bus that drops the occasional frame, and those
+ * two have nothing in common: the first is a firmware or scheduling problem, the
+ * second is cabling. `148/148` and `3/1480` say which immediately.
+ *
+ * Returns the number of pairs written. Truncates rather than overflowing `buf`.
+ */
+int rs485_error_report(char *buf, size_t len);
 
 uint16_t crc16(const uint8_t *buf, uint8_t len);
 

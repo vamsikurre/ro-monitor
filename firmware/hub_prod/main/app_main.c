@@ -1064,6 +1064,22 @@ static void poll_task(void *arg)
             now_us - last_summary_us >= (int64_t)LOG_SUMMARY_MS * 1000) {
             last_summary_us = now_us;
             log_summary(&local);
+
+            /* Attribution, printed only when the aggregate actually moved. On a
+             * healthy bus this is silent; when something is failing it names the
+             * node and the command and gives the ratio, which is what "err 300"
+             * could never do. A count that rises at a perfectly regular rate is
+             * a scheduling collision, not a cable - but you cannot see that in
+             * one number, which is why this line exists. */
+            static uint32_t last_err_total = 0;
+            uint32_t err_total = rs485_error_count();
+            if (err_total != last_err_total) {
+                last_err_total = err_total;
+                char report[160];
+                if (rs485_error_report(report, sizeof(report)) > 0) {
+                    ESP_LOGW(TAG, "rs485 failures by node/command: %s", report);
+                }
+            }
         }
 
         gpio_set_level(GPIO_LED_STATUS, 0);
