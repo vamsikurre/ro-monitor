@@ -75,12 +75,38 @@ uint32_t rs485_error_count(void) { return s_errors; }
 static const char *cmd_word(uint8_t cmd);
 
 /*
+ * Has this node answered anything at all?
+ *
+ * This is the difference between "does not implement this command" and "is
+ * offline", and suppression is only ever right for the first. A node that
+ * answers nothing must keep being polled at full rate, because that is how its
+ * return gets noticed.
+ *
+ * Learned the hard way on 2026-09-04: node 0x04 was powered down when the hub
+ * booted, and the latch - which then only asked "has this pair ever succeeded" -
+ * suppressed CMD_READ_CLIMATE and told the log to go reflash a node whose
+ * firmware was fine. CLIMATE is polled every cycle and drives the battery-room
+ * exhaust fan, so that turned a 2-second recovery into a minute of no fan
+ * control. Suppressing a command is safe; suppressing an offline node is not.
+ */
+static bool node_ever_answered(uint8_t addr)
+{
+    for (uint8_t i = 0; i < s_stat_used; i++) {
+        if (s_stat[i].addr == addr && s_stat[i].polls > s_stat[i].fails) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
  * True when this poll should be suppressed rather than sent.
  *
- * Only ever true for a pair that has failed every single time it was tried - see
- * RS485_GIVEUP_POLLS. A pair that has answered even once is never suppressed,
- * however badly it is failing now, because that is a bus problem and retrying is
- * the right response to a bus problem.
+ * Two conditions, and both matter. The pair must have failed every single time
+ * it was tried - one success and this never engages again, because intermittent
+ * failure is a bus problem and retrying is the right answer to a bus problem.
+ * And the node must be demonstrably alive on some other command, or it is
+ * offline rather than missing a command.
  */
 static bool suppress_poll(int i)
 {
@@ -90,13 +116,17 @@ static bool suppress_poll(int i)
     if (s_stat[i].fails != s_stat[i].polls) {
         return false;                     /* answered at least once: keep trying */
     }
+    if (!node_ever_answered(s_stat[i].addr)) {
+        return false;                     /* offline, not deaf to one command */
+    }
 
     if (!s_stat[i].announced) {
         s_stat[i].announced = true;
-        ESP_LOGW(TAG, "node 0x%02X never answers %s (%lu/%lu) - suppressing it and "
-                      "re-probing every %d polls. A node running firmware older "
-                      "than this command replies to nothing, so this is almost "
-                      "certainly a node that needs reflashing.",
+        ESP_LOGW(TAG, "node 0x%02X answers other commands but never %s (%lu/%lu) - "
+                      "suppressing it and re-probing every %d polls. A node running "
+                      "firmware older than this command replies to nothing rather "
+                      "than erroring, so this is almost certainly a node that needs "
+                      "reflashing.",
                  s_stat[i].addr, cmd_word(s_stat[i].cmd),
                  (unsigned long)s_stat[i].fails, (unsigned long)s_stat[i].polls,
                  RS485_LATCH_RETRY);

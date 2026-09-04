@@ -162,3 +162,32 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_LWIP_IRAM_OPTIMIZATION=n
+
+# --- Crash diagnostics: coredump over UART ---
+# Two watchdog resets on 2026-09-04 left nothing to work with. The first had the
+# PRO CPU stuck in release_buffer_malloc (the SPI flash driver's temp-buffer
+# free); the second was _DoubleExceptionVector - an exception raised while
+# already handling one, which is the crash handler itself crashing. That is why
+# neither printed a backtrace despite PANIC_PRINT_REBOOT: nothing survived to
+# print it, and the interrupt watchdog then reset the chip. Both smell of stack
+# overflow or heap corruption, and guessing between those cost three wrong
+# hypotheses on the RS485 fault already.
+#
+# UART, not FLASH, deliberately: a flash coredump needs a coredump partition,
+# and the 2x 0x1C0000 OTA layout is shared with the gate controllers - the note
+# in the IRAM section above says not to touch it, and that still holds. UART
+# costs no partition, dumps base64 to the console that is already being watched,
+# and espcoredump.py turns it into a backtrace with per-task stacks.
+#
+# Watch the IRAM budget: the coredump path is partly IRAM-resident because it
+# must run with the flash cache off. If the link overflows iram0_0_seg, this is
+# the newest thing to have added to it.
+CONFIG_ESP_COREDUMP_ENABLE_TO_UART=y
+
+# --- Preserved across the 2026-09-04 sdkconfig regeneration ---
+# This was set in the generated sdkconfig but never recorded here, so adding the
+# coredump option above and regenerating silently turned it off. Caught by
+# diffing the regenerated config against the old one; recorded now so the next
+# regeneration cannot lose it again. sdkconfig is not tracked - if a setting
+# matters, it belongs in this file.
+CONFIG_ESP_RMAKER_FACTORY_RESET_REPORTING=y
