@@ -91,7 +91,9 @@
 //
 // Stepping past them found no real echo hiding behind: a good ping arrives with
 // nothing in front of it (d0), a corrupted one has the artifact and nothing
-// else. So this is not the fix - the fix is in pingOnce - but it is kept,
+// else - because the "artifact" IS the real echo, undercounted by pulseIn while
+// the SoftwareSerial RX ISR steals its loop iterations (bus traffic for the other
+// nodes). So this is not the fix - the fix is in pingOnce - but it is kept,
 // because refusing an impossible reading is right regardless of why it appeared,
 // and the total wait stays bounded by US_TIMEOUT_US.
 #define US_MAX_DISCARD   4
@@ -268,6 +270,18 @@ uint8_t readNodeAddress() {
 
 // ---------------------------------------------------------------- ultrasonic
 uint16_t pingOnce() {
+  /* pulseIn() on AVR counts loop iterations, it does not read a timer. Every byte
+   * on the RS485 bus - polls and replies for the OTHER nodes included - runs the
+   * SoftwareSerial RX ISR with interrupts off for ~1 ms, and those iterations are
+   * simply never counted. Sampling happens while the master polls the other nodes
+   * (busiest moment on the bus), so a 6.4 ms echo came back as ~600 us, landed
+   * inside the blind zone and was thrown away. Signature in the US_DEBUG trace:
+   * d1 with NOTHING behind it - if the short pulse were a real artifact the true
+   * echo would still follow it. Deaf for <= 35 ms here; a poll for us cannot
+   * arrive in that window anyway (we just replied), and listen() drops any
+   * half-frame so the parser starts clean. The bare HC-SR04 sketch, no
+   * SoftwareSerial, reads the same target rock-steady - that is the control. */
+  rs485.stopListening();
   digitalWrite(PIN_US_TRIG, LOW);
   delayMicroseconds(4);
   digitalWrite(PIN_US_TRIG, HIGH);
@@ -305,6 +319,7 @@ uint16_t pingOnce() {
     budget -= spent;
   }
 
+  rs485.listen();
   return result;                                     // 0 = no credible echo
 }
 
