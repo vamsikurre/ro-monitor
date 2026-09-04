@@ -72,7 +72,7 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | **Ultrasonic Sensors** | Waterproof Ultrasonic (**AJ-SR04M**) | 4 | **Dosing (wired direct to hub)**, RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`). Confirm `R19` mode pad is empty (Trig/Echo mode) — `WIRING.md` §9.0 |
 | **Resistors** | 1 kΩ + 1.8 kΩ (1/4 W) | 2 pairs | `ECHO` 5V→3.3V dividers: hub dosing sensor + ground-floor sump sensor. **1.8 kΩ as built**, not the 2 kΩ originally specified — `WIRING.md` §1, §13 |
 | **Environmental Sensors** | GY-SHT30-D Digital Temp & Humidity | 2 | 1x RO Room (Hub I2C) + 1x Battery Room (Node 4 I2C) |
-| **Microcontrollers** | ESP32-S / ESP32-WROOM-32 | 3 | 1x Central Hub + 2x Ground Floor Nodes |
+| **Microcontrollers** | ESP32-WROOM-32 DevKit — **record pins-per-side AND row pitch before reordering** (TODO: measure the hub's socket) | 3 | 1x Central Hub + 2x Ground Floor Nodes. **Pin count alone is not enough to order by** — ESP32 DevKits ship in several row pitches (commonly 0.9" and 1.0", some 1.1") with identical pin counts and identical labels, and listings rarely state which. A wrong-pitch board arrives looking correct and will not seat. Count the perfboard holes between the two socket rows and order to that number (`WIRING.md` §0.3.1) — cost a wasted purchase 2026-09-03 |
 | **Microcontrollers** | Arduino Nano (ATmega328P) | 2 | RS485 Slave Nodes `0x02`, `0x03` |
 | **Microcontrollers** | Arduino Pro Mini (ATmega328P-AU, **5V / 16 MHz**) | 1 | RS485 Slave Node `0x04` Battery Room. Needs an FTDI/CP2102 adapter to program — see `WIRING.md` 10.1 |
 

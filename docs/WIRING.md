@@ -120,6 +120,20 @@ and the FTDI path above is a workaround by choice, not by necessity. Worth knowi
 before anyone plans around it. Re-check the module's own pin labels against §1 if
 one is ever swapped; DevKit variants differ in what they print on `SP`/`SN`.
 
+**Order by row pitch, not by pin count.** ESP32 DevKits are sold in more than one
+row spacing — commonly 0.9" and 1.0", some 1.1" — and the listings almost never
+say which, because the pin *count* and the pin *labels* can be identical across
+pitches. A wrong-pitch board arrives looking correct and will not go into the
+strips. **TODO: measure this socket and record pins-per-side and hole count here.**
+
+**Measure it by counting holes, not with calipers.** The socket sits on 0.1"
+perfboard, so the gap between the two female strips is a whole number of holes,
+and that number *is* the spec to order against. Count it once and write it here.
+
+Learned on 2026-09-03: a replacement bought on "38-pin ESP32 DevKit" alone had
+matching pin count and matching labels, and a narrower row pitch. It could not be
+seated. A module swap that should have taken a minute did not happen at all.
+
 **The lesson worth carrying to the PCB:** one reversed supply took out the
 programming interface of the board that runs the plant, and the board still works
 only because the ESP32 core survived. `PCB_HUB_MOTHERBOARD.md` §6 now specifies
