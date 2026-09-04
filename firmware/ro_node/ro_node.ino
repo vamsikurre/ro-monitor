@@ -73,12 +73,52 @@
 
 // ---------------------------------------------------------------- tuning knobs
 // Ultrasonic. AJ-SR04M: ~200 mm blind zone, useful to ~4.5 m on water.
-#define US_TRIG_WIDTH_US 10      // some batches want 20 - WIRING.md 9.0
+// Widening this to 20 us was tried on 2026-09-05 per WIRING.md 9.0 and changed
+// nothing, so it is back at the nominal 10 - same as the hub, same as the bare
+// test sketch that behaved correctly. Recorded so nobody re-runs it: the burst
+// timing has never been implicated.
+#define US_TRIG_WIDTH_US 10
+
+// How many sub-blind-zone echo pulses to step over before giving up on a ping.
+//
+// pulseIn() returns the FIRST high pulse after the trigger. When a measurement
+// is corrupted (see pingOnce, and SoftwareSerial), that pulse is short garbage:
+// 2026-09-05 traces showed clusters at ~511 us (88 mm) and ~600 us (101-105 mm),
+// all inside the 200 mm blind zone where the module has nothing legitimate to
+// report. Accepting one is worse than useless, because four of them outvote one
+// true sample in the median window - which is how quality read q80-q100 while
+// every published value was junk.
+//
+// Stepping past them found no real echo hiding behind: a good ping arrives with
+// nothing in front of it (d0), a corrupted one has the artifact and nothing
+// else. So this is not the fix - the fix is in pingOnce - but it is kept,
+// because refusing an impossible reading is right regardless of why it appeared,
+// and the total wait stays bounded by US_TIMEOUT_US.
+#define US_MAX_DISCARD   4
 #define US_TIMEOUT_US    35000UL // ~6 m of flight time
 #define BLIND_ZONE_MM    200
 #define WINDOW           5       // rolling median depth, one sample per cycle
 #define AGREE_MM         25      // samples this close to the median count as good
 #define DEAD_CYCLES      10      // consecutive no-echo cycles before "hardware fault"
+
+// Print every ultrasonic sample on the debug serial, raw microseconds first,
+// then the discard count, the whole median window and what the node concluded.
+//
+// Added 2026-09-05 to find out why both tank nodes reported a narrow 74-90 mm
+// band at q80-q100 whatever the sensor was pointed at. It earned its keep: the
+// raw widths showed the failures fell into two tight clusters with occasional
+// perfect readings between them, and the d-count then showed a good ping never
+// has an artifact in front of it. Those two facts together are what pointed at
+// pulseIn being corrupted rather than the module misbehaving - see pingOnce.
+//
+// Leave it on until the sensors are mounted and trusted. It will be wanted again
+// for the real-water session, where MIN_LEVEL_QUALITY on the hub and the
+// over-range guard both need setting from actual readings rather than guesses.
+//
+// Safe where it prints: from sampleTank(), which only runs off measurePending
+// after a reply. It does lengthen that window and the node is deaf while it
+// prints, so turn it off once the numbers are boring.
+#define US_DEBUG         1
 
 // Submersible pressure transducer - the fallback for TWT, where the only roof
 // penetration is hard against a wall and the beam cone reads that wall forever
@@ -160,6 +200,13 @@ uint8_t  MY_NODE_ID  = 0x00;
 bool     isClimate   = false;   // 0x04 runs the climate personality
 bool     pressureFitted = false; // A3 jumpered: level comes from the 4-20 mA loop
 
+#if US_DEBUG
+unsigned long firstEchoUs = 0;  // width of the FIRST pulse this ping, 0 = none completed
+                                // First, not last: on a discarded ping the first pulse IS
+                                // the artifact, and the last is just the 0 that follows it.
+uint8_t  usDiscarded = 0;       // sub-blind-zone pulses stepped over on that ping
+#endif
+
 uint16_t tdsMV       = 0;
 int16_t  waterTempDeciC = 0;
 uint8_t  wqStatus    = WQ_FAULT_TDS | WQ_FAULT_TEMP;  // nothing fitted until proven
@@ -227,9 +274,38 @@ uint16_t pingOnce() {
   delayMicroseconds(US_TRIG_WIDTH_US);
   digitalWrite(PIN_US_TRIG, LOW);
 
-  unsigned long duration = pulseIn(PIN_US_ECHO, HIGH, US_TIMEOUT_US);
-  if (duration == 0) return 0;                       // no echo
-  return (uint16_t)((duration * 10UL) / 58UL);       // mm at ~343 m/s
+  /* Step past sub-blind-zone pulses, staying inside one US_TIMEOUT_US budget so
+   * the deaf window does not grow. See US_MAX_DISCARD. */
+  unsigned long budget = US_TIMEOUT_US;
+  uint16_t result = 0;
+#if US_DEBUG
+  firstEchoUs = 0;
+  usDiscarded = 0;
+#endif
+
+  for (uint8_t attempt = 0; attempt <= US_MAX_DISCARD; attempt++) {
+    unsigned long t0 = micros();
+    unsigned long duration = pulseIn(PIN_US_ECHO, HIGH, budget);
+    unsigned long spent = micros() - t0;
+#if US_DEBUG
+    if (attempt == 0) firstEchoUs = duration;   // before any conversion
+#endif
+    if (duration == 0) break;                        // nothing more in the window
+
+    uint16_t mm = (uint16_t)((duration * 10UL) / 58UL);   // mm at ~343 m/s
+    if (mm >= BLIND_ZONE_MM) {
+      result = mm;                                   // first credible echo
+      break;
+    }
+
+#if US_DEBUG
+    usDiscarded++;
+#endif
+    if (spent >= budget) break;
+    budget -= spent;
+  }
+
+  return result;                                     // 0 = no credible echo
 }
 
 // ---------------------------------------------------------------- pressure
@@ -259,6 +335,38 @@ uint16_t readPressureOnce() {
 // ---------------------------------------------------------------- filtering
 // One sample per cycle into a rolling window. A five-deep median rides out the
 // single wild outlier these sensors throw; averaging would not.
+#if US_DEBUG
+// "US 464us 80mm w 80 79 84 80 88 m80 q100 s1" - raw microseconds first, then
+// the converted sample, the whole median window, the median, the agreement score
+// and the status byte the hub will be told. Everything needed to tell a module
+// that believes something is 8 cm away from one that heard nothing at all.
+//
+// Deliberately terse: the hardware UART TX buffer is 64 bytes and a longer line
+// blocks here, inside the window where the node cannot hear the bus. Skipped on
+// a pressure-fitted node, where the ultrasonic is not the level source and
+// firstEchoUs would be stale.
+static void usDebugLine() {
+  if (pressureFitted) return;
+  Serial.print(F("US "));
+  Serial.print(firstEchoUs);
+  Serial.print(F("us d"));
+  Serial.print(usDiscarded);   // artifacts stepped over: 0 means the first pulse was credible
+  Serial.print(' ');
+  Serial.print(rawMM);
+  Serial.print(F("mm w"));
+  for (uint8_t i = 0; i < windowCount; i++) {
+    Serial.print(' ');
+    Serial.print(window[i]);
+  }
+  Serial.print(F(" m"));
+  Serial.print(medianMM);
+  Serial.print(F(" q"));
+  Serial.print(quality);
+  Serial.print(F(" s"));
+  Serial.println(sensorStatus);
+}
+#endif
+
 void sampleTank() {
   rawMM = pressureFitted ? readPressureOnce() : pingOnce();
   window[windowNext] = rawMM;
@@ -276,6 +384,9 @@ void sampleTank() {
     medianMM = 0;
     quality = 0;
     sensorStatus = (deadCycles >= DEAD_CYCLES) ? 3 : 2;
+#if US_DEBUG
+    usDebugLine();
+#endif
     return;
   }
   deadCycles = 0;
@@ -298,6 +409,9 @@ void sampleTank() {
   quality = (uint8_t)((uint16_t)agree * 100 / WINDOW);
 
   sensorStatus = (medianMM < BLIND_ZONE_MM) ? 1 : 0;
+#if US_DEBUG
+  usDebugLine();
+#endif
 }
 
 // ------------------------------------------------------------ water quality
