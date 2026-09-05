@@ -652,13 +652,19 @@ static void log_summary(const hub_state_t *s)
      * floating pin and an idle opto both read "off", and only the spread tells
      * them apart - which is the whole reason ac_probe() measures rather than
      * samples. Same for the clamps: the pedestal proves the breakout exists. */
-    ESP_LOGI(TAG, "motors  HPP %s %4lu-%4lu mV %s | RWP %s %4lu-%4lu mV %s%s",
+    /* The mV window is the 240 V OPTO pin (GPIO 34/35), not the clamp: idle reads
+     * ~3134 because the module's 47k pull-up sits at the rail. Read as "opto
+     * idle", not "CT saturated" - that misread cost a bench hour 2026-09-06. */
+    char hpp_ct[12], rwp_ct[12];
+    if (s->hpp.deci_amps < 0) snprintf(hpp_ct, sizeof hpp_ct, "CT --");
+    else snprintf(hpp_ct, sizeof hpp_ct, "CT %d.%d A", s->hpp.deci_amps / 10, s->hpp.deci_amps % 10);
+    if (s->rwp.deci_amps < 0) snprintf(rwp_ct, sizeof rwp_ct, "CT --");
+    else snprintf(rwp_ct, sizeof rwp_ct, "CT %d.%d A", s->rwp.deci_amps / 10, s->rwp.deci_amps % 10);
+    ESP_LOGI(TAG, "motors  HPP %s ac %4lu-%4lu mV %s | RWP %s ac %4lu-%4lu mV %s%s",
              s->hpp.running ? "RUN " : "idle",
-             (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
-             s->hpp.deci_amps < 0 ? "CT --" : "CT ok",
+             (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi, hpp_ct,
              s->rwp.running ? "RUN " : "idle",
-             (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
-             s->rwp.deci_amps < 0 ? "CT --" : "CT ok",
+             (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi, rwp_ct,
              s->overcurrent ? "  OVER CURRENT" : "");
 
     /* Printed only when a probe is actually fitted - every node reads "not

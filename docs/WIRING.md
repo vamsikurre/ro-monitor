@@ -1627,12 +1627,12 @@ firmware reports it as `breakout not fitted` rather than as a plausible number.
 | Stage | Reading | Verdict |
 | :--- | :--- | :--- |
 | Header fitted, no breakout | wanders | `no breakout - pin floating` |
-| Breakout fitted, no clamp | `~1650-1650 mV` | `pedestal OK, no current` |
+| Breakout fitted, no clamp | `~0 mV`, drifting | `no breakout - pin floating` — **expected**: the pedestal reaches the pin only through the CT winding, so an empty socket leaves the pin on 100 nF to GND. Not a fault (§14.2) |
 | Clamp fitted, motor idle | `~1650-1650 mV` | `pedestal OK, no current` |
 | Clamp fitted, motor running | swings past `1750` | `current flowing` |
 | Divider wired wrong | `~0` or `~3300` steady | `pedestal at rail - check R1/R2` |
 
-That second row is §14.2's meter check, available from the serial log instead of
+That third row is §14.2's meter check, available from the serial log instead of
 a multimeter — so the breakout can be built and proven correct **before** any
 clamp arrives.
 
@@ -1653,8 +1653,8 @@ Everything but the clamps fits on one scrap of perfboard, plugging into the §14
 
 ### 14.2. Two things to check with a meter before trusting the wiring
 
-1. **Which socket pads the clamp actually reaches — measure, do not read the silkscreen.** Two things conspire here. Clones differ: most SCT-013 leads use **tip and sleeve**, some tip and ring. And a 3-conductor **TRS plug in a 4-contact TRRS socket** lands its sleeve on the socket's **`RING2`** pad, not on `SLEEVE`. So the pad marked `SLEEVE` may read open while an unlabelled-looking one carries the winding. Plug a clamp in, close its jaws, and meter between pads: the winding reads a few tens of ohms, everything else reads open. Wire the two that show the winding.
-2. **The pedestal, before connecting any clamp.** Power the hub, measure `GPIO 36` and `GPIO 39` to GND: both should sit at **1.6-1.7 V**. `probeCTInput()` prints the same figure every cycle (§14.0), so the meter is a cross-check rather than the only way to see it. If one reads 0 V or 3.3 V, the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault.
+1. **Which socket pads the clamp actually reaches — measure, do not read the silkscreen.** Two things conspire here. Clones differ: most SCT-013 leads use **tip and sleeve**, some tip and ring. And a 3-conductor **TRS plug in a 4-contact TRRS socket** lands its sleeve on the socket's **`RING2`** pad, not on `SLEEVE`. So the pad marked `SLEEVE` may read open while an unlabelled-looking one carries the winding. Plug a clamp in and meter between pads: the winding reads a few tens of ohms, everything else reads open. Wire the two that show the winding. **Measured 2026-09-06:** a healthy SCT-013-**030** reads **~60 Ω** at its plug (the coil in parallel with the internal 62 Ω burden); an SCT-013-**000** (100 A, current output, no burden) reads **~140 Ω** — bare coil — and must not be used here without an external burden. Jaw position does not change either figure. `SLEEVE`↔`RING2` shorted and `RING1` open are normal for a 3-pole plug in a 4-pole socket. A reading in the **kΩ** is a misread range or a probe not touching the barrel before it is a dead clamp — re-measure before opening the housing.
+2. **The pedestal — with both clamps plugged in.** The bias rail reaches each ADC pin only through its CT winding (bias → sleeve → coil → tip → 1 k → pin), so **an empty socket reads 0 V at the pin and that is not a fault** — it cost an hour on 2026-09-06 believing the opposite. Check in two steps: (a) bias node to GND, no clamps needed: **1.6-1.7 V**, proves R1/R2; (b) clamps in, `GPIO 36` and `GPIO 39` to GND: the same **1.6-1.7 V**, proves the whole path. `probeCTInput()` prints the same figure every cycle (§14.0). If (a) reads 0 V or 3.3 V the divider is wrong and the ADC will clip half the waveform — which looks like a plausible-but-wrong current reading, not like a fault. If (a) is right and (b) is 0 V on one channel, that channel's tip/sleeve pads or 1 k are open; with power off it should meter ~1060 Ω pin-to-bias.
 
 ### 14.3. Panel practice
 
@@ -1688,3 +1688,25 @@ float readAmpsRMS(uint8_t pin, float ampsPerVolt, uint8_t turns) {
 ```
 
 `ampsPerVolt` starts at 30.0 for a 30 A / 1 V clamp and is then **corrected by a two-point calibration against a clamp meter** — the ESP32's ADC is nonlinear enough that the nominal figure is a starting guess. Store it hub-side beside the tank calibration, so it is editable over the AP rather than compiled in.
+
+### 14.5. Pump nameplates — read on site 2026-09-05
+
+Photos: `images/hardware/nameplate_rwp_lubi_mdh36a.jpg`, `images/hardware/nameplate_hpp_cri_mvc-2-15.jpg`.
+
+| | **RWP** — Lubi `MDH 36A` | **HPP** — CRI Tuff `MVC-2/15 SR` (MV-series) |
+| :--- | :--- | :--- |
+| Type | Self-priming centrifugal regenerative, IS:8472 | Vertical multistage, CE |
+| Supply | 1 Ph ~ 240 V 50 Hz | 1 Ph 240 V (motor plate not yet read) |
+| Rating | 0.75 kW / 1.0 HP, P.I. 1.209 kW | 1.5 kW / 2.0 HP |
+| **Max current** | **6.2 A** | not on this plate — pump-end plate only; ~10–12 A expected for a 2 HP 1-ph motor, **read the motor plate** |
+| Start | CSR, cap 20 µF / 440 V, 2 P, 2725 rpm | — |
+| Hydraulics | D.head 30 m, H range 15/45 m, 1800 lph, 25×25 mm, self-primes 180 s at 4.0 m | H 98 m, Q 2.5 m³/h, 32×32 mm, P/T 25 bar / 90 °C max |
+| Duty / insulation | S1, class B, OAE 14 % | — |
+| Serial | 3615652 (CM/L 2385763) | 25091040135975 |
+
+**What this settles for §14.3 and the firmware defaults:**
+
+* RWP at 6.2 A max draws ~0.2 V from a 30 A / 1 V clamp with one turn. **Use 3 turns** — that is the case §14.3 warned about.
+* `OC_RWP_DECI_A_DEFAULT` = 9.0 A sits at 1.45× nameplate max: a genuine "something is wrong" line, not a nuisance trip. Leave it.
+* `OC_HPP_DECI_A_DEFAULT` = 12.0 A is a guess until the HPP motor plate is read. If FLA turns out near 12 A the default is a nuisance trip and wants ~1.4× FLA.
+* The HPP plate is the **pump end**; the motor has its own plate on the fan cowl. That is the one with the amps, capacitor and insulation class.

@@ -341,8 +341,8 @@ typedef enum {
 /* Over-current. Deliberately generous: this is a "something is badly wrong"
  * threshold, not a protection trip, and nothing here touches a motor circuit.
  * Per-channel because the two pumps are not the same size. Amps x10. */
-#define OC_HPP_DECI_A_DEFAULT   120     /* 12.0 A */
-#define OC_RWP_DECI_A_DEFAULT   90      /*  9.0 A */
+#define OC_HPP_DECI_A_DEFAULT   120     /* 12.0 A — 2 HP, motor plate unread; WIRING.md 14.5 */
+#define OC_RWP_DECI_A_DEFAULT   90      /*  9.0 A — 1.45x the 6.2 A nameplate max; WIRING.md 14.5 */
 #define OC_LIMIT_LOW_DECI       10
 #define OC_LIMIT_HIGH_DECI      300
 #define OC_CONFIRM_CYCLES       3       /* must persist — one bad RMS read is not a fault */
