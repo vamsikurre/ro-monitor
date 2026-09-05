@@ -675,11 +675,61 @@ spread over a full mains cycle — the only way to tell the three states apart:
                                | Waterproof      |
                                | Transducer Head |
                                +-----------------+
+
+        Water quality pair (9.5) - both probes in the same water, both or neither
+        |
+      Pin D4                      Pin D5          Pin A6
+     (1-Wire)                   (TDS VCC)        (TDS AOUT)
+        |                           |                |
+   [ 4k7 to +5V ]                   |                |
+        |                           |                |
+ +------v-------------------+ +-----v----------------v---------------------+
+ |  DS18B20 (waterproof)    | |  TDS METER BOARD (DFRobot-style, analog)   |
+ | YELLOW DATA --> D4       | | VCC  --> D5  (GPIO-powered: on only while   |
+ | RED    VDD  --> 5V       | |               sampling, ~10 % duty, 9.5.2)  |
+ | BLACK  GND  --> GND      | | AOUT --> A6  (0-2.3 V)                      |
+ +--------------------------+ | GND  --> GND                                |
+                              +---------------------------------------------+
+
+        Pressure transducer provision (9.4) - fit the headers, leave them empty
+        |
+      Pin A2                          Pin A3
+     (4-20 mA sense)                 (fitted?)
+        |                                |
+ +------v-------------------------+ +----v--------------------------------------+
+ |  J-LOOP  (3-pin)               | |  J-PRESS (2-pin)                          |
+ | 1: +12V --> transducer +       | | 1: A3   (INPUT_PULLUP)                    |
+ | 2: loop return, [100R] to GND, | | 2: GND                                    |
+ |    then [1k] --> A2            | | Shunt fitted = transducer present, node   |
+ | 3: GND                         | | reports RANGE - head and ignores D7/D8.   |
+ +--------------------------------+ | Open = A2 is never read.                  |
+                                    +-------------------------------------------+
 ```
 
-Two more headers belong on a tank node's board and are not drawn above — `J-LOOP`
-(12V / A2 / GND) and `J-PRESS` (A3 / GND). They are the provision for a submersible
-pressure transducer and cost nothing to fit while the board is open: **§9.4**.
+#### Tank node pin allocation (0x02 and 0x03 are wired identically)
+
+Authoritative for the tank nodes; the `#define`s at the top of
+`firmware/ro_node/ro_node.ino` must agree with this table.
+
+| Nano pin | Firmware name | Direction | Connects to | Section |
+| :---: | :--- | :---: | :--- | :---: |
+| `D2` | `PIN_RS485_RX` | in | XY-485 `RXD` (SoftwareSerial) | 12 |
+| `D3` | `PIN_RS485_TX` | out | XY-485 `TXD` (SoftwareSerial) | 12 |
+| `D4` | `PIN_WATER_TEMP` | in/out | DS18B20 `DATA` (yellow), **4.7 kΩ pullup to +5 V** | 9.5 |
+| `D5` | `PIN_TDS_POWER` | out | TDS board `VCC` — driven, not tied to +5 V | 9.5.2 |
+| `D7` | `PIN_US_TRIG` | out | AJ-SR04M `TRIG` | 9.0 / 9.3 |
+| `D8` | `PIN_US_ECHO` | in | AJ-SR04M `ECHO` (5 V logic, no divider on a Nano) | 9.0 / 9.3 |
+| `D13` | `PIN_LED` | out | Onboard LED — blinks on each answered poll | — |
+| `A0` | `PIN_ADDR_0` | in, pullup | Address jumper bit 0 → GND or open | 9.1 |
+| `A1` | `PIN_ADDR_1` | in, pullup | Address jumper bit 1 → GND or open | 9.1 |
+| `A2` | `PIN_PRESS_SENSE` | analog in | `J-LOOP` pin 2 — 4-20 mA loop across the 100 Ω sense resistor | 9.4 |
+| `A3` | `PIN_PRESS_FIT` | in, pullup | `J-PRESS` shunt to GND = transducer fitted, ultrasonic ignored | 9.4 |
+| `A6` | `PIN_TDS_SENSE` | analog in | TDS board `AOUT`. Analog-only pin, no digital function to lose | 9.5.2 |
+| `5V` | — | — | Buck output. Feeds XY-485, AJ-SR04M, DS18B20 `VDD`, the 4k7 pullup | 2 |
+| `GND` | — | — | Common: buck, every module, both probes, RS485 `GND` conductor | 12.1 |
+
+Free: `D6`, `D9`–`D12`, `A4`/`A5` (I2C — used only on 0x04, §10), `A7`.
+`D0`/`D1` are the hardware UART and stay a debug port (115200) on every node.
 
 ### 9.0. AJ-SR04M Sensor Notes (applies to every ultrasonic node and the hub's dosing sensor)
 
