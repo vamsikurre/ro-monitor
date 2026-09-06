@@ -343,6 +343,19 @@ typedef enum {
  * Per-channel because the two pumps are not the same size. Amps x10. */
 #define OC_HPP_DECI_A_DEFAULT   170     /* 17.0 A — 1.4x the 12.2 A motor-plate I(max); WIRING.md 14.5 */
 #define OC_RWP_DECI_A_DEFAULT   90      /*  9.0 A — 1.45x the 6.2 A nameplate max; WIRING.md 14.5 */
+/* Rated permeate output (L/h) - the skid meter says ~900 against a 1200
+ * nameplate, so 900 is the default and /cal owns the real figure. */
+#define PLANT_LPH_DEFAULT       900
+#define PLANT_LPH_MIN           100
+#define PLANT_LPH_MAX           5000
+
+/* 24 h of one-minute history in RAM, for the dashboard's trend strip. 16 bytes
+ * a row, 23 KB total. Gone on reboot on purpose: RainMaker time series holds
+ * the long record, this only has to answer "what happened since last night".
+ * ponytail: RAM ring, no flash partition. Add one if reboots lose too much. */
+#define HIST_PERIOD_S           60
+#define HIST_N                  1440
+
 #define OC_LIMIT_LOW_DECI       10
 #define OC_LIMIT_HIGH_DECI      300
 #define OC_CONFIRM_CYCLES       3       /* must persist — one bad RMS read is not a fault */
@@ -492,7 +505,27 @@ typedef struct {
     uint32_t rs485_errors;
     uint32_t last_cycle_ms;
     bool     overcurrent;
+
+    /* Run accounting. "today" resets at local midnight and is lost on reboot;
+     * the totals are the NVS figure (cal_runtime_get) and survive both. */
+    uint32_t hpp_run_today_s, rwp_run_today_s;
+    uint16_t hpp_starts_today, rwp_starts_today;
+    uint32_t hpp_run_total_s, rwp_run_total_s;
 } hub_state_t;
+
+/* One minute of history. Percentages -1 = no level, amps -1 = no clamp,
+ * temperatures INT16_MIN = no reading. flags: bit0 HPP on, bit1 RWP on. */
+typedef struct {
+    uint32_t t;                    /* epoch seconds, 0 = clock not yet synced */
+    int8_t   rwt, twt, dos;
+    uint8_t  flags;
+    int16_t  hpp_da, rwp_da;
+    int16_t  ro_t, bat_t;
+} hist_rec_t;
+
+/* Oldest first. Take hub_state_lock() around the pair, as for hub_state(). */
+uint16_t          history_count(void);
+const hist_rec_t *history_at(uint16_t i);
 
 /*
  * Shared state accessors, implemented in app_main.c.

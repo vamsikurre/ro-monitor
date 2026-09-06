@@ -83,6 +83,17 @@ esp_err_t cal_event_set(cal_event_t e, uint32_t epoch);
 uint16_t cal_fan_on_deci_c(void);
 uint16_t cal_fan_off_deci_c(void);
 
+/* Rated permeate output, litres per hour, for "litres produced today" = HPP run
+ * hours x this. Nameplate is 1200; the skid's analogue meter reads ~900 and that
+ * is the honest figure, so it is a knob, not a constant. */
+uint16_t  cal_plant_lph(void);
+esp_err_t cal_set_plant_lph(uint16_t lph);
+
+/* Cumulative pump run seconds, written on each stop - a handful of NVS writes a
+ * day. "Today" lives in RAM; this is the figure that survives a power cut. */
+uint32_t  cal_runtime_get(cal_ct_t c);
+esp_err_t cal_runtime_set(cal_ct_t c, uint32_t seconds);
+
 /* Calibration page credentials. The password is stored so a site can change it
  * without a reflash; the default is in app_priv.h and is not a secret. */
 bool      cal_password_matches(const char *user, const char *pass);

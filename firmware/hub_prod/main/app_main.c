@@ -67,6 +67,85 @@ void hub_state_lock(void)   { xSemaphoreTake(s_state_mux, portMAX_DELAY); }
 void hub_state_unlock(void) { xSemaphoreGive(s_state_mux); }
 hub_state_t *hub_state(void) { return &s_state; }
 
+/* ---------------------------------------------------------- history ring */
+
+static hist_rec_t s_hist[HIST_N];
+static uint16_t   s_hist_head;      /* next slot to write */
+static uint16_t   s_hist_count;
+
+uint16_t history_count(void) { return s_hist_count; }
+
+const hist_rec_t *history_at(uint16_t i)
+{
+    if (i >= s_hist_count) return NULL;
+    uint16_t start = (s_hist_count < HIST_N) ? 0 : s_hist_head;
+    return &s_hist[(start + i) % HIST_N];
+}
+
+/* Called under the state lock, once a minute, from the poll task. */
+static void history_push(const hub_state_t *s, uint32_t epoch)
+{
+    hist_rec_t *r = &s_hist[s_hist_head];
+    r->t      = epoch;
+    r->rwt    = (int8_t)(s->rwt_online ? s->rwt.pct : -1);
+    r->twt    = (int8_t)(s->twt_online ? s->twt.pct : -1);
+    r->dos    = (int8_t)s->dosing.pct;
+    r->flags  = (s->hpp.running ? 1 : 0) | (s->rwp.running ? 2 : 0);
+    r->hpp_da = s->hpp.deci_amps;
+    r->rwp_da = s->rwp.deci_amps;
+    r->ro_t   = s->ro_room.fault ? INT16_MIN : s->ro_room.temp_deci_c;
+    r->bat_t  = (!s->battery_online || s->battery_room.fault) ? INT16_MIN : s->battery_room.temp_deci_c;
+    s_hist_head = (s_hist_head + 1) % HIST_N;
+    if (s_hist_count < HIST_N) s_hist_count++;
+}
+
+/* ------------------------------------------------------- run accounting */
+
+/* Per pump: seconds run today, starts today, and the persisted lifetime total.
+ * Time is accumulated from the cycle clock, not counted in cycles, so a slow
+ * cycle does not under-count. The total is written to NVS on each STOP, which
+ * is the moment the figure is final and a few times a day at most. */
+typedef struct {
+    cal_ct_t which;
+    int64_t  last_us;               /* previous accounting instant */
+    uint32_t run_ms;                /* today's, sub-second precision */
+    uint32_t run_since_start_s;     /* this run, for the NVS write on stop */
+    bool     was_running;
+} run_acct_t;
+
+static void run_account(run_acct_t *a, bool running, int64_t now_us,
+                        uint32_t *today_s, uint16_t *starts, uint32_t *total_s)
+{
+    if (a->last_us == 0) a->last_us = now_us;
+    uint32_t dt_ms = (uint32_t)((now_us - a->last_us) / 1000);
+    a->last_us = now_us;
+
+    if (running) {
+        a->run_ms += dt_ms;
+        if (!a->was_running) {
+            (*starts)++;
+            a->run_since_start_s = 0;
+        }
+        a->run_since_start_s += dt_ms / 1000;
+    } else if (a->was_running) {
+        cal_runtime_set(a->which, cal_runtime_get(a->which) + a->run_since_start_s);
+    }
+    a->was_running = running;
+    *today_s = a->run_ms / 1000;
+    /* Lifetime = stored total + the run in progress, so it moves while running */
+    *total_s = cal_runtime_get(a->which) + (running ? a->run_since_start_s : 0);
+}
+
+/* Local calendar day, or -1 without a synced clock. */
+static int today_yday(void)
+{
+    time_t now = time(NULL);
+    if (now < 1700000000) return -1;
+    struct tm tm;
+    localtime_r(&now, &tm);
+    return tm.tm_yday;
+}
+
 /* --------------------------------------------------------- RainMaker handles */
 
 static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
@@ -935,6 +1014,10 @@ static void poll_task(void *arg)
 
     static median_u16_t s_dosing_win;
 
+    run_acct_t hpp_acct = { .which = CAL_CT_HPP }, rwp_acct = { .which = CAL_CT_RWP };
+    int      acct_yday = today_yday();
+    int64_t  hist_last_us = 0;
+
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
     int  oc_streak = 0;
@@ -1058,8 +1141,29 @@ static void poll_task(void *arg)
         local.rs485_errors = rs485_error_count();
         local.last_cycle_ms = (uint32_t)((esp_timer_get_time() - cycle_start) / 1000);
 
+        /* --- run hours, and the day boundary --- */
+        {
+            int yd = today_yday();
+            if (yd >= 0 && yd != acct_yday) {
+                acct_yday = yd;
+                hpp_acct.run_ms = rwp_acct.run_ms = 0;
+                local.hpp_starts_today = local.rwp_starts_today = 0;
+            }
+            int64_t now_us = esp_timer_get_time();
+            /* An opto with a broken wire reads "not running" and means nothing;
+             * do not book that as idle time either way - hold the last state. */
+            run_account(&hpp_acct, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running, now_us,
+                        &local.hpp_run_today_s, &local.hpp_starts_today, &local.hpp_run_total_s);
+            run_account(&rwp_acct, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running, now_us,
+                        &local.rwp_run_today_s, &local.rwp_starts_today, &local.rwp_run_total_s);
+        }
+
         hub_state_lock();
         s_state = local;
+        if (esp_timer_get_time() - hist_last_us >= (int64_t)HIST_PERIOD_S * 1000000) {
+            hist_last_us = esp_timer_get_time();
+            history_push(&s_state, now_epoch());
+        }
         hub_state_unlock();
 
         /* --- cloud --- */
@@ -1267,7 +1371,15 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
 static esp_rmaker_param_t *ro_param(const char *name, const char *type,
                                     esp_rmaker_param_val_t val, const char *ui)
 {
-    esp_rmaker_param_t *p = esp_rmaker_param_create(name, type, val, PROP_FLAG_READ);
+    /* Time series on every numeric/bool param: the cloud keeps what report_*()
+     * already sends on change, so pump start/stop, tank %, amps and temps become
+     * charts in the app and exportable via GET /v1/user/nodes/tsdata. Strings
+     * (status text, last-run stamps) are not chartable and stay plain. */
+    uint8_t flags = PROP_FLAG_READ;
+    if (val.type != RMAKER_VAL_TYPE_STRING) {
+        flags |= PROP_FLAG_TIME_SERIES;
+    }
+    esp_rmaker_param_t *p = esp_rmaker_param_create(name, type, val, flags);
     if (p && ui) {
         esp_rmaker_param_add_ui_type(p, ui);
     }

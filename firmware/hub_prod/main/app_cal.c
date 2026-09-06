@@ -45,6 +45,8 @@ static uint32_t    s_evt[CAL_EVT_COUNT];
 static const char *s_tank_keys[CAL_TANK_COUNT]   = { "rwt", "twt", "dos" };
 static const char *s_tank_labels[CAL_TANK_COUNT] = { "Raw Water", "Treated Water", "Dosing" };
 static const char *s_ct_keys[CAL_CT_COUNT]       = { "hpp", "rwp" };
+static uint16_t s_plant_lph = PLANT_LPH_DEFAULT;
+static uint32_t s_runtime_s[CAL_CT_COUNT];
 static const char *s_ct_labels[CAL_CT_COUNT]     = { "HPP", "RWP" };
 
 const char *cal_tank_key(cal_tank_t t)   { return (t < CAL_TANK_COUNT) ? s_tank_keys[t] : "?"; }
@@ -120,6 +122,12 @@ esp_err_t cal_init(void)
     }
     load_u16(h, "fan", "on", &s_fan_on_deci_c);
     load_u16(h, "fan", "off", &s_fan_off_deci_c);
+    load_u16(h, "plant", "lph", &s_plant_lph);
+    for (int i = 0; i < CAL_CT_COUNT; i++) {
+        char key[16];
+        key_for(key, sizeof(key), s_ct_keys[i], "rt");
+        nvs_get_u32(h, key, &s_runtime_s[i]);       /* absent leaves 0 */
+    }
 
     size_t plen = sizeof(s_cal_pass);
     nvs_get_str(h, "cal_pass", s_cal_pass, &plen);
@@ -357,6 +365,46 @@ int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm)
         return 0;               /* no rejection at all, or the probes are swapped */
     }
     return (int16_t)(((uint32_t)(feed_ppm - permeate_ppm) * 100U) / feed_ppm);
+}
+
+uint16_t cal_plant_lph(void)
+{
+    return s_plant_lph;
+}
+
+esp_err_t cal_set_plant_lph(uint16_t lph)
+{
+    if (lph < PLANT_LPH_MIN || lph > PLANT_LPH_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_plant_lph = lph;
+    return store_u16("plant", "lph", lph);
+}
+
+uint32_t cal_runtime_get(cal_ct_t c)
+{
+    return (c < CAL_CT_COUNT) ? s_runtime_s[c] : 0;
+}
+
+esp_err_t cal_runtime_set(cal_ct_t c, uint32_t seconds)
+{
+    if (c >= CAL_CT_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_runtime_s[c] = seconds;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    char key[16];
+    key_for(key, sizeof(key), s_ct_keys[c], "rt");
+    err = nvs_set_u32(h, key, seconds);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
 }
 
 uint32_t cal_event_get(cal_event_t e)

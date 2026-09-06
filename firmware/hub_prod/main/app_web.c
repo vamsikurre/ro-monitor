@@ -270,9 +270,49 @@ static esp_err_t favicon_get(httpd_req_t *req)
     return httpd_resp_send(req, ICON, sizeof(ICON) - 1);
 }
 
+/*
+ * 24 h of one-minute rows, oldest first, as a compact array-of-arrays:
+ *   [t, rwt%, twt%, dos%, flags, hpp_dA, rwp_dA, ro_dC, bat_dC]
+ * -1 / null where there was no reading. ~60 KB at full depth, so it goes out in
+ * chunks rather than through a static buffer. Read-only, no password, same as
+ * /api/telemetry - this is what the dashboard draws its trend strip from.
+ */
+static esp_err_t history_get(httpd_req_t *req)
+{
+    char buf[1400];
+    int n = snprintf(buf, sizeof(buf), "{\"period_s\":%d,\"rows\":[", HIST_PERIOD_S);
+    httpd_resp_set_type(req, "application/json");
+
+    hub_state_lock();
+    uint16_t count = history_count();
+    for (uint16_t i = 0; i < count; i++) {
+        const hist_rec_t *r = history_at(i);
+        char ro[8], bat[8];
+        if (r->ro_t == INT16_MIN) snprintf(ro, sizeof ro, "null"); else snprintf(ro, sizeof ro, "%d", r->ro_t);
+        if (r->bat_t == INT16_MIN) snprintf(bat, sizeof bat, "null"); else snprintf(bat, sizeof bat, "%d", r->bat_t);
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%d,%d,%d,%u,%d,%d,%s,%s]",
+                      i ? "," : "", (unsigned long)r->t, r->rwt, r->twt, r->dos, r->flags,
+                      r->hpp_da, r->rwp_da, ro, bat);
+        if (n > (int)sizeof(buf) - 80) {
+            hub_state_unlock();
+            if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
+            n = 0;
+            hub_state_lock();
+            /* The ring may have advanced by one during the unlock; count is
+             * re-read so we never run past the end, and one duplicated or
+             * skipped minute is invisible on a 24 h strip. */
+            count = history_count();
+        }
+    }
+    hub_state_unlock();
+    n += snprintf(buf + n, sizeof(buf) - n, "]}");
+    if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[2800];   /* +200 for the quality block */
+    static char json[3100];   /* +200 quality, +300 run block */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -345,6 +385,11 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"overcurrent\":%s"
         "},"
+        "\"run\":{"
+          "\"hpp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
+          "\"rwp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
+          "\"plant_lph\":%u"
+        "},"
         "\"nodes\":["
           "{\"id\":\"0x02\",\"role\":\"Raw Water\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
           "{\"id\":\"0x03\",\"role\":\"Treated Water\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
@@ -404,6 +449,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
         s->overcurrent ? "true" : "false",
+
+        (unsigned long)s->hpp_run_today_s, (unsigned)s->hpp_starts_today, (unsigned long)s->hpp_run_total_s,
+        (unsigned long)s->rwp_run_today_s, (unsigned)s->rwp_starts_today, (unsigned long)s->rwp_run_total_s,
+        (unsigned)cal_plant_lph(),
 
         link_word(s->rwt.last_ok_us, s->rwt_online), age_s(s->rwt.last_ok_us),
         link_word(s->twt.last_ok_us, s->twt_online), age_s(s->twt.last_ok_us),
@@ -528,6 +577,15 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_LIMIT_LOW_DECI / 10, FAN_LIMIT_LOW_DECI % 10,
         FAN_LIMIT_HIGH_DECI / 10, FAN_LIMIT_HIGH_DECI % 10,
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
+
+    n += snprintf(page + n, sizeof(page) - n,
+        "<fieldset id=plant><legend>Plant output</legend>"
+        "<form method=post action='/api/cal/plant'>"
+        "rated permeate <input name=lph size=5 value='%u'> L/h <button>Save</button></form>"
+        "<p><small>Multiplies HPP run hours into \"litres today\" on the dashboard. "
+        "Nameplate is 1200; read the skid's flow meter while producing and put that "
+        "here instead &mdash; it falls as the membranes age. %d&ndash;%d.</small></p></fieldset>",
+        cal_plant_lph(), PLANT_LPH_MIN, PLANT_LPH_MAX);
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset id=relays><legend>Relay test</legend>");
@@ -770,6 +828,18 @@ static esp_err_t cal_fan_post(httpd_req_t *req)
     return redirect_to(req, "/cal#fan");
 }
 
+static esp_err_t cal_plant_post(httpd_req_t *req)
+{
+    char body[64], lph[8];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "lph", lph, sizeof(lph))) return bad(req, "need lph");
+    int v = atoi(lph);
+    if (v <= 0 || cal_set_plant_lph((uint16_t)v) != ESP_OK) {
+        return bad(req, "rejected: 100-5000 L/h");
+    }
+    return redirect_to(req, "/cal#plant");
+}
+
 /*
  * Momentary relay test. One button, one pulse, and the firmware releases it -
  * there is deliberately no "off" button and no latch.
@@ -842,11 +912,13 @@ esp_err_t web_start(void)
     static const route_t routes[] = {
         { "/",              HTTP_GET,  dashboard_get,  true  },  /* read-only, no password */
         { "/api/telemetry", HTTP_GET,  telemetry_get,  true  },  /* what the dashboard polls */
+        { "/api/history",   HTTP_GET,  history_get,    true  },  /* 24 h trend strip */
         { "/favicon.ico",   HTTP_GET,  favicon_get,    true  },  /* asked for unprompted, by everyone */
         { "/cal",           HTTP_GET,  cal_get,        false },
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
         { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
+        { "/api/cal/plant", HTTP_POST, cal_plant_post, false },
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
