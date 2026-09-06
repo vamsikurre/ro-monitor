@@ -1691,22 +1691,22 @@ float readAmpsRMS(uint8_t pin, float ampsPerVolt, uint8_t turns) {
 
 ### 14.5. Pump nameplates — read on site 2026-09-05
 
-Photos: `images/hardware/nameplate_rwp_lubi_mdh36a.jpg`, `images/hardware/nameplate_hpp_cri_mvc-2-15.jpg`.
+Photos: `images/hardware/nameplate_rwp_lubi_mdh36a.jpg`, `images/hardware/nameplate_hpp_cri_mvc-2-15.jpg` (pump end), `images/hardware/nameplate_hpp_motor_2hp.jpg` (motor, read 2026-09-06).
 
 | | **RWP** — Lubi `MDH 36A` | **HPP** — CRI Tuff `MVC-2/15 SR` (MV-series) |
 | :--- | :--- | :--- |
 | Type | Self-priming centrifugal regenerative, IS:8472 | Vertical multistage, CE |
-| Supply | 1 Ph ~ 240 V 50 Hz | 1 Ph 240 V (motor plate not yet read) |
+| Supply | 1 Ph ~ 240 V 50 Hz | 1 Ph 230 V 50 Hz |
 | Rating | 0.75 kW / 1.0 HP, P.I. 1.209 kW | 1.5 kW / 2.0 HP |
-| **Max current** | **6.2 A** | not on this plate — pump-end plate only; ~10–12 A expected for a 2 HP 1-ph motor, **read the motor plate** |
-| Start | CSR, cap 20 µF / 440 V, 2 P, 2725 rpm | — |
+| **Max current** | **6.2 A** | **12.2 A** I(max); ~9 A at rated load (1.5 kW / 230 V / cos φ 0.94 / η 0.77) |
+| Start | CSR, cap 20 µF / 440 V, 2 P, 2725 rpm | CSCR, 2900 rpm, cos φ (min) 0.94, η 77 % |
 | Hydraulics | D.head 30 m, H range 15/45 m, 1800 lph, 25×25 mm, self-primes 180 s at 4.0 m | H 98 m, Q 2.5 m³/h, 32×32 mm, P/T 25 bar / 90 °C max |
-| Duty / insulation | S1, class B, OAE 14 % | — |
-| Serial | 3615652 (CM/L 2385763) | 25091040135975 |
+| Duty / insulation | S1, class B, OAE 14 % | S1 (cont), class F, IP 55, TEFC, frame 90, amb 45 °C |
+| Serial | 3615652 (CM/L 2385763) | pump 25091040135975; motor 10425093082142 |
 
 **What this settles for §14.3 and the firmware defaults:**
 
 * RWP at 6.2 A max draws ~0.2 V from a 30 A / 1 V clamp with one turn. **Use 3 turns** — that is the case §14.3 warned about.
 * `OC_RWP_DECI_A_DEFAULT` = 9.0 A sits at 1.45× nameplate max: a genuine "something is wrong" line, not a nuisance trip. Leave it.
-* `OC_HPP_DECI_A_DEFAULT` = 12.0 A is a guess until the HPP motor plate is read. If FLA turns out near 12 A the default is a nuisance trip and wants ~1.4× FLA.
-* The HPP plate is the **pump end**; the motor has its own plate on the fan cowl. That is the one with the amps, capacitor and insulation class.
+* `OC_HPP_DECI_A_DEFAULT` was 12.0 A, guessed before the motor plate was read — **right at the 12.2 A I(max), a nuisance trip**. Raised to **17.0 A** (1.4×) 2026-09-06.
+* HPP at ~9–12 A gives 0.3–0.4 V from one turn: **1 turn is enough**, 2 if resolution at low load ever matters. The 13 × 13 mm window will not take three turns of the HPP's heavier cable anyway.
