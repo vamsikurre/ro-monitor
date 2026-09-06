@@ -70,6 +70,22 @@ Two cards under the plant drawing:
 Starts-per-day is the short-cycling tell; produced-litres against the TWT trace is
 how you notice a membrane losing output before the TDS does.
 
+* **Events · newest first** — `GET /api/events`, 96 entries in RAM: hub boot (with
+  reset reason), HPP/RWP start and **stop with run time and average amps**, node
+  online/offline, controller fault, LPS, over-current, no-production, battery fan,
+  cloud connect/disconnect. Times are hub uptime, placed on the wall clock by the
+  page from `sys.uptime_s`, so boot and pre-SNTP events sit where they belong.
+  Polled every 10 s. This is the "when did it start and stop" list in words; the
+  trend lanes are the same facts as a picture.
+
+**No production** (added 2026-09-07): HPP has been on for every minute of the last
+20 and TWT has not risen by 1 % — membranes blocked, reject valve open, feed
+starved, or a closed outlet. Skipped when TWT is within 1 % of full (nowhere to
+rise), when TWT is offline, or before the hub has 20 minutes of history. Raised as
+a RainMaker alert after 3 confirming cycles, repeated hourly while it holds,
+surfaced as `No Production` in the RO Room device, `motors.no_production` in
+telemetry, a dashboard alert, and an event.
+
 **Long history is RainMaker's job**, not the hub's. Every numeric and boolean
 parameter carries `PROP_FLAG_TIME_SERIES`, so what the hub already reports on change
 is kept as a series: charts in the app, and
@@ -198,6 +214,22 @@ wants to read. They answer the question a live boolean cannot: a pump that is of
   boot of every hub not yet wired to the panel.
 
 ---
+
+## 4.10. OTA — pushing a new image without a ladder
+
+Verified 2026-09-07 against fw `65c3f34`:
+
+| Check | State |
+| :--- | :--- |
+| Partition room | two `ota_0`/`ota_1` slots of 0x1C0000 (1.75 MB); the image is ~0x176800 (1.53 MB), **16 % free** |
+| Rollback | `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`. RainMaker marks the new image valid only once MQTT connects, within `ROLLBACK_WAIT_PERIOD` = 90 s; otherwise the bootloader boots the previous slot. A boot-looping image (see `65c3f34`) rolls back on its own |
+| Trigger | `esp_rmaker_ota_enable_default()`, topics mode: a job from the RainMaker dashboard starts immediately; `OTA_AUTOFETCH` also checks every 24 h |
+| Version gate | `CONFIG_ESP_RMAKER_SKIP_VERSION_CHECK` is **off**: an image whose version string equals the running one is refused. Version is `git describe --always --tags --dirty`, so **commit before building an OTA image** — two `-dirty` builds of the same commit are indistinguishable to the cloud and the second is rejected |
+| Project gate | the image's project name must be `ro_hub` (`CMakeLists.txt`); it is |
+
+Procedure: commit → `idf.py build` → `dashboard.rainmaker.espressif.com` → *Firmware Images* → upload `build/ro_hub.bin` → *Start OTA Job* on node `agc63S2ihft9zDvhaFqxXf`. The hub logs `OTA state`; the dashboard footer's `fw` changes on the reboot after. If the new image never connects to the cloud, the old one is back within ~2 minutes with nothing lost but the ledger's last five minutes.
+
+Heap is the resource to watch, not flash: `heap_min` in the footer should stay well above ~40 KB, which is what the TLS download wants. The 24 h history ring is the biggest static consumer at 23 KB; `HIST_N` is the knob if it ever gets tight.
 
 ## 5. Provisioning & Pairing Procedure
 

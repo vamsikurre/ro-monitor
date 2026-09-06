@@ -356,6 +356,16 @@ typedef enum {
 #define HIST_PERIOD_S           60
 #define HIST_N                  1440
 
+/* "No production": HPP has run continuously for this many minutes and TWT has
+ * not risen by at least NOPROD_RISE_PCT. 20 min at 900 L/h is 300 L, several
+ * percent of any tank here. Evaluated from the history ring, so it also needs
+ * the hub to have been up that long. */
+#define NOPROD_WINDOW_MIN       20
+#define NOPROD_RISE_PCT         1
+
+/* Event log: what happened and when, in RAM, newest kept. 12 bytes each. */
+#define EVENTS_N                96
+
 #define OC_LIMIT_LOW_DECI       10
 #define OC_LIMIT_HIGH_DECI      300
 #define OC_CONFIRM_CYCLES       3       /* must persist — one bad RMS read is not a fault */
@@ -384,6 +394,7 @@ typedef enum {
 #define PARAM_HPP_AMPS          "HPP Current"
 #define PARAM_RWP_AMPS          "RWP Current"
 #define PARAM_OVERCURRENT       "Over Current"
+#define PARAM_NO_PRODUCTION     "No Production"
 #define PARAM_RO_TEMP           "RO Room Temp"
 #define PARAM_RO_HUM            "RO Room Humidity"
 #define PARAM_BAT_TEMP          "Battery Room Temp"
@@ -505,6 +516,7 @@ typedef struct {
     uint32_t rs485_errors;
     uint32_t last_cycle_ms;
     bool     overcurrent;
+    bool     no_production;        /* HPP running, TWT not rising - see NOPROD_* */
 
     /* Run accounting. "today" resets at local midnight and is lost on reboot;
      * the totals are the NVS figure (cal_runtime_get) and survive both. */
@@ -526,6 +538,28 @@ typedef struct {
 /* Oldest first. Take hub_state_lock() around the pair, as for hub_state(). */
 uint16_t          history_count(void);
 const hist_rec_t *history_at(uint16_t i);
+
+/* Event log. Time is UPTIME seconds, not epoch: events happen before SNTP has
+ * synced (boot, first node contact) and the dashboard can place them from the
+ * telemetry's uptime_s and its own clock. a/b are per-kind: a pump stop
+ * carries run minutes and average deci-amps; a node event carries the address. */
+typedef enum {
+    EVT_BOOT = 0,
+    EVT_HPP_ON, EVT_HPP_OFF, EVT_RWP_ON, EVT_RWP_OFF,
+    EVT_NODE_ON, EVT_NODE_OFF,
+    EVT_ALARM_ON, EVT_ALARM_OFF, EVT_LPS_ON, EVT_LPS_OFF,
+    EVT_OC_ON, EVT_OC_OFF, EVT_NOPROD_ON, EVT_NOPROD_OFF,
+    EVT_FAN_ON, EVT_FAN_OFF, EVT_CLOUD_ON, EVT_CLOUD_OFF,
+} evt_kind_t;
+typedef struct {
+    uint32_t up_s;
+    uint8_t  kind;
+    uint8_t  arg;
+    uint16_t a, b;
+} event_t;
+void           event_push(uint8_t kind, uint8_t arg, uint16_t a, uint16_t b);
+uint16_t       events_count(void);
+const event_t *event_at(uint16_t i);   /* oldest first; under hub_state_lock() */
 
 /*
  * Shared state accessors, implemented in app_main.c.

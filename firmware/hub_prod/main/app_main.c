@@ -33,6 +33,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -99,6 +100,70 @@ static void history_push(const hub_state_t *s, uint32_t epoch)
     if (s_hist_count < HIST_N) s_hist_count++;
 }
 
+/* ------------------------------------------------------------ event log */
+
+static event_t  s_evts[EVENTS_N];
+static uint16_t s_evt_head, s_evt_count;
+
+/* Callable from any task: the ring has its own lock so the cloud event handler
+ * can log a disconnect without the poll task's mutex. */
+static portMUX_TYPE s_evt_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void event_push(uint8_t kind, uint8_t arg, uint16_t a, uint16_t b)
+{
+    portENTER_CRITICAL(&s_evt_mux);
+    event_t *e = &s_evts[s_evt_head];
+    e->up_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    e->kind = kind; e->arg = arg; e->a = a; e->b = b;
+    s_evt_head = (s_evt_head + 1) % EVENTS_N;
+    if (s_evt_count < EVENTS_N) s_evt_count++;
+    portEXIT_CRITICAL(&s_evt_mux);
+}
+
+uint16_t events_count(void) { return s_evt_count; }
+
+const event_t *event_at(uint16_t i)
+{
+    if (i >= s_evt_count) return NULL;
+    uint16_t start = (s_evt_count < EVENTS_N) ? 0 : s_evt_head;
+    return &s_evts[(start + i) % EVENTS_N];
+}
+
+/* Every boolean the log cares about, in one place, so a new flag gets logged by
+ * adding a line here rather than by remembering to at each site. Pumps are NOT
+ * here: run_account() logs those, because it has the duration and the amps. */
+static void diff_events(const hub_state_t *was, const hub_state_t *now)
+{
+    #define EDGE(field, on, off, argv) \
+        if (was->field != now->field) event_push(now->field ? (on) : (off), (argv), 0, 0)
+    EDGE(rwt_online,     EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_RWT);
+    EDGE(twt_online,     EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_TWT);
+    EDGE(battery_online, EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_BATTERY);
+    EDGE(alarm_active,   EVT_ALARM_ON, EVT_ALARM_OFF, 0);
+    EDGE(lps_active,     EVT_LPS_ON,   EVT_LPS_OFF,   0);
+    EDGE(overcurrent,    EVT_OC_ON,    EVT_OC_OFF,    0);
+    EDGE(no_production,  EVT_NOPROD_ON, EVT_NOPROD_OFF, 0);
+    EDGE(fan_on,         EVT_FAN_ON,   EVT_FAN_OFF,   0);
+    #undef EDGE
+}
+
+/* HPP has been on for every one of the last NOPROD_WINDOW_MIN rows and TWT is
+ * no higher now than it was then. Reads the ring without the lock: only the
+ * poll task writes it and only the poll task calls this. */
+static bool no_production_now(const hub_state_t *s)
+{
+    if (!s->hpp.running || !s->twt_online || s->twt.pct < 0) return false;
+    if (s->twt.pct >= ALERT_TANK_FULL_PCT - NOPROD_RISE_PCT) return false;   /* full: nowhere to rise */
+    uint16_t n = history_count();
+    if (n < NOPROD_WINDOW_MIN) return false;
+    const hist_rec_t *then = history_at(n - NOPROD_WINDOW_MIN);
+    if (then->twt < 0) return false;
+    for (uint16_t i = n - NOPROD_WINDOW_MIN; i < n; i++) {
+        if (!(history_at(i)->flags & 1)) return false;                       /* HPP was off somewhere */
+    }
+    return s->twt.pct < then->twt + NOPROD_RISE_PCT;
+}
+
 /* ------------------------------------------------------- run accounting */
 
 /* Per pump: seconds run today, starts today, and the persisted lifetime total.
@@ -110,25 +175,34 @@ typedef struct {
     int64_t  last_us;               /* previous accounting instant */
     uint32_t run_ms;                /* today's, sub-second precision */
     uint32_t run_since_start_s;     /* this run, for the NVS write on stop */
+    uint32_t da_sum;                /* deci-amps summed over this run, for the log */
+    uint16_t da_n;
     bool     was_running;
 } run_acct_t;
 
-static void run_account(run_acct_t *a, bool running, int64_t now_us,
+static void run_account(run_acct_t *a, bool running, int16_t deci_amps, int64_t now_us,
                         uint32_t *today_s, uint16_t *starts, uint32_t *total_s)
 {
     if (a->last_us == 0) a->last_us = now_us;
     uint32_t dt_ms = (uint32_t)((now_us - a->last_us) / 1000);
     a->last_us = now_us;
+    uint8_t on_evt  = (a->which == CAL_CT_HPP) ? EVT_HPP_ON  : EVT_RWP_ON;
+    uint8_t off_evt = (a->which == CAL_CT_HPP) ? EVT_HPP_OFF : EVT_RWP_OFF;
 
     if (running) {
         a->run_ms += dt_ms;
         if (!a->was_running) {
             (*starts)++;
             a->run_since_start_s = 0;
+            a->da_sum = 0; a->da_n = 0;
+            event_push(on_evt, 0, 0, 0);
         }
         a->run_since_start_s += dt_ms / 1000;
+        if (deci_amps >= 0 && a->da_n < 0xFFFF) { a->da_sum += deci_amps; a->da_n++; }
     } else if (a->was_running) {
         cal_runtime_set(a->which, cal_runtime_get(a->which) + a->run_since_start_s);
+        event_push(off_evt, 0, (uint16_t)(a->run_since_start_s / 60),
+                   a->da_n ? (uint16_t)(a->da_sum / a->da_n) : 0xFFFF);
     }
     a->was_running = running;
     *today_s = a->run_ms / 1000;
@@ -257,7 +331,7 @@ typedef struct {
 } alert_t;
 
 static alert_t s_al_twt_full, s_al_rwt_full, s_al_dos_low, s_al_bat_hot;
-static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle;
+static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_noprod;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
  * A non-zero value re-notifies on that interval for as long as the condition
@@ -459,6 +533,13 @@ static void evaluate_alerts(const hub_state_t *s)
     alert_eval(&s_al_idle, should_be_producing,
                "RO idle 15 min, treated water tank has room. "
                "Is the Aster still in MANUAL?", ALERT_REPEAT_MS, 1);
+
+    /* The pump is drawing power and the product tank is not moving: membranes
+     * blocked, reject valve wide open, feed starved, or a closed outlet. This is
+     * the fault that costs membranes if it runs for a day, so it repeats. */
+    snprintf(msg, sizeof(msg), "RO producing nothing: HPP on %d min, TWT stuck at %d%%. "
+             "Check membranes, reject valve and feed.", NOPROD_WINDOW_MIN, s->twt.pct);
+    alert_eval(&s_al_noprod, s->no_production, msg, ALERT_REPEAT_MS, 3);
 
     bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online;
     snprintf(msg, sizeof(msg), "RS485 node offline: %s%s%s. Check the bus and the terminators.",
@@ -1001,7 +1082,7 @@ static void poll_task(void *arg)
 {
     /* Deadbands, remembered per parameter so report_*() can skip no-op updates. */
     int   last_rwt = INT32_MIN, last_twt = INT32_MIN, last_dos = INT32_MIN;
-    int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1;
+    int   last_hpp_on = -1, last_rwp_on = -1, last_fan = -1, last_alarm = -1, last_oc = -1, last_noprod = -1;
     int   last_twt_float = -1, last_rl1 = -1, last_rl2 = -1;
     int   last_rwt_tds = -1, last_twt_tds = -1, last_rejection = -1;
     /* -1 rather than 0: "not seen yet" must differ from "seen, and it was off",
@@ -1178,9 +1259,11 @@ static void poll_task(void *arg)
             bool hpp_was = hpp_acct.was_running, rwp_was = rwp_acct.was_running;
             /* An opto with a broken wire reads "not running" and means nothing;
              * do not book that as idle time either way - hold the last state. */
-            run_account(&hpp_acct, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running, now_us,
+            run_account(&hpp_acct, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running,
+                        local.hpp.deci_amps, now_us,
                         &local.hpp_run_today_s, &local.hpp_starts_today, &local.hpp_run_total_s);
-            run_account(&rwp_acct, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running, now_us,
+            run_account(&rwp_acct, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running,
+                        local.rwp.deci_amps, now_us,
                         &local.rwp_run_today_s, &local.rwp_starts_today, &local.rwp_run_total_s);
 
             bool stopped = (hpp_was && !hpp_acct.was_running) || (rwp_was && !rwp_acct.was_running);
@@ -1191,7 +1274,10 @@ static void poll_task(void *arg)
             }
         }
 
+        local.no_production = no_production_now(&local);
+
         hub_state_lock();
+        diff_events(&s_state, &local);
         s_state = local;
         if (esp_timer_get_time() - hist_last_us >= (int64_t)HIST_PERIOD_S * 1000000) {
             hist_last_us = esp_timer_get_time();
@@ -1213,6 +1299,7 @@ static void poll_task(void *arg)
             report_float(s_dev_ro_room, PARAM_RWP_AMPS, local.rwp.deci_amps / 10.0f, &last_rwp_a, 0.3f);
         }
         report_bool(s_dev_ro_room, PARAM_OVERCURRENT, local.overcurrent, &last_oc);
+        report_bool(s_dev_ro_room, PARAM_NO_PRODUCTION, local.no_production, &last_noprod);
 
         if (!local.ro_room.fault) {
             report_float(s_dev_ro_room, PARAM_RO_TEMP, local.ro_room.temp_deci_c / 10.0f, &last_ro_t, 0.3f);
@@ -1455,6 +1542,8 @@ static void build_node(esp_rmaker_node_t *node)
                                                         esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
     esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_OVERCURRENT, "esp.param.alert",
                                                         esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_NO_PRODUCTION, "esp.param.alert",
+                                                        esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
 
     esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_RO_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
                                                         esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
@@ -1557,9 +1646,11 @@ static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, v
     if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "RainMaker cloud connected");
         s_cloud_up = true;
+        event_push(EVT_CLOUD_ON, 0, 0, 0);
     } else if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_DISCONNECTED) {
         ESP_LOGW(TAG, "RainMaker cloud disconnected");
         s_cloud_up = false;
+        event_push(EVT_CLOUD_OFF, 0, 0, 0);
     }
 }
 
@@ -1698,6 +1789,7 @@ void app_main(void)
     ESP_LOGI(TAG, "==========================================");
     ESP_LOGI(TAG, "  RO Monitor — Central Hub  fw %s", esp_app_get_description()->version);
     ESP_LOGI(TAG, "==========================================");
+    event_push(EVT_BOOT, (uint8_t)esp_reset_reason(), 0, 0);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

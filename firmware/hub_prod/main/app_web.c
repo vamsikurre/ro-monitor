@@ -322,6 +322,25 @@ static esp_err_t history_get(httpd_req_t *req)
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+/* [up_s, kind, arg, a, b], oldest first. The dashboard turns kind into words and
+ * up_s into a wall-clock time from the telemetry's uptime. */
+static esp_err_t events_get(httpd_req_t *req)
+{
+    static char buf[EVENTS_N * 32 + 64];
+    int n = snprintf(buf, sizeof(buf), "{\"events\":[");
+    hub_state_lock();
+    uint16_t count = events_count();
+    for (uint16_t i = 0; i < count && n < (int)sizeof(buf) - 40; i++) {
+        const event_t *e = event_at(i);
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%u,%u,%u,%u]", i ? "," : "",
+                      (unsigned long)e->up_s, e->kind, e->arg, e->a, e->b);
+    }
+    hub_state_unlock();
+    n += snprintf(buf + n, sizeof(buf) - n, "]}");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
     static char json[3100];   /* +200 quality, +300 run block */
@@ -395,7 +414,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"motors\":{"
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
-          "\"overcurrent\":%s"
+          "\"overcurrent\":%s,\"no_production\":%s"
         "},"
         "\"run\":{"
           "\"hpp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
@@ -461,6 +480,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
         s->overcurrent ? "true" : "false",
+        s->no_production ? "true" : "false",
 
         (unsigned long)s->hpp_run_today_s, (unsigned)s->hpp_starts_today, (unsigned long)s->hpp_run_total_s,
         (unsigned long)s->rwp_run_today_s, (unsigned)s->rwp_starts_today, (unsigned long)s->rwp_run_total_s,
@@ -908,6 +928,7 @@ esp_err_t web_start(void)
         { "/",              HTTP_GET,  dashboard_get,  true  },  /* read-only, no password */
         { "/api/telemetry", HTTP_GET,  telemetry_get,  true  },  /* what the dashboard polls */
         { "/api/history",   HTTP_GET,  history_get,    true  },  /* 24 h trend strip */
+        { "/api/events",    HTTP_GET,  events_get,     true  },  /* what happened, when */
         { "/favicon.ico",   HTTP_GET,  favicon_get,    true  },  /* asked for unprompted, by everyone */
         { "/cal",           HTTP_GET,  cal_get,        false },
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },

@@ -403,6 +403,15 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .run .sum{grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; padding-top:10px; border-top:1px solid var(--line)}
 .run .sum .metric .legend{font-size:9px}
 .run .sum .big{font-size:22px}
+.events{display:flex; flex-direction:column; max-height:330px; overflow-y:auto; margin:-4px -4px 0; padding:0 4px}
+.ev{display:grid; grid-template-columns:auto auto 1fr; gap:0 12px; align-items:baseline; padding:6px 0; border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.ev:last-child{border-bottom:0}
+.ev .t{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); white-space:nowrap}
+.ev .d{font-size:10px; color:var(--ink-3); font-family:var(--mono)}
+.ev .w{font-size:13px}
+.ev .w b{font-weight:600}
+.ev .w .n{font-family:var(--mono); font-size:12px; color:var(--ink-2); margin-left:6px}
+.ev.fault .w b{color:var(--fault)} .ev.warn .w b{color:var(--warn)} .ev.dim .w{color:var(--ink-2)}
 
 /* Narrow screens keep the elevation and scroll sideways. Flattening it
    would throw away the one thing the drawing exists to show. */
@@ -491,6 +500,10 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
   <div class="card">
     <span class="legend">Pumps · today</span>
     <div class="run" id="cRun"></div>
+  </div>
+  <div class="card span2">
+    <span class="legend">Events · newest first</span>
+    <div class="events" id="cEvents"><div class="empty">No events yet</div></div>
   </div>
 </div>
 
@@ -1575,6 +1588,10 @@ function drawAlerts(s) {
     add("warn", "Chemical low", "Dosing tank below 20 percent. Replenish anti-scalant.", "Dosing");
   if (s.aster.alarm)
     add("fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room");
+  if (s.motors && s.motors.no_production)
+    add("fault", "No production", `HPP has run 20 min and treated water is not rising (${T.twt.pct}%). Check membranes, reject valve and feed.`, "RO Skid");
+  if (s.motors && s.motors.overcurrent)
+    add("fault", "Over-current", `HPP ${ampsText(s.motors.hpp.amps).replace(/<[^>]+>/g, "")} · RWP ${ampsText(s.motors.rwp.amps).replace(/<[^>]+>/g, "")}. Seized pump or lost phase.`, "RO Skid");
   if (s.env.battery_room.state === "ONLINE" && s.env.battery_room.t > 38)
     add("warn", "Battery room hot", `Room at ${s.env.battery_room.t.toFixed(1)} °C. Exhaust fan ${s.env.battery_room.fan ? "running" : "is off"}.`, "Battery Room");
   s.nodes.filter(n => n.state === "OFFLINE").forEach(n =>
@@ -1605,6 +1622,7 @@ function render(s) {
   drawAlerts(s);
   drawPlant(s);
   drawRun(s);
+  drawEvents();
   climate($("#cRoom"), s.env.ro_room);
   climate($("#cBatt"), s.env.battery_room);
 
@@ -1804,7 +1822,7 @@ const demo = {
     rejection: 95,
   },
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false, lps: false },
-  motors: { hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false },
+  motors: { hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false, no_production: false },
   env: {
     ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
     battery_room: { t: 36.2, rh: 48, fan: false, state: "ONLINE", src: "SHT30 · Node 0x04", age_s: 1 },
@@ -1972,6 +1990,61 @@ function drawTrend() {
   host.appendChild(svg);
 }
 
+/* ── events ──────────────────────────────────────────────
+ * /api/events rows are [up_s, kind, arg, a, b]; up_s is hub UPTIME, so the
+ * wall time is (now - (uptime_now - up_s)) using the last telemetry's uptime.
+ * That places boot and pre-SNTP events correctly and survives the hub having
+ * no clock at all. */
+let EVENTS = [];
+const RESET = ["unknown", "power on", "external", "software", "panic", "int WDT", "task WDT", "WDT", "deep sleep", "brownout", "SDIO", "USB", "JTAG", "eFuse", "power glitch", "CPU lockup"];
+const EV = {
+  0:  e => ["dim",   "Hub booted", RESET[e[2]] || ("reason " + e[2])],
+  1:  () => ["",     "HPP started", ""],
+  2:  e => ["",      "HPP stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
+  3:  () => ["",     "RWP started", ""],
+  4:  e => ["",      "RWP stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
+  5:  e => ["dim",   "Node online", nodeName(e[2])],
+  6:  e => ["warn",  "Node offline", nodeName(e[2])],
+  7:  () => ["fault", "Controller fault", "Aster alarm contact closed"],
+  8:  () => ["dim",  "Controller fault cleared", ""],
+  9:  () => ["fault", "Low feed pressure", "LPS tripped"],
+  10: () => ["dim",  "Feed pressure normal", ""],
+  11: () => ["fault", "Over-current", ""],
+  12: () => ["dim",  "Over-current cleared", ""],
+  13: () => ["fault", "No production", "HPP running, TWT not rising"],
+  14: () => ["dim",  "Production resumed", ""],
+  15: () => ["dim",  "Battery fan on", ""],
+  16: () => ["dim",  "Battery fan off", ""],
+  17: () => ["dim",  "Cloud connected", ""],
+  18: () => ["warn", "Cloud disconnected", ""],
+};
+const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room" })[a] || ("0x0" + a);
+const hmShort = sec => { const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`; };
+
+function drawEvents() {
+  const host = $("#cEvents");
+  if (!EVENTS.length || !LAST) { host.innerHTML = `<div class="empty">No events yet</div>`; return; }
+  const nowS = Date.now() / 1000, up = LAST.sys.uptime_s;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  host.innerHTML = EVENTS.slice().reverse().map(e => {
+    const f = EV[e[1]]; if (!f) return "";
+    const [cls, what, detail] = f(e);
+    const t = new Date((nowS - (up - e[0])) * 1000);
+    const day = t < today ? t.toLocaleDateString(undefined, { day: "2-digit", month: "short" }) : "";
+    return `<div class="ev ${cls}"><span class="t">${hhmm(t.getTime() / 1000)}</span><span class="d">${day}</span>` +
+           `<span class="w"><b>${esc(what)}</b>${detail ? `<span class="n">${esc(detail)}</span>` : ""}</span></div>`;
+  }).join("");
+}
+
+async function pollEvents() {
+  try {
+    const r = await fetch("/api/events", { cache: "no-store" });
+    if (!r.ok) return;
+    EVENTS = (await r.json()).events || [];
+    drawEvents();
+  } catch { /* keep the last list */ }
+}
+
 async function pollHistory() {
   try {
     const r = await fetch("/api/history", { cache: "no-store" });
@@ -2085,6 +2158,12 @@ function demoHistory() {
 if (DEMO_FORCE.has("demo")) {
   $("#mode").textContent = "Demo data";
   HIST = demoHistory();
+  { const up = demo.sys.uptime_s, runs = [[6, 9.5], [12, 14], [18, 21.5]];
+    EVENTS = [[0, 0, 1, 0, 0], [12, 5, 2, 0, 0], [12, 5, 3, 0, 0], [13, 5, 4, 0, 0], [31, 17, 0, 0, 0]];
+    runs.forEach(([a, b]) => { const s0 = up - (24 - a) * 3600, s1 = up - (24 - b) * 3600;
+      EVENTS.push([s0, 3, 0, 0, 0], [s0 + 8, 1, 0, 0, 0], [s1 - 5, 2, 0, Math.round((b - a) * 60), 91], [s1, 4, 0, Math.round((b - a) * 60), 47]); });
+    EVENTS.push([up - 5 * 3600, 6, 4, 0, 0], [up - 4.6 * 3600, 5, 4, 0, 0]);
+    EVENTS.sort((x, y) => x[0] - y[0]); }
   { const n = new Date(), m0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime() / 1000;
     DAYS = Array.from({ length: 34 }, (_, i) => [m0 - (34 - i) * 86400, 200 + (i * 37) % 90, 210 + (i * 37) % 90]); }
   drawTrend();
@@ -2095,6 +2174,8 @@ if (DEMO_FORCE.has("demo")) {
   setInterval(poll, 1000);
   pollHistory();
   setInterval(pollHistory, 60000);
+  pollEvents();
+  setInterval(pollEvents, 10000);
 }
 </script>
 </body>
