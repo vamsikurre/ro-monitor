@@ -899,23 +899,6 @@ static esp_err_t cal_pass_post(httpd_req_t *req)
 
 esp_err_t web_start(void)
 {
-    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.server_port = WEB_PORT;
-    cfg.max_uri_handlers = 10;
-    cfg.lru_purge_enable = true;
-    /* The dashboard polls once a second and a phone may be open at the same time
-     * as a wall display. The default of 4 sockets runs out sooner than you would
-     * think once keep-alives are in play. */
-    cfg.max_open_sockets = 7;
-    cfg.stack_size = 6144;
-
-    httpd_handle_t server = NULL;
-    esp_err_t err = httpd_start(&server, &cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
     /* PUBLIC is opt-in. Every route goes through gate(), so a handler added
      * later is password-protected unless whoever adds it deliberately writes
      * .open = true next to it. The old arrangement put the check inside each
@@ -934,6 +917,26 @@ esp_err_t web_start(void)
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
+
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port = WEB_PORT;
+    /* One slot per route, derived. This was a literal 10; 130c3dc added two
+     * routes and the hub boot-looped on ESP_ERR_HTTPD_HANDLERS_FULL. */
+    cfg.max_uri_handlers = sizeof(routes) / sizeof(routes[0]);
+    cfg.lru_purge_enable = true;
+    /* The dashboard polls once a second and a phone may be open at the same time
+     * as a wall display. The default of 4 sockets runs out sooner than you would
+     * think once keep-alives are in play. */
+    cfg.max_open_sockets = 7;
+    cfg.stack_size = 6144;
+
+    httpd_handle_t server = NULL;
+    esp_err_t err = httpd_start(&server, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_uri_t u = {
             .uri      = routes[i].uri,
