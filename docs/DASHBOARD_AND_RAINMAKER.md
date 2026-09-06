@@ -26,7 +26,7 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
 * **mDNS URL:** `http://ro-hub.local`
 * **Direct IP URL:** `http://<ESP32_HUB_IP>` (e.g. `http://192.168.1.150`)
 * **REST API Polling Endpoint:** `GET /api/telemetry` (Returns complete JSON state every 1000ms)
-* **History:** `GET /api/history` — 24 h of one-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC]`; `-1`/`null` = no reading. RAM only (23 KB), so a reboot empties it — see §2.3
+* **History:** `GET /api/history` — `rows`: 24 h of one-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC]`, `-1`/`null` = no reading, RAM only (23 KB) so a reboot empties it; `days`: up to 35 `[local_midnight, hpp_min, rwp_min]` from NVS — see §2.3
 * **Control Endpoints:**
   * `POST /api/fan/toggle` (Overrides Battery Room Exhaust Fan `ON` / `OFF` / `AUTO`)
   * `POST /api/interlock/override` (Manual override for Aster float emulation relays)
@@ -57,12 +57,15 @@ Two cards under the plant drawing:
   (RO solid, battery dashed). Hover for the nearest minute. Drawn from
   `/api/history`, refetched every 60 s. Tank/temp lines break where a reading was
   missing rather than interpolating across a gap.
-* **Pumps · today** — per pump: run time today `h mm`, starts today; then
-  **Produced today** = HPP hours × the plant's rated L/h (`/cal`, "Plant output",
-  default 900 — the skid meter's figure, not the 1200 nameplate), **Dosing drum**
-  days-to-empty from the 24 h slope (`--` until 6 h of falling level), and
-  lifetime hours per pump (NVS, written on each stop). "Today" resets at local
-  midnight and is lost on reboot; lifetime survives both.
+* **Pumps · today** — a Today / This week (Mon–) / This month (1st–) table of HPP
+  run, RWP run and **litres produced** = HPP hours × the plant's rated L/h (`/cal`,
+  "Plant output", default 900 — the skid meter's figure, not the 1200 nameplate).
+  Under it: starts today (the short-cycling tell), **Dosing drum** days-to-empty
+  from the 24 h slope (`--` until 6 h of falling level), and lifetime hours per
+  pump. Week and month come from a **35-day ledger in NVS** (`cal_day_t`: local
+  midnight, HPP min, RWP min), written on each pump stop and every 5 min while one
+  runs, and served in `/api/history` as `days`. Today is restored from it at boot,
+  so a reboot loses minutes, not the morning; starts-today is RAM and does reset.
 
 Starts-per-day is the short-cycling tell; produced-litres against the TWT trace is
 how you notice a membrane losing output before the TDS does.

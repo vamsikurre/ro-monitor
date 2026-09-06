@@ -136,14 +136,25 @@ static void run_account(run_acct_t *a, bool running, int64_t now_us,
     *total_s = cal_runtime_get(a->which) + (running ? a->run_since_start_s : 0);
 }
 
-/* Local calendar day, or -1 without a synced clock. */
-static int today_yday(void)
+/* Local midnight of today as epoch seconds, or 0 without a synced clock. The
+ * day ledger is keyed on this: it changes exactly when the calendar does, and
+ * it does not depend on newlib exposing a timezone offset. */
+static uint32_t local_midnight(void)
 {
     time_t now = time(NULL);
-    if (now < 1700000000) return -1;
+    if (now < 1700000000) return 0;
     struct tm tm;
     localtime_r(&now, &tm);
-    return tm.tm_yday;
+    tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
+    return (uint32_t)mktime(&tm);
+}
+
+/* Today's run minutes into the ledger. Called on each stop and every
+ * DAY_SAVE_S while a pump runs, so a reboot loses minutes, not hours. */
+#define DAY_SAVE_S 300
+static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_acct_t *rwp)
+{
+    cal_day_set(midnight, (uint16_t)(hpp->run_ms / 60000), (uint16_t)(rwp->run_ms / 60000));
 }
 
 /* --------------------------------------------------------- RainMaker handles */
@@ -1015,8 +1026,10 @@ static void poll_task(void *arg)
     static median_u16_t s_dosing_win;
 
     run_acct_t hpp_acct = { .which = CAL_CT_HPP }, rwp_acct = { .which = CAL_CT_RWP };
-    int      acct_yday = today_yday();
+    uint32_t acct_midnight = local_midnight();
+    int64_t  day_saved_us = 0;
     int64_t  hist_last_us = 0;
+    bool     today_restored = false;
 
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
@@ -1143,19 +1156,39 @@ static void poll_task(void *arg)
 
         /* --- run hours, and the day boundary --- */
         {
-            int yd = today_yday();
-            if (yd >= 0 && yd != acct_yday) {
-                acct_yday = yd;
+            uint32_t mid = local_midnight();
+            /* Once the clock is real, pick today's minutes back up from the
+             * ledger so a reboot at 15:00 does not report a morning of nothing. */
+            if (mid != 0 && !today_restored) {
+                today_restored = true;
+                acct_midnight = mid;
+                const cal_day_t *d; uint16_t n = cal_days(&d);
+                if (n > 0 && d[n - 1].midnight == mid) {
+                    hpp_acct.run_ms = (uint32_t)d[n - 1].hpp_min * 60000;
+                    rwp_acct.run_ms = (uint32_t)d[n - 1].rwp_min * 60000;
+                }
+            }
+            if (mid != 0 && mid != acct_midnight) {
+                day_ledger_save(acct_midnight, &hpp_acct, &rwp_acct);   /* close yesterday */
+                acct_midnight = mid;
                 hpp_acct.run_ms = rwp_acct.run_ms = 0;
                 local.hpp_starts_today = local.rwp_starts_today = 0;
             }
             int64_t now_us = esp_timer_get_time();
+            bool hpp_was = hpp_acct.was_running, rwp_was = rwp_acct.was_running;
             /* An opto with a broken wire reads "not running" and means nothing;
              * do not book that as idle time either way - hold the last state. */
             run_account(&hpp_acct, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running, now_us,
                         &local.hpp_run_today_s, &local.hpp_starts_today, &local.hpp_run_total_s);
             run_account(&rwp_acct, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running, now_us,
                         &local.rwp_run_today_s, &local.rwp_starts_today, &local.rwp_run_total_s);
+
+            bool stopped = (hpp_was && !hpp_acct.was_running) || (rwp_was && !rwp_acct.was_running);
+            bool running = hpp_acct.was_running || rwp_acct.was_running;
+            if (mid != 0 && (stopped || (running && now_us - day_saved_us >= (int64_t)DAY_SAVE_S * 1000000))) {
+                day_saved_us = now_us;
+                day_ledger_save(mid, &hpp_acct, &rwp_acct);
+            }
         }
 
         hub_state_lock();

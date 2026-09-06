@@ -305,6 +305,18 @@ static esp_err_t history_get(httpd_req_t *req)
         }
     }
     hub_state_unlock();
+    /* The day ledger rides along: [local_midnight, hpp_min, rwp_min], oldest
+     * first, up to CAL_DAYS entries. Week and month totals are sums over it. */
+    n += snprintf(buf + n, sizeof(buf) - n, "],\"days\":[");
+    const cal_day_t *d; uint16_t nd = cal_days(&d);
+    for (uint16_t i = 0; i < nd; i++) {
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%u,%u]", i ? "," : "",
+                      (unsigned long)d[i].midnight, d[i].hpp_min, d[i].rwp_min);
+        if (n > (int)sizeof(buf) - 80) {
+            if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
+            n = 0;
+        }
+    }
     n += snprintf(buf + n, sizeof(buf) - n, "]}");
     if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);

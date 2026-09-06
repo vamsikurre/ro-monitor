@@ -90,9 +90,20 @@ uint16_t  cal_plant_lph(void);
 esp_err_t cal_set_plant_lph(uint16_t lph);
 
 /* Cumulative pump run seconds, written on each stop - a handful of NVS writes a
- * day. "Today" lives in RAM; this is the figure that survives a power cut. */
+ * day. This is the figure that survives a power cut. */
 uint32_t  cal_runtime_get(cal_ct_t c);
 esp_err_t cal_runtime_set(cal_ct_t c, uint32_t seconds);
+
+/* Per-day run minutes for the last CAL_DAYS days, oldest first, one NVS blob.
+ * Weekly and monthly production are sums over this; "today" is restored from it
+ * at boot. Written on each pump stop and every few minutes while running. */
+#define CAL_DAYS 35
+typedef struct {
+    uint32_t midnight;             /* local midnight, epoch seconds */
+    uint16_t hpp_min, rwp_min;
+} cal_day_t;
+uint16_t  cal_days(const cal_day_t **out);
+esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min);
 
 /* Calibration page credentials. The password is stored so a site can change it
  * without a reflash; the default is in app_priv.h and is not a secret. */
