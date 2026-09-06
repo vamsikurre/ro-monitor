@@ -901,7 +901,7 @@ Four tanks, four different problems. The sensor is the same part in each; the mo
 > mounting before believing the level.
 | Strain-relieve the captive lead at the tank wall | The transducer hangs on its own cable otherwise, and it will eventually hang crooked — see rule 2. |
 
-**Dosing barrel (~50 L, wired direct to the hub, §13).** The blind zone *is* the design problem here: a 50 L drum is only ~550–600 mm deep, so a sensor sitting on the barrel mouth cannot read the top third — the range you care about when deciding whether to top up. **Mount it on a bracket 250–300 mm above the open top**, not on the rim. That is the geometry the hub's `250 mm full / 900 mm empty` defaults assume.
+**Dosing barrel (~50 L, wired direct to the hub, §13).** The blind zone *is* the design problem here: a 50 L drum is only ~550–600 mm deep, so a sensor sitting on the barrel mouth cannot read the top third — the range you care about when deciding whether to top up. **Mount it on a bracket 250–300 mm above the open top**, not on the rim. **As built 2026-09-06 it is in the lid** of a **530 mm** drum (`images/hardware/dosing_drum_and_hpp.jpg`), so the hub default is `250 mm full / 540 mm empty` and the top ~40 % of the drum reads as blind-zone fault, not as a level. Fill to ~200 mm below the lid, or fit the bracket and recalibrate over the AP.
 
 **RWT (plastic, roof, `0x02`).** The straightforward one. Standard rules, no special measures.
 
@@ -1489,6 +1489,10 @@ The dosing tank sits roughly **100 cm** from the hub enclosure, well inside the 
 **Why the divider is not optional.** `ECHO` idles low and swings to a hard 5 V. The ESP32 is 3.3 V logic with no 5 V tolerance on its GPIOs; a bare connection stresses the pad every ranging cycle. **Built with 1 kΩ / 1.8 kΩ** — an E24 value, and it lands at 3.21 V, just under the rail instead of just over it. Section 11.1 still specifies 1 kΩ / 2 kΩ for the unbuilt ground-floor node; fit 1.8 kΩ there too when it is built, so the whole plant carries one divider.
 
 **Scheduling — do not read this sensor inside a poll window.** `pulseIn(GPIO4, HIGH, 35000UL)` blocks for up to 35 ms. Phase-B spec §4.1 documents this as fatal *on a Nano slave*, where a blocked `SoftwareSerial` silently drops ~15 % of incoming polls. On the hub the risk is different and milder: the hub is the master and slaves never transmit unbidden (`RS485_PROTOCOL.md` §1.1), so nothing is missed — but a 35 ms stall inside the poll/response sequence still eats into the turnaround guard time. Read it at a fixed point in the 1 s cycle, **after** the last slave response and before serving the dashboard. There is ~800 ms of idle cycle to put it in.
+
+**As built.** The drum is a **530 mm** deep ~50 L HDPE barrel with the transducer through its lid, ~540 mm face-to-floor. The hub default `250 / 540` matches that; the previous `250 / 900` assumed the §9 bracket and would have shown ~55 % with the drum dry. See §9 for the blind-zone consequence of the lid mount.
+
+**Dosing pump.** UKL electronic diaphragm dosing pump on the skid (`images/hardware/dosing_pump_ukl.jpg`), stroke-rate knob, power button, no status contact. **Believed fed from the HPP contactor, not yet metered** — if so, dosing runs exactly when HPP runs and its ~20–30 W is inside the HPP clamp reading, below the 0.1 A floor. Nothing separate to monitor; a dosing-not-running fault would have to come from the drum level not falling while HPP runs.
 
 **What this removes from the build:** one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.
 

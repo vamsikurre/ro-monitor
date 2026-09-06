@@ -20,12 +20,14 @@ static const char *TAG = "cal";
 static const char *NVS_NS = "ro_cal";
 
 /* Defaults match the hub sketch that was on the bench, so replacing the firmware
- * does not silently move a calibrated tank. WIRING.md §13 explains the dosing
- * figures: the sensor sits on a bracket 250-300 mm above the barrel mouth. */
+ * does not silently move a calibrated tank. Dosing: the drum is 530 mm deep and
+ * the sensor is IN THE LID (WIRING.md §13), so the floor sits ~540 mm from the
+ * face. The old 900 mm "empty" assumed a bracket that was never fitted and could
+ * never read below ~55 % - the dosing-low alert was unreachable. */
 static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
     [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
     [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
-    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 900,  .tds_k_x100 = 100 },
+    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100 },
 };
 
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
