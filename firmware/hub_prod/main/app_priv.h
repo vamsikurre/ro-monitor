@@ -368,6 +368,13 @@ typedef enum {
 #define OC_BORE_DECI_A_DEFAULT  150     /* 15.0 A - no nameplate; set from the overload dial (WIRING.md 11.3.1) */
 #define OC_SUMP_DECI_A_DEFAULT  100     /* 10.0 A - 2 HP three-phase submersible */
 #define RUN_DECI_A_DEFAULT      10      /*  1.0 A - highest phase above this = running */
+/* Hysteresis band below RUN_DECI_A_DEFAULT: a real CT on a real motor dithers
+ * by a count or two, and without a band a dithering reading toggles `running`
+ * every poll cycle - and every toggle is an MQTT publish (report_bool has no
+ * deadband). 0.3 A matches the deadband already used for the amps readings
+ * themselves elsewhere in this file, and is generous next to a 1.0 A
+ * threshold without hiding a real stop/start. */
+#define RUN_HYST_DECI           3       /*  0.3 A */
 /* Rated permeate output (L/h) - the skid meter says ~900 against a 1200
  * nameplate, so 900 is the default and /cal owns the real figure. */
 #define PLANT_LPH_DEFAULT       900

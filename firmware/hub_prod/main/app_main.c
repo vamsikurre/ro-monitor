@@ -1140,8 +1140,25 @@ static void gf_apply(hub_state_t *s)
         sm->imbalance_pct = gfImbalancePct(sm->phase_da);
         /* Borewell has no contact of its own: running = drawing current. The
          * sump motor has the Astero PUMP ON contact, which cannot be fooled by
-         * a floating channel, so the clamps there are for amps only. */
-        bm->running = s->utility_online && bm->deci_amps >= (int16_t)bc->run_deci_amps;
+         * a floating channel, so the clamps there are for amps only.
+         *
+         * Hysteresis, not a single threshold: a real clamp on a real motor
+         * dithers by a count or two around run_deci_amps, and report_bool()
+         * has no deadband of its own, so a bare >= toggled PARAM_BORE_ON every
+         * 2 s cycle and would have re-run the MQTT budget exhaustion this
+         * session's first commit fixed for the tank levels. bm->running on
+         * entry is last cycle's value (bm points into hub_state_t), so
+         * holding it in the band between the two thresholds is free. */
+        if (!s->utility_online) {
+            bm->running = false;
+        } else if (bm->deci_amps >= (int16_t)bc->run_deci_amps) {
+            bm->running = true;
+        } else {
+            int16_t off_thresh = (int16_t)bc->run_deci_amps - RUN_HYST_DECI;
+            if (off_thresh < 0) off_thresh = 0;
+            if (bm->deci_amps < off_thresh) bm->running = false;
+            /* else: in the band - hold whatever bm->running already was */
+        }
         sm->running = s->utility_online && gu.sump_on;
 
         s->utility_room.fault        = !gu.sht_ok;
