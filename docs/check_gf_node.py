@@ -57,18 +57,22 @@ SCHEMA = {
 # a healthy sensor instead of failing loudly.
 STATUS_VALUES = ('OK', 'BLIND', 'NO_ECHO', 'HW_FAULT')
 
-# distance_mm/quality/loop_ua are null on whichever sensor path is NOT
-# fitted (docs/fake_gf_node.py STATE, the hub's jint_or_null parse). The
-# format string can only encode that by splicing in a sub-buffer holding
-# either the literal "null" or a plain number - a bare, unquoted %s - since
-# extract_format() never sees which branch of the C code's ternary actually
-# ran. So it cannot check the VALUE a nullable field takes at runtime; what
-# it CAN check statically is that the field is even capable of being null -
-# that it is emitted through that bare-%s splice at all, rather than a
-# hardcoded literal number that could never be null no matter what the
-# sensor does.
+# distance_mm/quality/loop_ua (sump) and rwt_floty (util) are null on
+# whichever sensor path is NOT fitted (docs/fake_gf_node.py STATE, the hub's
+# jint_or_null / cJSON_IsNull parse). The format string can only encode that
+# by splicing in a sub-buffer holding either the literal "null" or a plain
+# value - a bare, unquoted %s - since extract_format() never sees which
+# branch of the C code's ternary actually ran. So it cannot check the VALUE
+# a nullable field takes at runtime; what it CAN check statically is that
+# the field is even capable of being null - that it is emitted through that
+# bare-%s splice at all, rather than a hardcoded literal (a number, or for
+# rwt_floty a bare `false`) that could never be null no matter what the
+# sensor does. rwt_floty is exactly this shape but for a bool: false means
+# "the float is open", null means "the optocoupler is not fitted, we cannot
+# see it" - distinct facts a hardcoded false would erase.
 NULLABLE_BARE_KEYS = {
     'sump': ('distance_mm', 'quality', 'loop_ua'),
+    'util': ('rwt_floty',),
 }
 
 def check_status_literals(src):
@@ -127,27 +131,40 @@ def io_read(path):
 
 _CONV = re.compile(r'%[-+0 #]*\d*(?:\.\d+)?(?:hh|h|ll|l|j|z|t|L)?[diouxXeEfFgGaAcs]')
 
-def fill_format(fmt):
+def fill_format(fmt, role):
     """Replace printf conversions with JSON-shaped placeholders.
 
     A %s directly between two quotes ("...":"%s") is a JSON string field -
     filled with an unquoted token so the literal's own quotes wrap it, same as
-    before. A BARE %s (no adjacent quote either side) is Task 10's pattern for
-    a field that is null on one sensor path and a plain number on the other
-    (sensors_sump.c's distance_mm/quality/loop_ua, spliced from a sub-buffer
-    the C code fills with either "null" or an snprintf'd number): this
-    extractor only sees the format string, never the branch that decides
-    which, so it cannot generate both shapes. It fills `null` instead of an
-    unquoted 'x' - one of the two values that spot can actually hold at
-    runtime, and syntactically valid either way, where 'x' is valid in
-    neither. Every other conversion here is a bare number."""
+    before. A BARE %s (no adjacent quote either side) is the pattern used for
+    a field spliced from a sub-buffer the C code fills with one of two
+    literals picked by a branch this extractor never sees - either
+    "null"/a number (sensors_sump.c's distance_mm/quality/loop_ua) or
+    "null"/"true"/"false" (sensors_util.c's rwt_floty). For exactly those
+    fields (NULLABLE_BARE_KEYS[role]) it fills `null`, one of the values that
+    spot can actually hold at runtime.
+
+    A bare %s can also be a field that is NEVER null - sump_on and sht_ok are
+    real JSON booleans, spliced unquoted the same way because C has no %b,
+    but always "true" or "false", never "null". Filling those with `null`
+    too would fail the schema check for every required bool below no matter
+    what the C code does, which is not a defect in this file - it is this
+    function guessing wrong. Fill anything bare that is not a known-nullable
+    key with `true` instead: a valid literal for both a bool field and (since
+    Python's bool is an int) an int-typed one, so it does not fail the type
+    check that follows. Every other conversion here is a bare number."""
+    nullable = set(NULLABLE_BARE_KEYS.get(role, ()))
     def repl(m):
         conv = m.group(0)
         if conv[-1] != 's':
             return '0'
         start, end = m.span()
         quoted = start > 0 and end < len(fmt) and fmt[start - 1] == '"' and fmt[end] == '"'
-        return 'x' if quoted else 'null'
+        if quoted:
+            return 'x'
+        key_m = re.search(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*$', fmt[:start])
+        key = key_m.group(1) if key_m else None
+        return 'null' if key in nullable else 'true'
     return _CONV.sub(repl, fmt)
 
 def load_fake_state():
@@ -160,7 +177,7 @@ def check_role(role, c_path, fake_state):
     fails = []
     try:
         fmt = extract_format(c_path)
-        obj = json.loads(fill_format(fmt))
+        obj = json.loads(fill_format(fmt, role))
     except Exception as e:
         print('FAIL %s: %s' % (c_path, e))
         return False
