@@ -855,7 +855,13 @@ static int hex_digit(char c)
  * and a browser sends that as %3A - undecoded it reaches gf_ip_valid() as three
  * characters and every bench address is rejected. '+' is deliberately left
  * alone: nothing on this page wants a leading or embedded space, and turning it
- * into one would change what an existing password means.
+ * into one would change what an existing password means. %00 is left literal
+ * too: decoded, it would end the value early and hand the caller a silently
+ * truncated string.
+ *
+ * A value too long for `out` returns false, which every caller reads as "field
+ * absent". Size the buffer for the longest ENCODED value a field can carry, or
+ * a typo becomes a missing field rather than an error.
  * ponytail: %XX only, no '+'. Decode it too if a field ever needs a space. */
 static bool form_field(const char *body, const char *name, char *out, size_t out_len)
 {
@@ -876,7 +882,8 @@ static bool form_field(const char *body, const char *name, char *out, size_t out
             for (size_t i = 0; i < len; i++) {
                 int hi, lo;
                 if (v[i] == '%' && i + 2 < len &&
-                    (hi = hex_digit(v[i + 1])) >= 0 && (lo = hex_digit(v[i + 2])) >= 0) {
+                    (hi = hex_digit(v[i + 1])) >= 0 && (lo = hex_digit(v[i + 2])) >= 0 &&
+                    (hi | lo) != 0) {   /* %00 would end the string early, silently */
                     out[o++] = (char)(hi * 16 + lo);
                     i += 2;
                 } else {
@@ -1008,8 +1015,11 @@ static esp_err_t cal_tank_post(httpd_req_t *req)
         return bad(req, "rejected: empty must exceed full, and full must clear the blind zone");
     }
 
-    /* Only the sump form carries this one, so its absence is not an error. */
-    char rs[8];
+    /* Only the sump form carries this one, so its absence is not an error - and
+     * for the same reason rs[] is far wider than the five digits a legal range
+     * needs. A value too long for it would read as absent, and the save would
+     * quietly do nothing instead of saying no. */
+    char rs[16];
     if (form_field(body, "range", rs, sizeof(rs))) {
         unsigned r = (unsigned)strtoul(rs, NULL, 10);
         if (cal_set_press_range((cal_tank_t)idx, (uint16_t)r) != ESP_OK) {
@@ -1092,12 +1102,18 @@ static const char *gf_key_i(int i) { return cal_gf_key((cal_gf_t)i); }
 
 static esp_err_t cal_gf_post(httpd_req_t *req)
 {
-    char body[128], f[8], ip[24];
+    /* ip[] is bigger than the 24 cal_set_gf_ip() will accept, on purpose. The
+     * input has no maxlength, and form_field() reports a value that does not fit
+     * as absent - which here means "clear the node". One digit too many would
+     * then unconfigure it behind a 303 that reads as a successful save. With
+     * room to spare, an over-long address reaches cal_set_gf_ip() and is
+     * rejected out loud. */
+    char body[128], f[8], ip[32];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
     if (!form_field(body, "node", f, sizeof(f))) return bad(req, "need node");
     int idx = key_index(f, gf_key_i, CAL_GF_COUNT);
     if (idx < 0) return bad(req, "unknown node");
-    if (!form_field(body, "ip", ip, sizeof(ip))) ip[0] = '\0';   /* empty field = clear */
+    if (!form_field(body, "ip", ip, sizeof(ip))) ip[0] = '\0';   /* no field at all = clear */
 
     /* Trim the spaces a phone keyboard adds either side of a typed address. */
     char *q = ip; while (*q == ' ') q++;

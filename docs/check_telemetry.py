@@ -155,6 +155,19 @@ def main():
                 if k not in n:
                     bad.append('nodes[%d].%s' % (i, k))
 
+        # The two Wi-Fi nodes carry an address and the firmware they answered
+        # with; /cal shows the address and the dashboard shows the version. This
+        # cannot go in the loop above - 0x02-0x04 are on RS485 and have neither.
+        by_id = dict((n.get('id'), n) for n in doc['nodes'])
+        for nid in ('0x05', '0x06'):
+            node = by_id.get(nid)
+            if node is None:
+                bad.append('nodes[] has no %s entry' % nid)
+                continue
+            for k in ('ip', 'fw'):
+                if k not in node:
+                    bad.append('nodes[%s].%s' % (nid, k))
+
     # Every tank state the firmware can emit must be one the dashboard handles.
     dash = read(DASH)
     for word in sorted(TANK_STATES):
