@@ -113,7 +113,8 @@ int main(int argc, char **argv) {
         gf_sump_t fs = {0}; gf_util_t fu = {0};
         CHECK(gf_parse_sump(b1, &fs)); CHECK(gf_parse_util(b2, &fu));
     }
-    printf(fails ? "check_gf parse: %%d FAILED\n" : "check_gf parse: OK\n", fails);
+    const char *label = (argc >= 3) ? "check_gf parse+fake" : "check_gf parse";
+    printf(fails ? "%%s: %%d FAILED\n" : "%%s: OK\n", label, fails);
     return fails ? 1 : 0;
 }
 '''

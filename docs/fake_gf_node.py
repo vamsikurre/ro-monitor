@@ -34,7 +34,12 @@ def coerce(role, k, v):
     # at the bench fails loudly here instead of shipping a body the hub's
     # parser silently drops with just an unhelpful log line.
     if k in ('bore_mv', 'sump_mv'):
-        return [int(x) for x in v.split(',')]
+        vals = [int(x) for x in v.split(',')]
+        if len(vals) != 3:
+            raise ValueError('%s needs exactly 3 values, got %d' % (k, len(vals)))
+        if any(x < 0 or x > 65535 for x in vals):
+            raise ValueError('%s values must be 0-65535' % k)
+        return vals
     if k in ('sump_on', 'sht_ok'):
         return v not in ('0', 'false', '')
     if k == 'rwt_floty':
