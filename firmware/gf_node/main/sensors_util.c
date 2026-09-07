@@ -15,29 +15,22 @@
  * appearing here is a defect.
  *
  * Pedestal reasoning, carried over from firmware/hub_prod/main/app_sensors.c's
- * ct_read_deci_amps() but landing differently here: that function refuses to
- * report a current at all when the bias pedestal is not centred where a
- * populated divider should sit, because a floating pin's large RMS looks
- * exactly like a running motor - the worst failure for a dry-run detector.
- * This file cannot take that option. The wire contract (spec 4.2) requires
- * bore_mv/sump_mv to be plain integers 0-65535, never null - the hub rejects
- * the whole payload otherwise - and this file transmits only the RMS-about-
- * the-mean, never the mean itself, so there is no absolute pedestal level
- * left for the hub to sanity-check on the far end either. The refusal has to
- * happen structurally instead: RMS is taken about the MEASURED mean, not an
- * assumed 1650 mV, so a socket with a clamp plugged in and a socket with the
- * bias divider populated but no clamp both read as a small, quiet number
- * (spec's own words: "a few millivolts of noise") regardless of where
- * exactly that divider's real centre sits - the hub's noise floor on its own
- * end is what turns that into "no clamp" rather than "0 A". The one case
- * this cannot rescue is a channel with no bias network built AT ALL (an ADC
- * pin with nothing but ESP32-internal leakage pulling it around) - on this
- * board that is not a real state today, since every one of the six sockets
- * has its divider populated even where the clamp itself is not (the sump's
- * third channel). If a board is ever built with a socket's divider missing,
- * this file has no way to tell that apart from a small running current at
- * the protocol level; that is a hardware-population invariant this code
- * relies on, not something firmware can detect from six numbers.
+ * ct_read_deci_amps(): that function refuses to report a current at all when
+ * the bias pedestal is not centred where a healthy divider should sit,
+ * because a genuinely floating pin swings widely on mains coupling and
+ * produces a large RMS that reads exactly like a running motor - the worst
+ * failure for a dry-run detector. This file's rms_mv() mirrors that check
+ * (min/max midpoint against a plausible band, PEDESTAL_MIN_MV/MAX_MV below)
+ * rather than skipping it, even though the wire contract (spec 4.2) gives it
+ * no null to report through: bore_mv/sump_mv must be plain integers
+ * 0-65535, and the hub rejects the whole payload otherwise. It reports 0 mV
+ * instead - not "0 A running," but the same "not measurable" the hub's own
+ * noise floor already reads as "no clamp fitted" for an ordinary empty
+ * socket (WIRING.md 11.3: an empty socket floats near 0 mV too, since the
+ * bias rail reaches the pin only through the plugged clamp's own winding).
+ * A false "borewell running" is not cosmetic here - it feeds the run-hour
+ * ledger and would hide a borewell that is actually dead, which is worse
+ * than reporting nothing.
  */
 #include <math.h>
 #include <stdio.h>
@@ -59,6 +52,18 @@ static const char *TAG = "util";
 
 #define RMS_SAMPLES     400     /* 200 ms at 500 us = ten 50 Hz cycles, as the hub */
 #define RMS_INTERVAL_US 500
+
+/* All six channels share one bias rail (WIRING.md 11.3): 10k/10k off 3V3,
+ * same values and same 1650 mV nominal centre as the hub's own two CT
+ * channels (app_priv.h's CT_PEDESTAL_MIN/MAX_MV) - it is the identical
+ * divider, just fanned out to six sockets instead of two. +-100 mV covers
+ * resistor tolerance and each channel's own ~1060 ohm series path (1k plus
+ * the clamp winding's DC resistance, WIRING.md's bench figure); the outer
+ * +-300 mV is the hub's own extra slack for whatever the bench hasn't
+ * caught, carried over unchanged since nothing about fanning the same rail
+ * out further tightens the tolerance. */
+#define PEDESTAL_MIN_MV 1250    /* 1650 - 100 - 300 */
+#define PEDESTAL_MAX_MV 2050    /* 1650 + 100 + 300 */
 
 /* Channel order = header order = spec 4.3. Six channels at 200 ms each is
  * 1.2 s of sensors_sample() - inside the 2 s SAMPLE_PERIOD_MS (gf.h) with
@@ -91,14 +96,30 @@ static uint32_t read_mv(adc_channel_t ch)
 /* RMS about the measured mean, so the bias pedestal cancels whatever its
  * exact value is - the divider's real centre depends on resistor tolerance
  * and on the clamp's own loading, same reasoning as the hub's
- * ct_read_deci_amps(). Raw mV only: the hub applies A/V, turns and the noise
- * floor; see the header comment for what an empty socket and a missing
- * divider each look like on the wire. */
+ * ct_read_deci_amps(). But that mean is only trustworthy to average about if
+ * the pedestal is actually there: min/max are tracked in the same pass (no
+ * second sampling window - six channels already spend 1.2 s of the 2 s
+ * budget, see the comment below), and if their midpoint falls outside
+ * PEDESTAL_MIN_MV/MAX_MV the channel is reported as 0 mV without ever
+ * computing an RMS from it - see the header comment for why a wrong answer
+ * here is worse than none. */
 static uint16_t rms_mv(adc_channel_t ch)
 {
     static int32_t s[RMS_SAMPLES];
     int64_t sum = 0;
-    for (int i = 0; i < RMS_SAMPLES; i++) { s[i] = (int32_t)read_mv(ch); sum += s[i]; esp_rom_delay_us(RMS_INTERVAL_US); }
+    uint32_t lo = 5000, hi = 0;
+    for (int i = 0; i < RMS_SAMPLES; i++) {
+        uint32_t v = read_mv(ch);
+        s[i] = (int32_t)v;
+        sum += v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        esp_rom_delay_us(RMS_INTERVAL_US);
+    }
+    uint32_t mid = (lo + hi) / 2;
+    if (mid < PEDESTAL_MIN_MV || mid > PEDESTAL_MAX_MV) {
+        return 0;
+    }
     int32_t mean = (int32_t)(sum / RMS_SAMPLES);
     double acc = 0;
     for (int i = 0; i < RMS_SAMPLES; i++) { double d = (double)(s[i] - mean); acc += d * d; }
