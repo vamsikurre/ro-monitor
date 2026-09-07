@@ -1,0 +1,6 @@
+build/
+build_sump/
+build_util/
+sdkconfig
+sdkconfig.old
+dependencies.lock

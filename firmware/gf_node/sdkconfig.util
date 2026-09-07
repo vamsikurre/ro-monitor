@@ -1,0 +1,6 @@
+# Second build's-worth of overrides, layered on sdkconfig.defaults via
+# SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.util" (or -B build_util,
+# see README) to build the utility-room role without touching the default
+# sump config.
+CONFIG_GF_ROLE_UTILITY=y
+CONFIG_GF_STATIC_IP="192.168.1.52"

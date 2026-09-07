@@ -1,0 +1,33 @@
+menu "Ground-floor node"
+
+    choice GF_ROLE
+        prompt "Role"
+        default GF_ROLE_SUMP
+        config GF_ROLE_SUMP
+            bool "Sump level node 0x05"
+        config GF_ROLE_UTILITY
+            bool "Utility room node 0x06"
+    endchoice
+
+    config GF_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "changeme"
+    config GF_WIFI_PASS
+        string "Wi-Fi password"
+        default "changeme"
+    config GF_STATIC_IP
+        string "Static IP (what you type on the hub's /cal)"
+        default "192.168.1.51"
+    config GF_GATEWAY
+        string "Gateway"
+        default "192.168.1.1"
+    config GF_NETMASK
+        string "Netmask"
+        default "255.255.255.0"
+    config GF_RWT_FLOTY_WIRED
+        bool "RWT floaty opto is wired to GPIO 26 (utility node)"
+        default n
+        help
+            Off until the Astero's TWT FLOTY loop voltage has been metered and
+            an optocoupler fitted. While off the node reports rwt_floty:null.
+endmenu
