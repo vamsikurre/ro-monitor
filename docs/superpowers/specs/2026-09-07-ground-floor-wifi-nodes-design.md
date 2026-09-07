@@ -11,7 +11,7 @@ terrace hub, and shown on the dashboard and in RainMaker:
 
 | Node | Where | Reads |
 | :--- | :--- | :--- |
-| `0x05` Sump | Sump manhole | AJ-SR04M ultrasonic: distance to water |
+| `0x05` Sump | Sump manhole | AJ-SR04M ultrasonic, **or** a 4-20 mA submersible pressure transducer on the same `J-LOOP` / `J-PRESS` provision the tank nodes carry (`WIRING.md` §9.4) |
 | `0x06` Utility | Motor starter panel | 3 × CT on the borewell (one per phase), 2 × CT on the sump motor (two phases), sump motor **PUMP ON** dry contact, RWT floaty, SHT30 temperature and humidity |
 
 No pump control. No relay board. The 4-channel relay interlocks in
@@ -71,12 +71,29 @@ in NVS and is set from `/cal`, so reflashing a node never loses a number.
 
 ```json
 {"id":5,"fw":"a3cb57d","uptime_s":3840,"rssi":-64,
- "distance_mm":1750,"quality":95,"status":"OK"}
+ "source":"ultrasonic","distance_mm":1750,"quality":95,"status":"OK",
+ "loop_ua":null}
 ```
 
-`status` ∈ `OK | BLIND | NO_ECHO | HW_FAULT`, the same `sensor_status_t` the
-RS485 tank nodes use. The hub computes percent from a new `CAL_TANK_SUMP`
-entry (full mm, empty mm) exactly as for the other tanks.
+```json
+{"id":5,"fw":"a3cb57d","uptime_s":3840,"rssi":-64,
+ "source":"pressure","distance_mm":null,"quality":null,"status":"OK",
+ "loop_ua":11200}
+```
+
+- `source` follows the `J-PRESS` shunt: fitted = `pressure`, off =
+  `ultrasonic`. Read once at boot, like `ro_node.ino`.
+- `status` ∈ `OK | BLIND | NO_ECHO | HW_FAULT`, the same `sensor_status_t` the
+  RS485 tank nodes use. On the pressure source `HW_FAULT` means the loop is
+  outside 3.5–21 mA: open, unpowered, shorted or miswired (§9.4.4 of
+  `WIRING.md`).
+- `loop_ua` is the raw loop current. The **hub** converts it, so the
+  transducer's range is a `/cal` number and not a node build constant:
+  `head_mm = (loop_ua − 4000) × range_mm / 16000`, then the same
+  distance-alike convention as the tank nodes, `distance = range − head`,
+  so the existing full/empty calibration applies unchanged (§9.4.1).
+- Percent from a new `CAL_TANK_SUMP` entry: full mm, empty mm, and
+  `press_range_mm` (0 = ultrasonic only).
 
 ### 4.2 Utility `0x06`
 
@@ -100,12 +117,25 @@ entry (full mm, empty mm) exactly as for the other tanks.
 | :--- | :---: | :--- | :---: |
 | `BORE_CT_L1/L2/L3` | 32 / 33 / 34 (ADC1) | `TRIG` | 5 |
 | `SUMP_CT_A/B` | 35 / 36 (ADC1) | `ECHO` (via 1 k / 2 k divider) | 18 |
-| `PUMP_ON` (pull-up) | 25 | | |
-| `RWT_FLOTY` opto (pull-up) | 26 | | |
+| `PUMP_ON` (pull-up) | 25 | `J-LOOP` pin 2, loop sense (ADC1) | 34 |
+| `RWT_FLOTY` opto (pull-up) | 26 | `J-PRESS` shunt to GND (pull-up) | 25 |
 | SHT30 `SDA` / `SCL` | 21 / 22 | | |
 
-GPIO 39 stays free as the sixth ADC1 channel. CT bias network per channel as
-`WIRING.md` §11.3 / §14.1.
+GPIO 39 stays free on the utility node as the sixth ADC1 channel. CT bias
+network per channel as `WIRING.md` §11.3 / §14.1.
+
+**Sump node loop provision**, copied from `WIRING.md` §9.4.2 with the ADC
+reference changed: `J-LOOP` 1×3 (`12V` / sense / `GND`), 100 R 1 % sense
+resistor across pins 2–3, 1 k + 100 nF from the sense node to GPIO 34.
+4 mA = 0.40 V, 20 mA = 2.00 V, read at 11 dB attenuation with the eFuse ADC
+calibration, well inside the ESP32's linear band. `J-PRESS` 1×2 shorts
+GPIO 25 to GND. Both headers are soldered whether or not a transducer is
+ever bought.
+
+**The sump node is therefore powered 230 V → 12 V module → buck → 5 V**, not
+the 5 V-only HLK-20M5 in the old §11.1: a two-wire loop transducer needs the
+12 V, and it is the same rail arrangement the tank nodes use. `J-LOOP` pin 1
+takes the 12 V; the ESP32 and the AJ-SR04M take the buck's 5 V.
 
 ## 5. Hub state and telemetry
 
@@ -131,7 +161,7 @@ char            sump_fw[16], utility_fw[16];
 `tanks.sump`, `pumps.borewell`, `pumps.sump_motor`, `aster.rwt_floty`,
 `nodes[0x05]`, `nodes[0x06]` — and adds:
 
-```
+```text
 motors.borewell   {amps, phases:[..], imbalance_pct, running}
 motors.sump_motor {amps, phases:[..], running}
 env.utility_room  {t, rh, state, src:"SHT30 . Node 0x06", age_s}
@@ -145,7 +175,9 @@ nodes[]           + "ip", "fw"
 - **New fieldset "Ground floor nodes"**: Sump node IP, Utility node IP. Text,
   dotted-quad, empty = not fitted. NVS keys `gf_sump_ip`, `gf_util_ip`.
   `POST /api/cal/gf`.
-- **Tank levels** gains a Sump row (full mm, empty mm).
+- **Tank levels** gains a Sump row: full mm, empty mm, and transducer range
+  mm (0 when the ultrasonic is the source). The page shows which source the
+  node reported so a wrong shunt is visible from the roof, not the manhole.
 - **Current clamps** gains Borewell and Sump motor rows: amps/V ×100, turns,
   run threshold dA, over-current dA.
 
@@ -182,13 +214,16 @@ One ESP-IDF project, role selected in menuconfig
   **and** it has served one `/api/telemetry`; otherwise the bootloader rolls
   back on the next reset. Push from any LAN PC:
 
-  ```
+  ```sh
   curl --data-binary @build/gf_node.bin http://192.168.1.x/ota
   ```
+
 - **Version** = `git describe --always --tags --dirty` into `PROJECT_VER`, as
   the hub does. Reported in `fw`.
-- **Sensors.** Sump: AJ-SR04M trigger/echo with the same blind-zone and
-  quality logic as `ro_node.ino`. Utility: ADC1 RMS over one mains cycle per
+- **Sensors.** Sump: `J-PRESS` read at boot selects the source. Ultrasonic:
+  AJ-SR04M trigger/echo with the same blind-zone and quality logic as
+  `ro_node.ino`. Pressure: 8-sample ADC average per cycle on GPIO 34,
+  reported as microamps, with the 3.5–21 mA sanity band from `ro_node.ino`. Utility: ADC1 RMS over one mains cycle per
   channel, SHT30 over I²C, two digital inputs.
 
 ## 10. Testing
@@ -206,6 +241,8 @@ One ESP-IDF project, role selected in menuconfig
 - `RS485_PROTOCOL.md` §5: push → pull, final JSON, GPIO table.
 - `WIRING.md` §11: three CTs borewell, two CTs + `PUMP ON` sump motor, SHT30,
   no relay board, the Astero terminal-strip findings, the meter-first rule.
+  §11.1: 12 V supply, `J-LOOP` / `J-PRESS` on the sump node, cross-reference
+  §9.4 rather than repeating it.
 - `DASHBOARD_AND_RAINMAKER.md`: new parameters and the utility room card.
 - `firmware/hub_prod/README.md`: ground-floor fieldset.
 - `firmware/gf_node/README.md`: build, menuconfig, flash, OTA.
