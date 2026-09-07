@@ -54,5 +54,91 @@ def main():
         print('gcc refused the extracted code -- that is the finding.'); return 1
     return subprocess.call([exe])
 
+GF = 'firmware/hub_prod/main/app_gf.c'
+GF_BEGIN, GF_END = '/* GF_PARSE_BEGIN */', '/* GF_PARSE_END */'
+
+PARSE_HARNESS = r'''
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include "cJSON.h"
+typedef enum { SENSOR_OK=0, SENSOR_BLIND=1, SENSOR_NO_ECHO=2, SENSOR_HW_FAULT=3 } sensor_status_t;
+#define GF_POLL_MS 5000
+#define GF_REPROBE_MS 30000
+#define GF_OFFLINE_MISSES 3
+typedef struct { bool valid; bool online; uint8_t misses; int64_t last_ok_us; int64_t next_poll_us;
+                 char fw[16]; int8_t rssi; uint32_t uptime_s; } gf_link_t;
+typedef struct { gf_link_t link; bool pressure; uint16_t distance_mm; uint8_t quality;
+                 sensor_status_t sensor; uint32_t loop_ua; } gf_sump_t;
+typedef struct { gf_link_t link; uint16_t bore_mv[3]; uint16_t sump_mv[3]; bool sump_on;
+                 int8_t rwt_floty; int16_t temp_deci_c; uint16_t hum_deci_pct; bool sht_ok; } gf_util_t;
+%s
+static int fails = 0;
+#define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
+int main(void) {
+    gf_sump_t s = {0};
+    CHECK(gf_parse_sump("{\"id\":5,\"fw\":\"a3cb57d\",\"uptime_s\":3840,\"rssi\":-64,"
+                        "\"source\":\"ultrasonic\",\"distance_mm\":1750,\"quality\":95,\"status\":\"OK\","
+                        "\"loop_ua\":null}", &s));
+    CHECK(!s.pressure && s.distance_mm == 1750 && s.quality == 95 && s.sensor == SENSOR_OK && s.loop_ua == 0);
+    CHECK(strcmp(s.link.fw, "a3cb57d") == 0 && s.link.rssi == -64 && s.link.uptime_s == 3840);
+    CHECK(gf_parse_sump("{\"id\":5,\"fw\":\"x\",\"uptime_s\":1,\"rssi\":-70,\"source\":\"pressure\","
+                        "\"distance_mm\":null,\"quality\":null,\"status\":\"HW_FAULT\",\"loop_ua\":2100}", &s));
+    CHECK(s.pressure && s.distance_mm == 0 && s.loop_ua == 2100 && s.sensor == SENSOR_HW_FAULT);
+    CHECK(!gf_parse_sump("{\"id\":6,\"fw\":\"x\"}", &s));          /* wrong node */
+    CHECK(!gf_parse_sump("{\"id\":5,\"fw\":\"x\"", &s));            /* truncated */
+    gf_util_t u = {0};
+    CHECK(gf_parse_util("{\"id\":6,\"fw\":\"b\",\"uptime_s\":9,\"rssi\":-68,\"bore_mv\":[412,405,398],"
+                        "\"sump_mv\":[398,0,0],\"sump_on\":true,\"rwt_floty\":null,"
+                        "\"t_deci_c\":312,\"rh_deci_pct\":548,\"sht_ok\":true}", &u));
+    CHECK(u.bore_mv[0] == 412 && u.bore_mv[2] == 398 && u.sump_mv[0] == 398 && u.sump_mv[2] == 0);
+    CHECK(u.sump_on && u.rwt_floty == -1 && u.temp_deci_c == 312 && u.hum_deci_pct == 548 && u.sht_ok);
+    CHECK(gf_parse_util("{\"id\":6,\"fw\":\"b\",\"uptime_s\":9,\"rssi\":-68,\"bore_mv\":[0,0,0],"
+                        "\"sump_mv\":[0,0,0],\"sump_on\":false,\"rwt_floty\":false,"
+                        "\"t_deci_c\":0,\"rh_deci_pct\":0,\"sht_ok\":false}", &u));
+    CHECK(u.rwt_floty == 0 && !u.sht_ok);
+    CHECK(!gf_parse_util("{\"id\":6,\"fw\":\"b\",\"bore_mv\":[1,2]}", &u));   /* short array */
+    /* latch: 3 misses to offline, reprobe slower, first reply restores */
+    gf_link_t l = {0}; int64_t t = 1000000;
+    gf_link_result(&l, true, t);  CHECK(l.online && l.valid && l.misses == 0 && l.next_poll_us == t + 5000000LL);
+    gf_link_result(&l, false, t); CHECK(l.online && l.misses == 1 && l.next_poll_us == t + 5000000LL);
+    gf_link_result(&l, false, t); CHECK(l.online && l.misses == 2);
+    gf_link_result(&l, false, t); CHECK(!l.online && l.misses == 3 && l.next_poll_us == t + 30000000LL);
+    gf_link_result(&l, false, t); CHECK(!l.online && l.misses == 4 && l.next_poll_us == t + 30000000LL);
+    gf_link_result(&l, true, t + 7); CHECK(l.online && l.misses == 0 && l.last_ok_us == t + 7 && l.next_poll_us == t + 7 + 5000000LL);
+    printf(fails ? "check_gf parse: %%d FAILED\n" : "check_gf parse: OK\n", fails);
+    return fails ? 1 : 0;
+}
+'''
+
+def idf_cjson():
+    idf = os.environ.get('IDF_PATH') or 'C:/esp/v5.4.4/esp-idf'
+    d = os.path.join(idf, 'components', 'json', 'cJSON')
+    if not os.path.isfile(os.path.join(d, 'cJSON.c')):
+        # the layout above is this machine's default; if IDF_PATH points
+        # somewhere else entirely, look for cJSON anywhere under C:\esp
+        for root, _, files in os.walk('C:/esp'):
+            if 'cJSON.c' in files and root.endswith('cJSON'):
+                return root
+        return None
+    return d
+
+def main_parse():
+    src = io.open(GF, encoding='utf-8').read()
+    if GF_BEGIN not in src or GF_END not in src:
+        print('markers %s / %s not found in %s' % (GF_BEGIN, GF_END, GF)); return 1
+    cj = idf_cjson()
+    if cj is None:
+        print('cJSON.c not found - set IDF_PATH'); return 1
+    block = src[src.index(GF_BEGIN) + len(GF_BEGIN):src.index(GF_END)]
+    d = tempfile.mkdtemp()
+    c_path, exe = os.path.join(d, 'gfp.c'), os.path.join(d, 'gfp.exe')
+    io.open(c_path, 'w', encoding='utf-8').write(PARSE_HARNESS % block)
+    if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-I', cj, '-o', exe, c_path,
+                        os.path.join(cj, 'cJSON.c')]) != 0:
+        print('gcc refused the extracted parser -- that is the finding.'); return 1
+    return subprocess.call([exe])
+
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main() or main_parse())

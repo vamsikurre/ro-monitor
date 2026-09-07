@@ -52,6 +52,7 @@
 #include <esp_rmaker_utils.h>
 
 #include "app_cal.h"
+#include "app_gf.h"
 #include "app_priv.h"
 #include "app_rs485.h"
 #include "app_sensors.h"
@@ -1833,10 +1834,16 @@ void app_main(void)
     s_state.rwt.pct = s_state.twt.pct = s_state.dosing.pct = -1;
     s_state.hpp.deci_amps = s_state.rwp.deci_amps = -1;
     s_state.ro_room.fault = s_state.battery_room.fault = true;
+    s_state.sump.pct = -1;
+    s_state.borewell.deci_amps = s_state.sump_motor.deci_amps = -1;
+    for (int i = 0; i < 3; i++) s_state.borewell.phase_da[i] = s_state.sump_motor.phase_da[i] = -1;
+    s_state.utility_room.fault = true;
+    s_state.rwt_floty = -1;
 
     ESP_ERROR_CHECK(cal_init());
     ESP_ERROR_CHECK(sensors_init());
     ESP_ERROR_CHECK(rs485_init());
+    ESP_ERROR_CHECK(gf_init());
 
     app_network_init();
 

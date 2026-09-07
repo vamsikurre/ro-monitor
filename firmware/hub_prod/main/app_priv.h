@@ -257,6 +257,15 @@ extern "C" {
 /* ------------------------------------------------------------------- cadence */
 #define POLL_CYCLE_MS           2000
 
+/* Ground-floor Wi-Fi nodes, polled by app_gf.c. Online: every 5 s. After
+ * GF_OFFLINE_MISSES consecutive misses the node is OFFLINE and probed every
+ * 30 s instead, so a dead node costs nothing; the first reply restores 5 s. */
+#define GF_POLL_MS              5000
+#define GF_REPROBE_MS           30000
+#define GF_OFFLINE_MISSES       3
+#define GF_HTTP_TIMEOUT_MS      2000
+#define GF_REPLY_MAX            512
+
 /* Periodic one-line-per-subsystem summary to the console.
  *
  * State CHANGES are logged as they happen, but during commissioning what you
@@ -510,6 +519,15 @@ typedef struct {
     uint32_t mv_hi;
 } motor_state_t;
 
+/* A remote motor read by clamps on the utility node: per-phase, so the
+ * imbalance figure exists, and "running" derived from the highest phase. */
+typedef struct {
+    bool     running;
+    int16_t  deci_amps;            /* highest phase, -1 = no clamp anywhere */
+    int16_t  phase_da[3];          /* -1 = no clamp on that channel */
+    uint8_t  imbalance_pct;        /* (max-min)/max over fitted phases, 0 if < 2 */
+} gf_motor_state_t;
+
 /* Everything the dashboard and RainMaker read. Written only by the poll task,
  * read by the web handlers — see the note on locking in app_main.c. */
 typedef struct {
@@ -518,6 +536,18 @@ typedef struct {
     int16_t         rejection_pct;  /* -1 = not computable */
     climate_state_t ro_room, battery_room;
     motor_state_t   hpp, rwp;
+
+    /* Ground floor, from nodes 0x05 and 0x06 over Wi-Fi (app_gf.c). configured
+     * = an IP is set on /cal; online = it answered within the latch. */
+    tank_state_t     sump;
+    bool             sump_pressure;         /* node reports the 4-20 mA loop, not the ultrasonic */
+    gf_motor_state_t borewell, sump_motor;
+    climate_state_t  utility_room;
+    int8_t           rwt_floty;             /* -1 unknown, 0 open, 1 closed */
+    bool             sump_configured, utility_configured;
+    bool             sump_online, utility_online;
+    int64_t          sump_last_us, utility_last_us;
+    char             sump_fw[16], utility_fw[16];
 
     bool     fan_on;
     bool     twt_float_closed;
@@ -545,13 +575,18 @@ typedef struct {
 } hub_state_t;
 
 /* One minute of history. Percentages -1 = no level, amps -1 = no clamp,
- * temperatures INT16_MIN = no reading. flags: bit0 HPP on, bit1 RWP on. */
+ * temperatures INT16_MIN = no reading. flags: bit0 HPP on, bit1 RWP on.
+ * sump/bore_da/smot_da/util_t are the ground-floor Wi-Fi nodes, same
+ * no-reading conventions as their RS485 counterparts. */
 typedef struct {
     uint32_t t;                    /* epoch seconds, 0 = clock not yet synced */
     int8_t   rwt, twt, dos;
     uint8_t  flags;
     int16_t  hpp_da, rwp_da;
     int16_t  ro_t, bat_t;
+    int8_t   sump;                 /* -1 = no level */
+    int16_t  bore_da, smot_da;     /* -1 = no clamp */
+    int16_t  util_t;               /* INT16_MIN = no reading */
 } hist_rec_t;
 
 /* Oldest first. Take hub_state_lock() around the pair, as for hub_state(). */

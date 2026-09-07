@@ -3,7 +3,7 @@
 # Two copies of a 1400-line page in a repo with this much documentation drift
 # behind it would diverge, and the divergence would show up as a wall display
 # disagreeing with a phone.
-idf_component_register(SRCS "app_main.c" "app_rs485.c" "app_sensors.c" "app_cal.c" "app_web.c"
+idf_component_register(SRCS "app_main.c" "app_rs485.c" "app_sensors.c" "app_cal.c" "app_web.c" "app_gf.c"
                        INCLUDE_DIRS ".")
 
 # ---------------------------------------------------------------------------
