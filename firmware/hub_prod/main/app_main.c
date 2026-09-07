@@ -97,6 +97,10 @@ static void history_push(const hub_state_t *s, uint32_t epoch)
     r->rwp_da = s->rwp.deci_amps;
     r->ro_t   = s->ro_room.fault ? INT16_MIN : s->ro_room.temp_deci_c;
     r->bat_t  = (!s->battery_online || s->battery_room.fault) ? INT16_MIN : s->battery_room.temp_deci_c;
+    r->sump    = (int8_t)(s->sump_online ? s->sump.pct : -1);
+    r->bore_da = s->utility_online ? s->borewell.deci_amps : -1;
+    r->smot_da = s->utility_online ? s->sump_motor.deci_amps : -1;
+    r->util_t  = (!s->utility_online || s->utility_room.fault) ? INT16_MIN : s->utility_room.temp_deci_c;
     s_hist_head = (s_hist_head + 1) % HIST_N;
     if (s_hist_count < HIST_N) s_hist_count++;
 }
@@ -140,6 +144,8 @@ static void diff_events(const hub_state_t *was, const hub_state_t *now)
     EDGE(rwt_online,     EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_RWT);
     EDGE(twt_online,     EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_TWT);
     EDGE(battery_online, EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_BATTERY);
+    EDGE(sump_online,    EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_SUMP);
+    EDGE(utility_online, EVT_NODE_ON,  EVT_NODE_OFF,  NODE_ADDR_UTILITY);
     EDGE(alarm_active,   EVT_ALARM_ON, EVT_ALARM_OFF, 0);
     EDGE(lps_active,     EVT_LPS_ON,   EVT_LPS_OFF,   0);
     EDGE(overcurrent,    EVT_OC_ON,    EVT_OC_OFF,    0);
@@ -1077,6 +1083,77 @@ static void read_climate_node(hub_state_t *s)
     }
 }
 
+/*
+ * Ground floor. The gf task keeps its own snapshot; this copies it into the
+ * cycle's state and applies calibration, so everything downstream (telemetry,
+ * history, events, cloud, alerts) sees ordinary hub_state_t fields.
+ */
+static void gf_apply(hub_state_t *s)
+{
+    gf_sump_t gs; gf_util_t gu;
+    gf_snapshot(&gs, &gu);
+
+    /* ---- sump 0x05 ---- */
+    s->sump_configured = cal_gf_ip(CAL_GF_SUMP)[0] != '\0';
+    s->sump_online     = s->sump_configured && gs.link.online;
+    s->sump_last_us    = gs.link.last_ok_us;
+    strncpy(s->sump_fw, gs.link.fw, sizeof(s->sump_fw) - 1);
+    if (s->sump_configured && gs.link.valid) {
+        const cal_tank_cfg_t *c = cal_tank(CAL_TANK_SUMP);
+        s->sump_pressure = gs.pressure;
+        uint16_t dist = gs.pressure ? gfLoopDistanceMM(gs.loop_ua, c->press_range_mm) : gs.distance_mm;
+        s->sump.distance_mm = dist;
+        s->sump.raw_mm      = dist;
+        s->sump.quality     = gs.pressure ? 100 : gs.quality;
+        s->sump.sensor      = gs.sensor;
+        s->sump.last_ok_us  = gs.link.last_ok_us;
+        uint8_t pct = (dist == 0) ? 255 : levelPercent(dist, c->full_mm, c->empty_mm);
+        if (pct != 255 && !gs.pressure && gs.quality < MIN_LEVEL_QUALITY) pct = 255;
+        s->sump.pct = (pct == 255) ? -1 : (int16_t)pct;
+    } else {
+        s->sump.pct = -1;
+        s->sump.distance_mm = 0;
+    }
+
+    /* ---- utility 0x06 ---- */
+    s->utility_configured = cal_gf_ip(CAL_GF_UTIL)[0] != '\0';
+    s->utility_online     = s->utility_configured && gu.link.online;
+    s->utility_last_us    = gu.link.last_ok_us;
+    strncpy(s->utility_fw, gu.link.fw, sizeof(s->utility_fw) - 1);
+
+    gf_motor_state_t *bm = &s->borewell, *sm = &s->sump_motor;
+    if (s->utility_configured && gu.link.valid) {
+        const cal_ct_cfg_t *bc = cal_ct(CAL_CT_BORE), *sc = cal_ct(CAL_CT_SUMP);
+        bm->deci_amps = sm->deci_amps = -1;
+        for (int i = 0; i < 3; i++) {
+            bm->phase_da[i] = gfPhaseDeciAmps(gu.bore_mv[i], bc->amps_per_volt_x100, bc->turns);
+            sm->phase_da[i] = gfPhaseDeciAmps(gu.sump_mv[i], sc->amps_per_volt_x100, sc->turns);
+            if (bm->phase_da[i] > bm->deci_amps) bm->deci_amps = bm->phase_da[i];
+            if (sm->phase_da[i] > sm->deci_amps) sm->deci_amps = sm->phase_da[i];
+        }
+        bm->imbalance_pct = gfImbalancePct(bm->phase_da);
+        sm->imbalance_pct = gfImbalancePct(sm->phase_da);
+        /* Borewell has no contact of its own: running = drawing current. The
+         * sump motor has the Astero PUMP ON contact, which cannot be fooled by
+         * a floating channel, so the clamps there are for amps only. */
+        bm->running = s->utility_online && bm->deci_amps >= (int16_t)bc->run_deci_amps;
+        sm->running = s->utility_online && gu.sump_on;
+
+        s->utility_room.fault        = !gu.sht_ok;
+        s->utility_room.temp_deci_c  = gu.temp_deci_c;
+        s->utility_room.hum_deci_pct = gu.hum_deci_pct;
+        s->utility_room.last_ok_us   = gu.link.last_ok_us;
+        s->rwt_floty = gu.rwt_floty;
+    } else {
+        bm->running = sm->running = false;
+        bm->deci_amps = sm->deci_amps = -1;
+        for (int i = 0; i < 3; i++) bm->phase_da[i] = sm->phase_da[i] = -1;
+        bm->imbalance_pct = sm->imbalance_pct = 0;
+        s->utility_room.fault = true;
+        s->rwt_floty = -1;
+    }
+}
+
 /* ------------------------------------------------------------- the poll task */
 
 static void poll_task(void *arg)
@@ -1130,6 +1207,7 @@ static void poll_task(void *arg)
         read_tank_node(NODE_ADDR_RWT, &local.rwt, &local.rwt_online, CAL_TANK_RWT);
         read_tank_node(NODE_ADDR_TWT, &local.twt, &local.twt_online, CAL_TANK_TWT);
         read_climate_node(&local);
+        gf_apply(&local);
 
         /* Water quality is two extra frames per tank, and the node only refreshes
          * it every 10 s anyway - so asking every 2 s cycle would spend bus time to

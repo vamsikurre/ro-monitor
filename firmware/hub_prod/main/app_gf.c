@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 #include "cJSON.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -149,6 +150,91 @@ void gf_snapshot(gf_sump_t *sump, gf_util_t *util)
     xSemaphoreGive(s_mux);
 }
 
+/* One GET, body into buf. Returns bytes read, or -1. Plain HTTP on the LAN;
+ * a 2 s timeout because a node that takes longer is not answering. */
+static int gf_fetch(const char *ip_port, char *buf, size_t len)
+{
+    char url[64];
+    snprintf(url, sizeof(url), "http://%s/api/telemetry", ip_port);
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .timeout_ms = GF_HTTP_TIMEOUT_MS,
+        .method = HTTP_METHOD_GET,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (c == NULL) return -1;
+    int got = -1;
+    if (esp_http_client_open(c, 0) == ESP_OK) {
+        int64_t clen = esp_http_client_fetch_headers(c);
+        int status = esp_http_client_get_status_code(c);
+        if (status == 200 && clen != 0) {
+            int n = 0;
+            while (n < (int)len - 1) {
+                int r = esp_http_client_read(c, buf + n, (int)len - 1 - n);
+                if (r <= 0) break;
+                n += r;
+            }
+            buf[n] = '\0';
+            got = n;
+        }
+        esp_http_client_close(c);
+    }
+    esp_http_client_cleanup(c);
+    return got;
+}
+
+static void gf_poll_one(cal_gf_t which, int64_t now_us)
+{
+    /* cal_set_gf_ip() (app_cal.c) writes this string with no lock of its own,
+     * and a /cal save can race this task. Copying it here, under our mutex,
+     * rather than holding the shared pointer across the blocking HTTP call
+     * below, keeps the exposed window one strncpy long instead of up to
+     * GF_HTTP_TIMEOUT_MS. */
+    char ip[24];
+    xSemaphoreTake(s_mux, portMAX_DELAY);
+    strncpy(ip, cal_gf_ip(which), sizeof(ip) - 1);
+    ip[sizeof(ip) - 1] = '\0';
+    gf_link_t *l = (which == CAL_GF_SUMP) ? &s_sump.link : &s_util.link;
+    if (ip[0] == '\0') {
+        /* Not fitted: forget everything, so a node that is later removed from
+         * /cal does not keep showing its last reading. */
+        bool was = l->online;
+        memset(l, 0, sizeof(*l));
+        if (was) ESP_LOGI(TAG, "%s node removed from /cal", cal_gf_key(which));
+        xSemaphoreGive(s_mux);
+        return;
+    }
+    bool due = now_us >= l->next_poll_us;
+    xSemaphoreGive(s_mux);
+    if (!due) return;
+
+    static char body[GF_REPLY_MAX];
+    int n = gf_fetch(ip, body, sizeof(body));
+
+    xSemaphoreTake(s_mux, portMAX_DELAY);
+    bool was_online = l->online, ok = false;
+    if (n > 0) {
+        ok = (which == CAL_GF_SUMP) ? gf_parse_sump(body, &s_sump) : gf_parse_util(body, &s_util);
+        if (!ok) ESP_LOGW(TAG, "%s node %s: unparseable reply (%d bytes): %.80s", cal_gf_key(which), ip, n, body);
+    }
+    gf_link_result(l, ok, now_us);
+    if (ok && !was_online)  ESP_LOGI(TAG, "%s node %s answering (fw %s, rssi %d)", cal_gf_key(which), ip, l->fw, l->rssi);
+    if (!ok && was_online && !l->online) ESP_LOGW(TAG, "%s node %s offline after %d misses - probing every %d s",
+                                                   cal_gf_key(which), ip, l->misses, GF_REPROBE_MS / 1000);
+    xSemaphoreGive(s_mux);
+}
+
+static void gf_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        int64_t now = esp_timer_get_time();
+        gf_poll_one(CAL_GF_SUMP, now);
+        gf_poll_one(CAL_GF_UTIL, now);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 esp_err_t gf_init(void)
 {
     s_mux = xSemaphoreCreateMutex();
@@ -159,5 +245,6 @@ esp_err_t gf_init(void)
     ESP_LOGI(TAG, "ground-floor nodes: sump %s, utility %s",
              cal_gf_ip(CAL_GF_SUMP)[0] ? cal_gf_ip(CAL_GF_SUMP) : "not fitted",
              cal_gf_ip(CAL_GF_UTIL)[0] ? cal_gf_ip(CAL_GF_UTIL) : "not fitted");
-    return ESP_OK;   /* the task is started in Task 3 */
+    if (xTaskCreate(gf_task, "gf", 6144, NULL, 4, NULL) != pdPASS) return ESP_FAIL;
+    return ESP_OK;
 }

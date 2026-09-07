@@ -272,7 +272,7 @@ static esp_err_t favicon_get(httpd_req_t *req)
 
 /*
  * 24 h of one-minute rows, oldest first, as a compact array-of-arrays:
- *   [t, rwt%, twt%, dos%, flags, hpp_dA, rwp_dA, ro_dC, bat_dC]
+ *   [t, rwt%, twt%, dos%, flags, hpp_dA, rwp_dA, ro_dC, bat_dC, sump%, bore_dA, smot_dA, util_dC]
  * -1 / null where there was no reading. ~60 KB at full depth, so it goes out in
  * chunks rather than through a static buffer. Read-only, no password, same as
  * /api/telemetry - this is what the dashboard draws its trend strip from.
@@ -287,13 +287,14 @@ static esp_err_t history_get(httpd_req_t *req)
     uint16_t count = history_count();
     for (uint16_t i = 0; i < count; i++) {
         const hist_rec_t *r = history_at(i);
-        char ro[8], bat[8];
+        char ro[8], bat[8], ut[8];
         if (r->ro_t == INT16_MIN) snprintf(ro, sizeof ro, "null"); else snprintf(ro, sizeof ro, "%d", r->ro_t);
         if (r->bat_t == INT16_MIN) snprintf(bat, sizeof bat, "null"); else snprintf(bat, sizeof bat, "%d", r->bat_t);
-        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%d,%d,%d,%u,%d,%d,%s,%s]",
+        if (r->util_t == INT16_MIN) snprintf(ut, sizeof ut, "null"); else snprintf(ut, sizeof ut, "%d", r->util_t);
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%d,%d,%d,%u,%d,%d,%s,%s,%d,%d,%d,%s]",
                       i ? "," : "", (unsigned long)r->t, r->rwt, r->twt, r->dos, r->flags,
-                      r->hpp_da, r->rwp_da, ro, bat);
-        if (n > (int)sizeof(buf) - 80) {
+                      r->hpp_da, r->rwp_da, ro, bat, r->sump, r->bore_da, r->smot_da, ut);
+        if (n > (int)sizeof(buf) - 100) {
             hub_state_unlock();
             if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
             n = 0;
