@@ -87,12 +87,26 @@ happens at deployment.
 - [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 100 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
 - [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
 
-### 0.3.1. Programming the hub — the onboard USB is dead
+### 0.3.1. Programming the hub
 
-**As-built 2026-08-28.** The hub ESP32's onboard **CP2102 USB-serial chip is
-destroyed** — killed by reverse polarity applied to the `5V` pin. The USB socket on
-the module enumerates nothing and never will. **The only serial path to this board
-is an external FTDI adapter wired to `TX0` / `RX0`.**
+**As-built 2026-09-07: the DevKit was replaced and the onboard USB works again.**
+The original module's CP2102 USB-serial chip was destroyed on 2026-08-28 by reverse
+polarity on the `5V` pin; the ESP32 core survived and the board ran for ten days on
+the FTDI path below. The replacement pulled straight into the socketed female
+headers, so plain `idf.py -p COMx flash monitor` over the module's own USB is the
+normal route now. **TODO: record the new module's USB chip (`VID_10C4` CP210x or
+`VID_1A86` CH340) and COM port here once it has enumerated.**
+
+The replacement is a blank chip: no Wi-Fi credentials, no RainMaker claim, no tank
+calibration, no calibration password, no run-time ledger. It is a **new node** to
+RainMaker — assisted claiming issues a fresh certificate, so delete the old hub
+from the app and pair again (`DASHBOARD_AND_RAINMAKER.md`), then redo `/cal` end to
+end. Check the new module's `SP`/`SN` labels against §1 before wiring the CT header;
+DevKit variants differ in what they print there.
+
+**Fallback — external FTDI on `TX0` / `RX0`.** Kept because it is the only path if
+the USB chip is ever lost again, and because `PCB_HUB_MOTHERBOARD.md` `J_PROG`
+exists for the same reason:
 
 | | |
 | :--- | :--- |
@@ -106,19 +120,15 @@ is an external FTDI adapter wired to `TX0` / `RX0`.**
 data received`. Identical wording to a wrong-port error, which is what makes it
 confusing — the port is right, the chip is simply not listening.
 
-**Do not go looking for a CP210x port.** There is no `VID_10C4` device on this
-build; searching for one wastes time, as it did on 2026-08-28. `COM6` — the FTDI —
-is the correct and only port.
+With the FTDI path, `COM6` is the FTDI, and the module's own USB port must be left
+unplugged so the two adapters do not fight over `TX0`.
 
 **Keep the Arduino IDE closed while flashing.** Its Serial Monitor holds the port
 and produces `PermissionError(13, 'Access is denied')`.
 
 **The DevKit is socketed, not soldered** — it sits in female header strips
-(`hub_board_asbuilt_buck_headers.jpg`). So the dead CP2102 is not a permanent
-condition of this build: a replacement module pulls in and out with no desoldering,
-and the FTDI path above is a workaround by choice, not by necessity. Worth knowing
-before anyone plans around it. Re-check the module's own pin labels against §1 if
-one is ever swapped; DevKit variants differ in what they print on `SP`/`SN`.
+(`hub_board_asbuilt_buck_headers.jpg`), which is what made the 2026-09-07 swap a
+pull-and-replace with no desoldering.
 
 **Order by row pitch, not by pin count.** ESP32 DevKits are sold in more than one
 row spacing — commonly 0.9" and 1.0", some 1.1" — and the listings almost never
@@ -135,8 +145,9 @@ matching pin count and matching labels, and a narrower row pitch. It could not b
 seated. A module swap that should have taken a minute did not happen at all.
 
 **The lesson worth carrying to the PCB:** one reversed supply took out the
-programming interface of the board that runs the plant, and the board still works
-only because the ESP32 core survived. `PCB_HUB_MOTHERBOARD.md` §6 now specifies
+programming interface of the board that runs the plant, and the board kept working
+only because the ESP32 core survived. The replacement is just as unprotected —
+mark pin 1 on the `5V` header before the buck is reconnected (§0.2). `PCB_HUB_MOTHERBOARD.md` §6 now specifies
 reverse-polarity protection and a dedicated programming header for exactly this.
 
 ### 0.3.2. Reading the log while nothing is connected

@@ -1303,9 +1303,14 @@ static void poll_task(void *arg)
         hub_state_unlock();
 
         /* --- cloud --- */
-        if (local.rwt.pct >= 0) report_int(s_dev_tanks, PARAM_RWT_PCT, local.rwt.pct, &last_rwt, 1);
-        if (local.twt.pct >= 0) report_int(s_dev_tanks, PARAM_TWT_PCT, local.twt.pct, &last_twt, 1);
-        if (local.dosing.pct >= 0) report_int(s_dev_tanks, PARAM_DOS_PCT, local.dosing.pct, &last_dos, 1);
+        /* 3 %, not 1: the ultrasonic jitters a few mm, and at a 1 % deadband a
+         * level sitting on a boundary published 41/43/41/43 every 2 s cycle,
+         * twice each (value + time series). RainMaker refills the MQTT budget
+         * at one message per 5 s, so that alone drained it - "Out of MQTT
+         * Budget. Dropping publish message." within hours, 2026-09-07. */
+        if (local.rwt.pct >= 0) report_int(s_dev_tanks, PARAM_RWT_PCT, local.rwt.pct, &last_rwt, 3);
+        if (local.twt.pct >= 0) report_int(s_dev_tanks, PARAM_TWT_PCT, local.twt.pct, &last_twt, 3);
+        if (local.dosing.pct >= 0) report_int(s_dev_tanks, PARAM_DOS_PCT, local.dosing.pct, &last_dos, 3);
 
         report_bool(s_dev_ro_room, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
         report_bool(s_dev_ro_room, PARAM_RWP_ON, local.rwp.running, &last_rwp_on);
@@ -1395,7 +1400,9 @@ static void poll_task(void *arg)
             if (local.twt.pct < 0) {
                 snprintf(twt, sizeof(twt), "--");
             } else {
-                snprintf(twt, sizeof(twt), "%d%%", local.twt.pct);
+                /* The deadbanded value, not the raw one, or the string flickers
+                 * on every 1 % of jitter the tank report itself suppresses. */
+                snprintf(twt, sizeof(twt), "%d%%", last_twt);
             }
             snprintf(status, sizeof(status), "%s - TWT %s",
                      local.hpp.running ? "Producing" : "Idle", twt);

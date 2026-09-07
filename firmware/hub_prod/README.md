@@ -197,6 +197,9 @@ stand next to the tank, which a phone notification cannot give you.
 
 Values are reported **on change past a deadband**, not every cycle — fourteen
 parameters at a 2 s cadence is a lot of MQTT for readings that mostly do not move.
+Tank levels use 3 %: ultrasonic jitter straddling a 1 % boundary published every
+cycle and exhausted the RainMaker MQTT budget (refilled at one message per 5 s) —
+`Out of MQTT Budget. Dropping publish message.`, seen 2026-09-07.
 
 ## Alerts
 
