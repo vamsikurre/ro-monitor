@@ -12,7 +12,7 @@ terrace hub, and shown on the dashboard and in RainMaker:
 | Node | Where | Reads |
 | :--- | :--- | :--- |
 | `0x05` Sump | Sump manhole | AJ-SR04M ultrasonic, **or** a 4-20 mA submersible pressure transducer on the same `J-LOOP` / `J-PRESS` provision the tank nodes carry (`WIRING.md` §9.4) |
-| `0x06` Utility | Motor starter panel | 3 × CT on the borewell (one per phase), 2 × CT on the sump motor (two phases), sump motor **PUMP ON** dry contact, RWT floaty, SHT30 temperature and humidity |
+| `0x06` Utility | Motor starter panel | 3 × CT on the borewell (one per phase), 3 × CT channels on the sump motor (two clamps fitted now, third channel wired and read, clamp added later if needed), sump motor **PUMP ON** dry contact, RWT floaty, SHT30 temperature and humidity |
 
 No pump control. No relay board. The 4-channel relay interlocks in
 `WIRING.md` §11.2 are out of scope for this round and stay a Phase-2 option.
@@ -100,13 +100,17 @@ in NVS and is set from `/cal`, so reflashing a node never loses a number.
 ```json
 {"id":6,"fw":"a3cb57d","uptime_s":3840,"rssi":-68,
  "bore_mv":[412,405,398],
- "sump_mv":[0,0],"sump_on":false,
+ "sump_mv":[398,0,0],"sump_on":false,
  "rwt_floty":null,
  "t_deci_c":312,"rh_deci_pct":548,"sht_ok":true}
 ```
 
 - `bore_mv` / `sump_mv`: per-channel AC RMS millivolts as the node measured
-  them, order = clamp order on the node header.
+  them, order = clamp order on the node header. Three channels each. A channel
+  with no clamp plugged in sits at the bias pedestal and reads a few mV of
+  noise; the hub treats anything under `CT_NOISE_FLOOR_MV` as "no clamp" and
+  reports that phase as `null`, never as 0 A — the same rule the hub applies
+  to its own two channels.
 - `sump_on`: the `PUMP ON` contact.
 - `rwt_floty`: `true` closed, `false` open, `null` not wired.
 - SHT30 at I²C `0x44`, the part the hub and battery node already use.
@@ -116,13 +120,15 @@ in NVS and is set from `/cal`, so reflashing a node never loses a number.
 | Utility `0x06` | GPIO | Sump `0x05` | GPIO |
 | :--- | :---: | :--- | :---: |
 | `BORE_CT_L1/L2/L3` | 32 / 33 / 34 (ADC1) | `TRIG` | 5 |
-| `SUMP_CT_A/B` | 35 / 36 (ADC1) | `ECHO` (via 1 k / 2 k divider) | 18 |
+| `SUMP_CT_L1/L2/L3` | 35 / 36 / 39 (ADC1) | `ECHO` (via 1 k / 2 k divider) | 18 |
 | `PUMP_ON` (pull-up) | 25 | `J-LOOP` pin 2, loop sense (ADC1) | 34 |
 | `RWT_FLOTY` opto (pull-up) | 26 | `J-PRESS` shunt to GND (pull-up) | 25 |
 | SHT30 `SDA` / `SCL` | 21 / 22 | | |
 
-GPIO 39 stays free on the utility node as the sixth ADC1 channel. CT bias
-network per channel as `WIRING.md` §11.3 / §14.1.
+All six ADC1 channels on the utility node are taken: six bias networks and
+six clamp sockets are built, five clamps are fitted on day one, the sixth
+socket (sump L3) waits for a clamp. CT bias network per channel as
+`WIRING.md` §11.3 / §14.1.
 
 **Sump node loop provision**, copied from `WIRING.md` §9.4.2 with the ADC
 reference changed: `J-LOOP` 1×3 (`12V` / sense / `GND`), 100 R 1 % sense
@@ -153,7 +159,8 @@ char            sump_fw[16], utility_fw[16];
 
 - Borewell `running` = highest phase ≥ `run_deci_amps` (cal). `deci_amps` =
   highest phase. `imbalance_pct` = (max − min) / max × 100 over the phases.
-- Sump motor `running` = `sump_on`. Amps from its two clamps, same maths.
+- Sump motor `running` = `sump_on`. Amps and imbalance from whichever of its
+  three channels have a clamp; imbalance needs at least two.
 - One clamp calibration per motor (`CAL_CT_BORE`, `CAL_CT_SUMP`) applied to all
   its channels: amps per volt, turns, run threshold, over-current threshold.
 
@@ -239,7 +246,8 @@ One ESP-IDF project, role selected in menuconfig
 ## 11. Docs to update
 
 - `RS485_PROTOCOL.md` §5: push → pull, final JSON, GPIO table.
-- `WIRING.md` §11: three CTs borewell, two CTs + `PUMP ON` sump motor, SHT30,
+- `WIRING.md` §11: three CTs borewell, three CT channels + `PUMP ON` sump
+  motor (two clamps fitted), SHT30,
   no relay board, the Astero terminal-strip findings, the meter-first rule.
   §11.1: 12 V supply, `J-LOOP` / `J-PRESS` on the sump node, cross-reference
   §9.4 rather than repeating it.
