@@ -76,7 +76,7 @@ typedef struct { gf_link_t link; uint16_t bore_mv[3]; uint16_t sump_mv[3]; bool 
 %s
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
-int main(void) {
+int main(int argc, char **argv) {
     gf_sump_t s = {0};
     CHECK(gf_parse_sump("{\"id\":5,\"fw\":\"a3cb57d\",\"uptime_s\":3840,\"rssi\":-64,"
                         "\"source\":\"ultrasonic\",\"distance_mm\":1750,\"quality\":95,\"status\":\"OK\","
@@ -107,10 +107,18 @@ int main(void) {
     gf_link_result(&l, false, t); CHECK(!l.online && l.misses == 3 && l.next_poll_us == t + 30000000LL);
     gf_link_result(&l, false, t); CHECK(!l.online && l.misses == 4 && l.next_poll_us == t + 30000000LL);
     gf_link_result(&l, true, t + 7); CHECK(l.online && l.misses == 0 && l.last_ok_us == t + 7 && l.next_poll_us == t + 7 + 5000000LL);
+    if (argc >= 3) {
+        FILE *f = fopen(argv[1], "rb"); static char b1[600]; size_t n1 = fread(b1, 1, 599, f); fclose(f); b1[n1] = 0;
+        f = fopen(argv[2], "rb"); static char b2[600]; size_t n2 = fread(b2, 1, 599, f); fclose(f); b2[n2] = 0;
+        gf_sump_t fs = {0}; gf_util_t fu = {0};
+        CHECK(gf_parse_sump(b1, &fs)); CHECK(gf_parse_util(b2, &fu));
+    }
     printf(fails ? "check_gf parse: %%d FAILED\n" : "check_gf parse: OK\n", fails);
     return fails ? 1 : 0;
 }
 '''
+
+FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fake_gf_node.py')
 
 def idf_cjson():
     idf = os.environ.get('IDF_PATH') or 'C:/esp/v5.4.4/esp-idf'
@@ -124,21 +132,61 @@ def idf_cjson():
         return None
     return d
 
-def main_parse():
+def build_parse_exe():
+    """Compile PARSE_HARNESS + the extracted parser block. Returns the exe path,
+    or None (having already printed why) on failure."""
     src = io.open(GF, encoding='utf-8').read()
     if GF_BEGIN not in src or GF_END not in src:
-        print('markers %s / %s not found in %s' % (GF_BEGIN, GF_END, GF)); return 1
+        print('markers %s / %s not found in %s' % (GF_BEGIN, GF_END, GF)); return None
     cj = idf_cjson()
     if cj is None:
-        print('cJSON.c not found - set IDF_PATH'); return 1
+        print('cJSON.c not found - set IDF_PATH'); return None
     block = src[src.index(GF_BEGIN) + len(GF_BEGIN):src.index(GF_END)]
     d = tempfile.mkdtemp()
     c_path, exe = os.path.join(d, 'gfp.c'), os.path.join(d, 'gfp.exe')
     io.open(c_path, 'w', encoding='utf-8').write(PARSE_HARNESS % block)
     if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-I', cj, '-o', exe, c_path,
                         os.path.join(cj, 'cJSON.c')]) != 0:
-        print('gcc refused the extracted parser -- that is the finding.'); return 1
-    return subprocess.call([exe])
+        print('gcc refused the extracted parser -- that is the finding.'); return None
+    return exe
+
+def main_parse():
+    exe = build_parse_exe()
+    return 1 if exe is None else subprocess.call([exe])
+
+def load_fake_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('fake_gf_node', FAKE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+def main_fake():
+    """Run the actual fake-node HTTP server (once per role, in a background
+    thread) and feed its real /api/telemetry responses to the compiled
+    parsers - proof the fake is a trustworthy stand-in for real firmware."""
+    import threading, urllib.request
+    exe = build_parse_exe()
+    if exe is None:
+        return 1
+    fn = load_fake_module()
+    d = tempfile.mkdtemp()
+    paths = {}
+    for role in ('sump', 'util'):
+        fn.H.role = role
+        srv = fn.ThreadingHTTPServer(('127.0.0.1', 0), fn.H)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:%d/api/telemetry' % port, timeout=2) as r:
+                body = r.read()
+        finally:
+            srv.shutdown(); srv.server_close(); t.join(timeout=2)
+        path = os.path.join(d, role + '.json')
+        io.open(path, 'wb').write(body)
+        paths[role] = path
+    return subprocess.call([exe, paths['sump'], paths['util']])
 
 if __name__ == '__main__':
-    sys.exit(main() or main_parse())
+    sys.exit(main() or main_parse() or main_fake())

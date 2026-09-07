@@ -151,6 +151,29 @@ it survives a reflash but not a factory reset.
 
 ---
 
+## Ground-floor nodes on the bench
+
+No node hardware needed to prove the hub side:
+
+```
+python docs/fake_gf_node.py --role sump --port 8085
+python docs/fake_gf_node.py --role util --port 8086
+```
+
+On `/cal` → Ground floor nodes, enter `<PC IP>:8085` and `<PC IP>:8086`. Within
+5 s the dashboard's sump, borewell and sump-motor cards un-hatch and the node
+list shows both as Online with `fw fake`.
+
+Then: `curl "http://<PC>:8085/silent?on=1"` — after ~15 s the sump card hatches,
+the event log shows `Node offline 0x05 Sump`, the console says it is probing
+every 30 s. `curl "http://<PC>:8085/silent?on=0"` — within 30 s it is back.
+
+Clear the IP field and save: the node goes to "not fitted", cards hatch, no
+alert. The IPs are the only thing this stores; nothing else on the node side
+survives a node reflash because nothing else lives there.
+
+---
+
 ## Calibration page
 
 Three groups, all range-checked before anything is stored — a typo must not be
