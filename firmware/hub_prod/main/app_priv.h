@@ -143,6 +143,8 @@ extern "C" {
 #define NODE_ADDR_RWT           0x02
 #define NODE_ADDR_TWT           0x03
 #define NODE_ADDR_BATTERY       0x04
+#define NODE_ADDR_SUMP          0x05    /* ground floor, Wi-Fi, polled by app_gf.c */
+#define NODE_ADDR_UTILITY       0x06
 
 #define RS485_REPLY_TIMEOUT_MS  120
 #define RS485_POLL_ATTEMPTS     3
@@ -240,6 +242,17 @@ extern "C" {
 #define CT_PEDESTAL_MAX_MV      1750
 #define CT_RMS_SAMPLES          400     /* ~200 ms at 500 us — a full 10 cycles */
 #define CT_RMS_INTERVAL_US      500
+
+/* Remote clamps report raw RMS mV; a channel with no clamp sits on its bias
+ * pedestal and reads a few mV of noise. Under this it is "no clamp", reported
+ * as null - never 0 A, which is what an idle motor reads. */
+#define CT_NOISE_FLOOR_MV       15
+/* 4-20 mA loop sanity band, from ro_node.ino: under it the loop is open or
+ * unpowered, over it shorted or miswired. Neither is a level. */
+#define PRESS_MIN_UA            3500
+#define PRESS_MAX_UA            21000
+#define PRESS_RANGE_MIN_MM      500
+#define PRESS_RANGE_MAX_MM      10000
 
 /* ------------------------------------------------------------------- cadence */
 #define POLL_CYCLE_MS           2000
@@ -343,6 +356,9 @@ typedef enum {
  * Per-channel because the two pumps are not the same size. Amps x10. */
 #define OC_HPP_DECI_A_DEFAULT   170     /* 17.0 A — 1.4x the 12.2 A motor-plate I(max); WIRING.md 14.5 */
 #define OC_RWP_DECI_A_DEFAULT   90      /*  9.0 A — 1.45x the 6.2 A nameplate max; WIRING.md 14.5 */
+#define OC_BORE_DECI_A_DEFAULT  150     /* 15.0 A - no nameplate; set from the overload dial (WIRING.md 11.3.1) */
+#define OC_SUMP_DECI_A_DEFAULT  100     /* 10.0 A - 2 HP three-phase submersible */
+#define RUN_DECI_A_DEFAULT      10      /*  1.0 A - highest phase above this = running */
 /* Rated permeate output (L/h) - the skid meter says ~900 against a 1200
  * nameplate, so 900 is the default and /cal owns the real figure. */
 #define PLANT_LPH_DEFAULT       900

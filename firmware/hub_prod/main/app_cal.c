@@ -7,6 +7,7 @@
  * levelPercent() refuses to report a level it cannot justify.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -25,14 +26,18 @@ static const char *NVS_NS = "ro_cal";
  * face. The old 900 mm "empty" assumed a bracket that was never fitted and could
  * never read below ~55 % - the dosing-low alert was unreachable. */
 static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
-    [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
-    [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
-    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100, .tds_min_pct = 0 },
+    [CAL_TANK_RWT]  = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_TWT]  = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_DOS]  = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100, .tds_min_pct = 0 },
+    /* 3.5 m shaft, WIRING.md 9 (Sump). Uncalibrated until someone measures it. */
+    [CAL_TANK_SUMP] = { .full_mm = 300, .empty_mm = 3500, .tds_k_x100 = 100, .tds_min_pct = 0, .press_range_mm = 0 },
 };
 
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
-    [CAL_CT_HPP] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_HPP_DECI_A_DEFAULT },
-    [CAL_CT_RWP] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_RWP_DECI_A_DEFAULT },
+    [CAL_CT_HPP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_HPP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
+    [CAL_CT_RWP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_RWP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
+    [CAL_CT_BORE] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_BORE_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT },
+    [CAL_CT_SUMP] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_SUMP_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT },
 };
 
 static uint16_t s_fan_on_deci_c  = FAN_ON_DECI_C_DEFAULT;
@@ -42,19 +47,24 @@ static char     s_cal_pass[33]   = CAL_PASS_DEFAULT;
 static const char *s_evt_keys[CAL_EVT_COUNT]     = { "t_hpp", "t_rwp", "t_twtf", "t_fan" };
 static uint32_t    s_evt[CAL_EVT_COUNT];
 
-static const char *s_tank_keys[CAL_TANK_COUNT]   = { "rwt", "twt", "dos" };
-static const char *s_tank_labels[CAL_TANK_COUNT] = { "Raw Water", "Treated Water", "Dosing" };
-static const char *s_ct_keys[CAL_CT_COUNT]       = { "hpp", "rwp" };
+static const char *s_tank_keys[CAL_TANK_COUNT]   = { "rwt", "twt", "dos", "sump" };
+static const char *s_tank_labels[CAL_TANK_COUNT] = { "Raw Water", "Treated Water", "Dosing", "Sump" };
+static const char *s_ct_keys[CAL_CT_COUNT]       = { "hpp", "rwp", "bore", "smot" };
 static uint16_t s_plant_lph = PLANT_LPH_DEFAULT;
 static uint32_t s_runtime_s[CAL_CT_COUNT];
 static cal_day_t s_days[CAL_DAYS];
 static uint16_t  s_day_n;
-static const char *s_ct_labels[CAL_CT_COUNT]     = { "HPP", "RWP" };
+static const char *s_ct_labels[CAL_CT_COUNT]     = { "HPP", "RWP", "Borewell", "Sump motor" };
+static const char *s_gf_keys[CAL_GF_COUNT]       = { "sump", "util" };
+static const char *s_gf_nvs[CAL_GF_COUNT]        = { "gf_sump", "gf_util" };
+static char        s_gf_ip[CAL_GF_COUNT][24];    /* "255.255.255.255:65535" fits */
 
 const char *cal_tank_key(cal_tank_t t)   { return (t < CAL_TANK_COUNT) ? s_tank_keys[t] : "?"; }
 const char *cal_tank_label(cal_tank_t t) { return (t < CAL_TANK_COUNT) ? s_tank_labels[t] : "?"; }
 const char *cal_ct_key(cal_ct_t c)       { return (c < CAL_CT_COUNT) ? s_ct_keys[c] : "?"; }
 const char *cal_ct_label(cal_ct_t c)     { return (c < CAL_CT_COUNT) ? s_ct_labels[c] : "?"; }
+const char *cal_gf_key(cal_gf_t n)       { return (n < CAL_GF_COUNT) ? s_gf_keys[n] : "?"; }
+const char *cal_gf_ip(cal_gf_t n)        { return (n < CAL_GF_COUNT) ? s_gf_ip[n] : ""; }
 
 const cal_tank_cfg_t *cal_tank(cal_tank_t t) { return &s_tanks[t < CAL_TANK_COUNT ? t : 0]; }
 const cal_ct_cfg_t   *cal_ct(cal_ct_t c)     { return &s_cts[c < CAL_CT_COUNT ? c : 0]; }
@@ -111,6 +121,7 @@ esp_err_t cal_init(void)
         load_u16(h, s_tank_keys[i], "f", &s_tanks[i].full_mm);
         load_u16(h, s_tank_keys[i], "e", &s_tanks[i].empty_mm);
         load_u16(h, s_tank_keys[i], "k", &s_tanks[i].tds_k_x100);
+        load_u16(h, s_tank_keys[i], "r", &s_tanks[i].press_range_mm);
         uint16_t mp = s_tanks[i].tds_min_pct;
         load_u16(h, s_tank_keys[i], "m", &mp);
         s_tanks[i].tds_min_pct = (mp <= 100) ? (uint8_t)mp : 90;
@@ -118,9 +129,16 @@ esp_err_t cal_init(void)
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         load_u16(h, s_ct_keys[i], "s", &s_cts[i].amps_per_volt_x100);
         load_u16(h, s_ct_keys[i], "o", &s_cts[i].oc_deci_amps);
+        load_u16(h, s_ct_keys[i], "n", &s_cts[i].run_deci_amps);
         uint16_t turns = s_cts[i].turns;
         load_u16(h, s_ct_keys[i], "t", &turns);
         s_cts[i].turns = (turns >= 1 && turns <= 10) ? (uint8_t)turns : 1;
+    }
+    for (int i = 0; i < CAL_GF_COUNT; i++) {
+        size_t len = sizeof(s_gf_ip[i]);
+        if (nvs_get_str(h, s_gf_nvs[i], s_gf_ip[i], &len) != ESP_OK) {
+            s_gf_ip[i][0] = '\0';
+        }
     }
     for (int i = 0; i < CAL_EVT_COUNT; i++) {
         nvs_get_u32(h, s_evt_keys[i], &s_evt[i]);   /* absent leaves it 0 = never */
@@ -201,35 +219,29 @@ esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100, uint8_t min_pct)
     return err;
 }
 
-esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps)
+esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns,
+                     uint16_t oc_deci_amps, uint16_t run_deci_amps)
 {
-    if (c >= CAL_CT_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (amps_per_volt_x100 < 100 || amps_per_volt_x100 > 20000) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (turns < 1 || turns > 10) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (oc_deci_amps < OC_LIMIT_LOW_DECI || oc_deci_amps > OC_LIMIT_HIGH_DECI) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (c >= CAL_CT_COUNT) return ESP_ERR_INVALID_ARG;
+    if (amps_per_volt_x100 < 100 || amps_per_volt_x100 > 20000) return ESP_ERR_INVALID_ARG;
+    if (turns < 1 || turns > 10) return ESP_ERR_INVALID_ARG;
+    if (oc_deci_amps < OC_LIMIT_LOW_DECI || oc_deci_amps > OC_LIMIT_HIGH_DECI) return ESP_ERR_INVALID_ARG;
+    /* Running threshold must sit below the trip, or a motor could trip before it
+     * is ever "running", and 0 would make a floating channel a running motor. */
+    if (run_deci_amps < 1 || run_deci_amps >= oc_deci_amps) return ESP_ERR_INVALID_ARG;
 
     s_cts[c].amps_per_volt_x100 = amps_per_volt_x100;
     s_cts[c].turns = turns;
     s_cts[c].oc_deci_amps = oc_deci_amps;
+    s_cts[c].run_deci_amps = run_deci_amps;
 
     esp_err_t err = store_u16(s_ct_keys[c], "s", amps_per_volt_x100);
-    if (err == ESP_OK) {
-        err = store_u16(s_ct_keys[c], "t", turns);
-    }
-    if (err == ESP_OK) {
-        err = store_u16(s_ct_keys[c], "o", oc_deci_amps);
-    }
-    ESP_LOGI(TAG, "%s CT: %u.%02u A/V, %u turns, OC at %u.%u A",
-             s_ct_keys[c], amps_per_volt_x100 / 100, amps_per_volt_x100 % 100,
-             turns, oc_deci_amps / 10, oc_deci_amps % 10);
+    if (err == ESP_OK) err = store_u16(s_ct_keys[c], "t", turns);
+    if (err == ESP_OK) err = store_u16(s_ct_keys[c], "o", oc_deci_amps);
+    if (err == ESP_OK) err = store_u16(s_ct_keys[c], "n", run_deci_amps);
+    ESP_LOGI(TAG, "%s CT: %u.%02u A/V, %u turns, run at %u.%u A, OC at %u.%u A",
+             s_ct_keys[c], amps_per_volt_x100 / 100, amps_per_volt_x100 % 100, turns,
+             run_deci_amps / 10, run_deci_amps % 10, oc_deci_amps / 10, oc_deci_amps % 10);
     return err;
 }
 
@@ -253,6 +265,48 @@ esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c)
     if (err == ESP_OK) {
         err = store_u16("fan", "off", off_deci_c);
     }
+    return err;
+}
+
+esp_err_t cal_set_press_range(cal_tank_t t, uint16_t range_mm)
+{
+    if (t >= CAL_TANK_COUNT) return ESP_ERR_INVALID_ARG;
+    if (range_mm != 0 && (range_mm < PRESS_RANGE_MIN_MM || range_mm > PRESS_RANGE_MAX_MM)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_tanks[t].press_range_mm = range_mm;
+    ESP_LOGI(TAG, "%s transducer range: %u mm%s", s_tank_keys[t], range_mm,
+             range_mm ? "" : " (ultrasonic)");
+    return store_u16(s_tank_keys[t], "r", range_mm);
+}
+
+/* a.b.c.d or a.b.c.d:port, nothing else. "" clears. */
+static bool gf_ip_valid(const char *s)
+{
+    if (s[0] == '\0') return true;
+    unsigned a, b, c, d, port = 80; char tail[2] = "";
+    int n = sscanf(s, "%u.%u.%u.%u:%u%1s", &a, &b, &c, &d, &port, tail);
+    if (n < 4 || tail[0] != '\0') return false;
+    if (n == 4 && strchr(s, ':') != NULL) return false;
+    return a < 256 && b < 256 && c < 256 && d < 256 && port >= 1 && port <= 65535;
+}
+
+esp_err_t cal_set_gf_ip(cal_gf_t n, const char *ip)
+{
+    if (n >= CAL_GF_COUNT || ip == NULL || strlen(ip) >= sizeof(s_gf_ip[n]) || !gf_ip_valid(ip)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    strncpy(s_gf_ip[n], ip, sizeof(s_gf_ip[n]) - 1);
+    s_gf_ip[n][sizeof(s_gf_ip[n]) - 1] = '\0';
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = ip[0] ? nvs_set_str(h, s_gf_nvs[n], ip) : nvs_erase_key(h, s_gf_nvs[n]);
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;      /* clearing an unset key */
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "ground-floor %s node: %s", s_gf_keys[n], ip[0] ? ip : "not fitted");
     return err;
 }
 
@@ -384,6 +438,49 @@ int16_t rejectionPercent(uint16_t feed_ppm, uint16_t permeate_ppm)
     }
     return (int16_t)(((uint32_t)(feed_ppm - permeate_ppm) * 100U) / feed_ppm);
 }
+
+/* GF_PURE_BEGIN */
+/* 4-20 mA loop to a distance-alike figure. The node reports microamps; the
+ * transducer's full scale is a /cal number. head grows with the water, so
+ * range - head SHRINKS as the tank fills - the same direction an ultrasonic
+ * reads - and levelPercent() with the usual full/empty applies unchanged
+ * (WIRING.md 9.4.1). 0 = no usable reading: loop open, shorted or no range. */
+uint16_t gfLoopDistanceMM(uint32_t loop_ua, uint16_t range_mm)
+{
+    if (range_mm == 0) return 0;
+    if (loop_ua < PRESS_MIN_UA || loop_ua > PRESS_MAX_UA) return 0;
+    int32_t head = ((int32_t)loop_ua - 4000L) * (int32_t)range_mm / 16000L;
+    if (head < 0) head = 0;
+    if (head > (int32_t)range_mm - 1) head = (int32_t)range_mm - 1;
+    return (uint16_t)((int32_t)range_mm - head);
+}
+
+/* Raw RMS millivolts from a remote clamp to deci-amps, or -1 for "no clamp"
+ * when the channel is under the noise floor. amps = V * (A/V) / turns. */
+int16_t gfPhaseDeciAmps(uint16_t rms_mv, uint16_t amps_per_volt_x100, uint8_t turns)
+{
+    if (rms_mv < CT_NOISE_FLOOR_MV) return -1;
+    if (turns == 0) turns = 1;
+    uint32_t deci = ((uint32_t)rms_mv * amps_per_volt_x100) / (100UL * 100UL * turns);
+    /* mV/1000 V * (x100/100) A/V * 10 for deci = mv * x100 / 10000 */
+    if (deci > 9990) deci = 9990;
+    return (int16_t)deci;
+}
+
+/* (max - min) / max over the phases that have a clamp. Two or more needed. */
+uint8_t gfImbalancePct(const int16_t deci_amps[3])
+{
+    int16_t hi = -1, lo = 32767; int n = 0;
+    for (int i = 0; i < 3; i++) {
+        if (deci_amps[i] < 0) continue;
+        n++;
+        if (deci_amps[i] > hi) hi = deci_amps[i];
+        if (deci_amps[i] < lo) lo = deci_amps[i];
+    }
+    if (n < 2 || hi <= 0) return 0;
+    return (uint8_t)(((int32_t)(hi - lo) * 100) / hi);
+}
+/* GF_PURE_END */
 
 uint16_t cal_plant_lph(void)
 {

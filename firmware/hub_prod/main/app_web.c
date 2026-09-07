@@ -531,11 +531,11 @@ static esp_err_t cal_get(httpd_req_t *req)
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
-    uint16_t live[CAL_TANK_COUNT] = { s->rwt.distance_mm, s->twt.distance_mm, s->dosing.distance_mm };
-    int16_t  live_pct[CAL_TANK_COUNT] = { s->rwt.pct, s->twt.pct, s->dosing.pct };
-    uint32_t ct_lo[CAL_CT_COUNT] = { s->hpp.mv_lo, s->rwp.mv_lo };
-    uint32_t ct_hi[CAL_CT_COUNT] = { s->hpp.mv_hi, s->rwp.mv_hi };
-    int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps };
+    uint16_t live[CAL_TANK_COUNT]     = { s->rwt.distance_mm, s->twt.distance_mm, s->dosing.distance_mm, 0 };
+    int16_t  live_pct[CAL_TANK_COUNT] = { s->rwt.pct, s->twt.pct, s->dosing.pct, -1 };
+    uint32_t ct_lo[CAL_CT_COUNT] = { s->hpp.mv_lo, s->rwp.mv_lo, 0, 0 };
+    uint32_t ct_hi[CAL_CT_COUNT] = { s->hpp.mv_hi, s->rwp.mv_hi, 0, 0 };
+    int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps, -1, -1 };
     hub_state_unlock();
 
     n += snprintf(page + n, sizeof(page) - n, "<fieldset id=tanks><legend>Tank levels</legend>");
@@ -582,12 +582,14 @@ static esp_err_t cal_get(httpd_req_t *req)
             "A per V <input name=apv size=6 value='%u.%02u'> "
             "turns <input name=turns size=3 value='%u'> "
             "trip A <input name=oc size=5 value='%u.%u'> "
+            "run A <input name=run size=5 value='%u.%u'> "
             "<button>Save</button></form>",
             cal_ct_label(i), (unsigned long)ct_lo[i], (unsigned long)ct_hi[i],
             ct_a[i] < 0 ? "none (no clamp or no pedestal)" : "live",
             cal_ct_key(i),
             c->amps_per_volt_x100 / 100, c->amps_per_volt_x100 % 100,
-            c->turns, c->oc_deci_amps / 10, c->oc_deci_amps % 10);
+            c->turns, c->oc_deci_amps / 10, c->oc_deci_amps % 10,
+            c->run_deci_amps / 10, c->run_deci_amps % 10);
     }
     n += snprintf(page + n, sizeof(page) - n,
         "<p><small>An SCT-013-030 is nominally 30 A per volt, but two-point "
@@ -613,7 +615,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
 
     n += snprintf(page + n, sizeof(page) - n, "<fieldset id=wq><legend>Water quality probes</legend>");
-    for (int i = 0; i < CAL_TANK_COUNT - 1; i++) {          /* RWT, TWT - the dosing drum has none */
+    for (int i = 0; i < 2; i++) {          /* RWT, TWT - dosing and sump have no TDS probe */
         const cal_tank_cfg_t *c = cal_tank(i);
         n += snprintf(page + n, sizeof(page) - n,
             "<form method=post action='/api/cal/wq'><input type=hidden name=tank value=%d>"
@@ -843,20 +845,22 @@ static esp_err_t cal_ct_post(httpd_req_t *req)
     int idx = key_index(f, ct_key_i, CAL_CT_COUNT);
     if (idx < 0) return bad(req, "unknown clamp");
 
-    char apv[16], turns[8], oc[16];
+    char apv[16], turns[8], oc[16], run[16];
     if (!form_field(body, "apv", apv, sizeof(apv)) ||
         !form_field(body, "turns", turns, sizeof(turns)) ||
-        !form_field(body, "oc", oc, sizeof(oc))) {
-        return bad(req, "need apv, turns and oc");
+        !form_field(body, "oc", oc, sizeof(oc)) ||
+        !form_field(body, "run", run, sizeof(run))) {
+        return bad(req, "need apv, turns, oc and run");
     }
 
-    uint16_t apv_x100 = 0, oc_deci = 0;
+    uint16_t apv_x100 = 0, oc_deci = 0, run_deci = 0;
     if (!parse_x100(apv, &apv_x100)) return bad(req, "amps per volt not a number");
     if (!parse_deci(oc, &oc_deci))   return bad(req, "trip current not a number");
+    if (!parse_deci(run, &run_deci)) return bad(req, "run current not a number");
     unsigned t = (unsigned)strtoul(turns, NULL, 10);
 
-    if (cal_set_ct((cal_ct_t)idx, apv_x100, (uint8_t)t, oc_deci) != ESP_OK) {
-        return bad(req, "rejected: check A/V (1-200), turns (1-10) and trip (1.0-30.0 A)");
+    if (cal_set_ct((cal_ct_t)idx, apv_x100, (uint8_t)t, oc_deci, run_deci) != ESP_OK) {
+        return bad(req, "rejected: check A/V (1-200), turns (1-10), run (>= 0.1 A) and trip (1.0-30.0 A, above run)");
     }
     return redirect_to(req, "/cal#clamps");
 }
@@ -890,7 +894,7 @@ static esp_err_t cal_wq_post(httpd_req_t *req)
         return bad(req, "need tank, k and min");
     }
     int idx = atoi(f);
-    if (idx < 0 || idx >= CAL_TANK_COUNT - 1) return bad(req, "tank must be 0 or 1");
+    if (idx < 0 || idx > 1) return bad(req, "tank must be 0 or 1");
     /* k arrives as "1.10"; store x100. Two decimals is the resolution that matters. */
     double kd = atof(k);
     int    mp = atoi(mn);

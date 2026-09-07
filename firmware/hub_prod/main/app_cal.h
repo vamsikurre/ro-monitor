@@ -20,14 +20,23 @@ typedef enum {
     CAL_TANK_RWT = 0,
     CAL_TANK_TWT = 1,
     CAL_TANK_DOS = 2,
+    CAL_TANK_SUMP = 3,     /* ground floor, node 0x05 over Wi-Fi */
     CAL_TANK_COUNT,
 } cal_tank_t;
 
 typedef enum {
     CAL_CT_HPP = 0,
     CAL_CT_RWP = 1,
+    CAL_CT_BORE = 2,       /* node 0x06: one calibration for all three phases */
+    CAL_CT_SUMP = 3,       /* node 0x06: one calibration for all three channels */
     CAL_CT_COUNT,
 } cal_ct_t;
+
+typedef enum {
+    CAL_GF_SUMP = 0,
+    CAL_GF_UTIL = 1,
+    CAL_GF_COUNT,
+} cal_gf_t;
 
 typedef struct {
     uint16_t full_mm;    /* distance at 100 % */
@@ -42,6 +51,12 @@ typedef struct {
      * trusting a probe that is measuring air. 90 until the leads are extended
      * to the tank's low mark, then whatever level the tip actually sits at. */
     uint8_t  tds_min_pct;
+    /* Sump only. Full-scale head of a 4-20 mA submersible transducer, in mm.
+     * 0 = no transducer, the ultrasonic is the source. The node reports raw
+     * microamps and gfLoopDistanceMM() turns them into the same distance-alike
+     * figure the ultrasonic gives, so full/empty above apply unchanged
+     * (WIRING.md 9.4.1). */
+    uint16_t press_range_mm;
 } cal_tank_cfg_t;
 
 typedef struct {
@@ -51,6 +66,9 @@ typedef struct {
     uint16_t amps_per_volt_x100;
     uint8_t  turns;              /* conductor passes through the jaws; divides the result */
     uint16_t oc_deci_amps;       /* over-current alert threshold */
+    /* Highest phase at or above this = motor running. Only the remote motors
+     * use it (the hub's own pumps have contactor optos); 1.0 A default. */
+    uint16_t run_deci_amps;
 } cal_ct_cfg_t;
 
 esp_err_t cal_init(void);
@@ -62,8 +80,21 @@ const cal_ct_cfg_t   *cal_ct(cal_ct_t c);
  * to produce a calibration that reads plausibly and is wrong. */
 esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm);
 esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100, uint8_t min_pct);
-esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps);
+esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns,
+                     uint16_t oc_deci_amps, uint16_t run_deci_amps);
 esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c);
+esp_err_t cal_set_press_range(cal_tank_t t, uint16_t range_mm);
+
+/* Ground-floor node addresses. "" = not fitted: never polled, never alerted.
+ * Dotted quad, optionally ":port" - the port is for the bench fake node. */
+const char *cal_gf_ip(cal_gf_t n);
+const char *cal_gf_key(cal_gf_t n);
+esp_err_t   cal_set_gf_ip(cal_gf_t n, const char *ip);
+
+/* Pure ground-floor maths, host-tested by docs/check_gf.py. */
+uint16_t gfLoopDistanceMM(uint32_t loop_ua, uint16_t range_mm);
+int16_t  gfPhaseDeciAmps(uint16_t rms_mv, uint16_t amps_per_volt_x100, uint8_t turns);
+uint8_t  gfImbalancePct(const int16_t deci_amps[3]);
 
 /*
  * "Last seen" wall-clock stamps, in the same NVS namespace because it is already
