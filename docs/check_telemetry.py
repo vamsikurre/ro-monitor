@@ -34,6 +34,7 @@ REQUIRED = [
     'sys.uptime_s', 'sys.rssi', 'sys.fw', 'sys.reset_reason',
     'rs485.online', 'rs485.total', 'rs485.errors', 'rs485.last_poll_ms',
     'tanks.sump.pct', 'tanks.sump.distance_mm', 'tanks.sump.state', 'tanks.sump.sensor',
+    'tanks.sump.source',
     'tanks.rwt.pct', 'tanks.rwt.distance_mm', 'tanks.rwt.state', 'tanks.rwt.sensor',
     'tanks.twt.pct', 'tanks.twt.distance_mm', 'tanks.twt.state', 'tanks.twt.sensor',
     'tanks.dosing.pct', 'tanks.dosing.distance_mm', 'tanks.dosing.state', 'tanks.dosing.sensor',
@@ -50,7 +51,13 @@ REQUIRED = [
     'env.ro_room.t', 'env.ro_room.rh', 'env.ro_room.state', 'env.ro_room.src', 'env.ro_room.age_s',
     'env.battery_room.t', 'env.battery_room.rh', 'env.battery_room.fan',
     'env.battery_room.state', 'env.battery_room.src', 'env.battery_room.age_s',
+    'env.utility_room.t', 'env.utility_room.rh', 'env.utility_room.state',
+    'env.utility_room.src', 'env.utility_room.age_s',
     'motors.hpp.amps', 'motors.rwp.amps', 'motors.overcurrent',
+    'motors.borewell.amps', 'motors.borewell.phases',
+    'motors.borewell.imbalance_pct', 'motors.borewell.running',
+    'motors.sump_motor.amps', 'motors.sump_motor.phases',
+    'motors.sump_motor.imbalance_pct', 'motors.sump_motor.running',
     'nodes',
 ]
 

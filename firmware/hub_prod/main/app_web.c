@@ -8,11 +8,11 @@
  * alert list client-side. This file's job is to produce that shape faithfully;
  * changing a key here breaks a working 1400-line dashboard.
  *
- * Fields the Phase-1 hub cannot know are reported as OFFLINE rather than as
- * zeros: the ground sump, the borewell and the sump motor live on nodes 0x05 and
- * 0x06, which are Phase 2. The dashboard already renders an offline node
- * correctly, so an honest OFFLINE draws hatching and no liquid, where a zero
- * would draw an empty tank that looks measured.
+ * Fields the hub cannot know are reported as OFFLINE rather than as zeros: the
+ * ground sump, the borewell and the sump motor live on nodes 0x05 and 0x06 over
+ * Wi-Fi, and a node with no IP typed on /cal is not fitted at all. The dashboard
+ * already renders an offline node correctly, so an honest OFFLINE draws hatching
+ * and no liquid, where a zero would draw an empty tank that looks measured.
  */
 
 #include <stdio.h>
@@ -243,6 +243,44 @@ static void wq_json(char *ppm, size_t ppm_len, char *temp, size_t temp_len,
     snprintf(temp, temp_len, "%d.%d", wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
 }
 
+/* Deci-amps as JSON. Same rule as the pump amps: a channel with no clamp is -1
+ * and must reach the page as null, not as 0.0. */
+static void da_json(char *out, size_t n, int16_t da)
+{
+    if (da < 0) snprintf(out, n, "null");
+    else        snprintf(out, n, "%d.%d", da / 10, da % 10);
+}
+
+/* [4.1,4.0,null] - the three clamp channels of a remote motor. */
+static void phases_json(char *out, size_t n, const int16_t da[3])
+{
+    char a[12], b[12], c[12];
+    da_json(a, sizeof a, da[0]); da_json(b, sizeof b, da[1]); da_json(c, sizeof c, da[2]);
+    snprintf(out, n, "[%s,%s,%s]", a, b, c);
+}
+
+/* A node's firmware string is text from another device, and it lands both in
+ * this JSON and in /cal's HTML. One quote in it breaks the document and the
+ * dashboard silently drops to its demo simulator, so keep it to the characters a
+ * version string actually uses. */
+static void fw_word(char *out, size_t n, const char *fw)
+{
+    size_t o = 0;
+    for (; fw[o] && o + 1 < n; o++) {
+        char c = fw[o];
+        out[o] = (c > 0x20 && c < 0x7f && !strchr("\"\\<>&'", c)) ? c : '?';
+    }
+    out[o] = '\0';
+}
+
+/* A node with no IP typed on /cal is not fitted; a node that has one and is not
+ * answering is offline. The dashboard draws both as hatching and no value, which
+ * is the honest rendering - a zero would look measured. */
+static const char *gf_node_state(bool configured, bool online)
+{
+    return (configured && online) ? "ONLINE" : "OFFLINE";
+}
+
 /* Every browser asks for /favicon.ico on every page, unprompted, and an ESP-IDF
  * http server logs a warning for each miss:
  *
@@ -344,7 +382,7 @@ static esp_err_t events_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[3100];   /* +200 quality, +300 run block */
+    static char json[4200];   /* +200 quality, +300 run block, +900 ground floor */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -384,20 +422,39 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     char rs485_failures[160];
     rs485_error_report(rs485_failures, sizeof(rs485_failures));
 
+    char bore_amps[12], smot_amps[12], bore_ph[40], smot_ph[40];
+    da_json(bore_amps, sizeof bore_amps, s->borewell.deci_amps);
+    da_json(smot_amps, sizeof smot_amps, s->sump_motor.deci_amps);
+    phases_json(bore_ph, sizeof bore_ph, s->borewell.phase_da);
+    phases_json(smot_ph, sizeof smot_ph, s->sump_motor.phase_da);
+
+    /* gf_apply() clears only pct and distance when the sump node stops
+     * answering, so sump_pressure and sensor still hold what it last said. This
+     * is the first field to read them, so the staleness is filtered here rather
+     * than published: no node, no source. */
+    bool sump_live = s->sump_configured && s->sump_online;
+    const char *sump_sensor = !s->sump_configured ? "Not configured"
+                            : (!s->sump_online ? "Offline" : sensor_word(s->sump.sensor));
+    const char *sump_source = !sump_live ? "none" : (s->sump_pressure ? "pressure" : "ultrasonic");
+
+    char sump_fw[16], util_fw[16];
+    fw_word(sump_fw, sizeof sump_fw, s->sump_fw);
+    fw_word(util_fw, sizeof util_fw, s->utility_fw);
+
     int n = snprintf(json, sizeof(json),
         "{"
         "\"sys\":{\"uptime_s\":%lld,\"rssi\":%d,\"fw\":\"%s\",\"reset_reason\":\"%s\",\"heap_free\":%u,\"heap_min\":%u},"
         "\"rs485\":{\"online\":%d,\"total\":3,\"errors\":%lu,\"last_poll_ms\":%lu,"
           "\"failures\":\"%s\"},"
         "\"tanks\":{"
-          "\"sump\":{\"pct\":0,\"distance_mm\":0,\"state\":\"OFFLINE\",\"sensor\":\"Phase 2\"},"
+          "\"sump\":{\"pct\":%d,\"distance_mm\":%u,\"state\":\"%s\",\"sensor\":\"%s\",\"source\":\"%s\"},"
           "\"rwt\":{\"pct\":%d,\"distance_mm\":%u,\"state\":\"%s\",\"sensor\":\"%s\"},"
           "\"dosing\":{\"pct\":%d,\"distance_mm\":%u,\"state\":\"%s\",\"sensor\":\"%s\"},"
           "\"twt\":{\"pct\":%d,\"distance_mm\":%u,\"state\":\"%s\",\"sensor\":\"%s\"}"
         "},"
         "\"pumps\":{"
-          "\"borewell\":{\"on\":false,\"state\":\"OFFLINE\"},"
-          "\"sump_motor\":{\"on\":false,\"state\":\"OFFLINE\"},"
+          "\"borewell\":{\"on\":%s,\"state\":\"%s\"},"
+          "\"sump_motor\":{\"on\":%s,\"state\":\"%s\"},"
           "\"rwp\":{\"on\":%s,\"state\":\"ONLINE\"},"
           "\"hpp\":{\"on\":%s,\"state\":\"ONLINE\"}"
         "},"
@@ -406,15 +463,18 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"twt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s,\"live\":%s,\"age_s\":%d},"
           "\"rejection\":%s"
         "},"
-        "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":false,\"sump_floty\":false,"
+        "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":%s,\"sump_floty\":false,"
                    "\"dos_lvl\":false,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s,\"lps\":%s},"
         "\"env\":{"
           "\"ro_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"state\":\"%s\",\"src\":\"SHT30 . I2C 0x44\",\"age_s\":%d},"
-          "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d}"
+          "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d},"
+          "\"utility_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x06\",\"age_s\":%d}"
         "},"
         "\"motors\":{"
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
+          "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%u,\"running\":%s},"
+          "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%u,\"running\":%s},"
           "\"overcurrent\":%s,\"no_production\":%s"
         "},"
         "\"run\":{"
@@ -426,8 +486,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "{\"id\":\"0x02\",\"role\":\"Raw Water\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
           "{\"id\":\"0x03\",\"role\":\"Treated Water\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
           "{\"id\":\"0x04\",\"role\":\"Battery Room\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
-          "{\"id\":\"0x05\",\"role\":\"Sump\",\"link\":\"Wi-Fi\",\"state\":\"OFFLINE\",\"age_s\":9999},"
-          "{\"id\":\"0x06\",\"role\":\"Motors\",\"link\":\"Wi-Fi\",\"state\":\"OFFLINE\",\"age_s\":9999}"
+          "{\"id\":\"0x05\",\"role\":\"Sump\",\"link\":\"Wi-Fi\",\"state\":\"%s\",\"age_s\":%d,\"ip\":\"%s\",\"fw\":\"%s\"},"
+          "{\"id\":\"0x06\",\"role\":\"Utility\",\"link\":\"Wi-Fi\",\"state\":\"%s\",\"age_s\":%d,\"ip\":\"%s\",\"fw\":\"%s\"}"
         "]"
         "}",
         esp_timer_get_time() / 1000000, wifi_rssi(),
@@ -445,6 +505,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
          * dashboard shows it verbatim. */
         rs485_failures,
 
+        s->sump.pct < 0 ? 0 : s->sump.pct, s->sump.distance_mm,
+        gf_node_state(s->sump_configured, s->sump_online), sump_sensor, sump_source,
         s->rwt.pct < 0 ? 0 : s->rwt.pct, s->rwt.distance_mm,
         tank_state_word(&s->rwt, s->rwt_online), sensor_word(s->rwt.sensor),
         s->dosing.pct < 0 ? 0 : s->dosing.pct, s->dosing.distance_mm,
@@ -452,6 +514,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->twt.pct < 0 ? 0 : s->twt.pct, s->twt.distance_mm,
         tank_state_word(&s->twt, s->twt_online), sensor_word(s->twt.sensor),
 
+        s->borewell.running ? "true" : "false",
+        gf_node_state(s->utility_configured, s->utility_online),
+        s->sump_motor.running ? "true" : "false",
+        gf_node_state(s->utility_configured, s->utility_online),
         s->rwp.running ? "true" : "false",
         s->hpp.running ? "true" : "false",
 
@@ -462,6 +528,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         rejection,
 
         s->twt_float_closed ? "true" : "false",
+        s->rwt_floty == 1 ? "true" : "false",
         s->rl1_active ? "true" : "false",
         s->rl2_active ? "true" : "false",
         s->alarm_active ? "true" : "false",
@@ -480,8 +547,18 @@ static esp_err_t telemetry_get(httpd_req_t *req)
                                                     : link_word(s->battery_room.last_ok_us, true)),
         age_s(s->battery_room.last_ok_us),
 
+        s->utility_room.temp_deci_c / 10, abs(s->utility_room.temp_deci_c % 10),
+        s->utility_room.hum_deci_pct / 10, s->utility_room.hum_deci_pct % 10,
+        !s->utility_online ? "OFFLINE"
+                           : (s->utility_room.fault ? "SENSOR_ERROR" : "ONLINE"),
+        age_s(s->utility_room.last_ok_us),
+
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
+        bore_amps, bore_ph, (unsigned)s->borewell.imbalance_pct,
+        s->borewell.running ? "true" : "false",
+        smot_amps, smot_ph, (unsigned)s->sump_motor.imbalance_pct,
+        s->sump_motor.running ? "true" : "false",
         s->overcurrent ? "true" : "false",
         s->no_production ? "true" : "false",
 
@@ -491,7 +568,12 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
         link_word(s->rwt.last_ok_us, s->rwt_online), age_s(s->rwt.last_ok_us),
         link_word(s->twt.last_ok_us, s->twt_online), age_s(s->twt.last_ok_us),
-        link_word(s->battery_room.last_ok_us, s->battery_online), age_s(s->battery_room.last_ok_us));
+        link_word(s->battery_room.last_ok_us, s->battery_online), age_s(s->battery_room.last_ok_us),
+
+        gf_node_state(s->sump_configured, s->sump_online),
+        age_s(s->sump_last_us), cal_gf_ip(CAL_GF_SUMP), sump_fw,
+        gf_node_state(s->utility_configured, s->utility_online),
+        age_s(s->utility_last_us), cal_gf_ip(CAL_GF_UTIL), util_fw);
 
     hub_state_unlock();
 
@@ -515,7 +597,7 @@ static esp_err_t cal_get(httpd_req_t *req)
      * have tipped it. The guard at the end turns an overflow into a 500 rather
      * than a truncated page, which is the right failure, but it is still /cal
      * simply not opening. Static, so this is BSS rather than stack. */
-    static char page[10240];   /* grew past 8 k with the water-quality fieldset */
+    static char page[14336];   /* +1.5 k for the ground-floor rows and their notes */
     int n = 0;
 
     n += snprintf(page + n, sizeof(page) - n,
@@ -532,11 +614,20 @@ static esp_err_t cal_get(httpd_req_t *req)
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
-    uint16_t live[CAL_TANK_COUNT]     = { s->rwt.distance_mm, s->twt.distance_mm, s->dosing.distance_mm, 0 };
-    int16_t  live_pct[CAL_TANK_COUNT] = { s->rwt.pct, s->twt.pct, s->dosing.pct, -1 };
+    uint16_t live[CAL_TANK_COUNT]     = { s->rwt.distance_mm, s->twt.distance_mm, s->dosing.distance_mm, s->sump.distance_mm };
+    int16_t  live_pct[CAL_TANK_COUNT] = { s->rwt.pct, s->twt.pct, s->dosing.pct, s->sump.pct };
     uint32_t ct_lo[CAL_CT_COUNT] = { s->hpp.mv_lo, s->rwp.mv_lo, 0, 0 };
     uint32_t ct_hi[CAL_CT_COUNT] = { s->hpp.mv_hi, s->rwp.mv_hi, 0, 0 };
-    int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps, -1, -1 };
+    int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps, s->borewell.deci_amps, s->sump_motor.deci_amps };
+    int16_t  ct_ph[CAL_CT_COUNT][3] = {{0}};
+    memcpy(ct_ph[CAL_CT_BORE], s->borewell.phase_da, sizeof(ct_ph[0]));
+    memcpy(ct_ph[CAL_CT_SUMP], s->sump_motor.phase_da, sizeof(ct_ph[0]));
+    bool sump_pressure = s->sump_pressure, sump_online = s->sump_online, util_online = s->utility_online;
+    /* Copied, not pointed at: the lock is released two lines down and the poll
+     * task rewrites these strings on every cycle. */
+    char s_sump_fw[16], s_util_fw[16];
+    fw_word(s_sump_fw, sizeof s_sump_fw, s->sump_fw);
+    fw_word(s_util_fw, sizeof s_util_fw, s->utility_fw);
     hub_state_unlock();
 
     n += snprintf(page + n, sizeof(page) - n, "<fieldset id=tanks><legend>Tank levels</legend>");
@@ -556,41 +647,73 @@ static esp_err_t cal_get(httpd_req_t *req)
             snprintf(pctbuf, sizeof(pctbuf), "%d %%", live_pct[i]);
         }
 
+        /* The sump has two possible sources and the shunt that picks one is on
+         * the node, not here - so say which one the reading came from rather
+         * than leaving somebody on a roof to guess. */
+        const char *src = "";
+        if (i == CAL_TANK_SUMP) {
+            src = !sump_online ? " (node offline)" : (sump_pressure ? " (4-20 mA loop)" : " (ultrasonic)");
+        }
+
         n += snprintf(page + n, sizeof(page) - n,
-            "<h3>%s</h3><p>live <b>%u mm</b> &rarr; <b>%s</b>"
+            "<h3>%s</h3><p>live <b>%u mm</b> &rarr; <b>%s</b>%s"
             "<br><small>full and empty are both distances from the transducer FACE "
             "to the water. Measure straight down. <b>full</b> must be at least "
             "%d mm or the top of the scale is inside the blind zone.</small></p>"
             "<form method=post action='/api/cal/tank'>"
             "<input type=hidden name=tank value='%s'>"
             "full <input name=full size=6 value='%u'> "
-            "empty <input name=empty size=6 value='%u'> "
-            "<button>Save</button></form>",
-            cal_tank_label(i), live[i], pctbuf, BLIND_ZONE_MM,
+            "empty <input name=empty size=6 value='%u'> ",
+            cal_tank_label(i), live[i], pctbuf, src, BLIND_ZONE_MM,
             cal_tank_key(i), c->full_mm, c->empty_mm);
+        if (i == CAL_TANK_SUMP) {
+            n += snprintf(page + n, sizeof(page) - n,
+                "transducer range mm <input name=range size=6 value='%u'> ", c->press_range_mm);
+        }
+        n += snprintf(page + n, sizeof(page) - n, "<button>Save</button></form>");
     }
     n += snprintf(page + n, sizeof(page) - n,
         "<p><small>Empty must be a longer distance than full, and full must be "
-        "outside the %d mm blind zone.</small></p></fieldset>", BLIND_ZONE_MM);
+        "outside the %d mm blind zone. Sump: transducer range is the 4-20 mA "
+        "sensor's full scale in mm, 0 when the ultrasonic is fitted; the node's "
+        "J-PRESS shunt decides which one it reads.</small></p></fieldset>", BLIND_ZONE_MM);
 
     n += snprintf(page + n, sizeof(page) - n, "<fieldset id=clamps><legend>Current clamps</legend>");
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         const cal_ct_cfg_t *c = cal_ct(i);
+
+        /* The hub's own clamps read one conductor off an ADC it owns, so the
+         * useful feedback there is the bias pedestal. The remote pair has three
+         * channels on another board: the per-phase amps are what tells you a
+         * clamp is on backwards or not on at all. */
+        char reading[64];
+        if (i >= CAL_CT_BORE) {
+            char p[40], a[3][8];
+            for (int k = 0; k < 3; k++) {
+                if (ct_ph[i][k] < 0) snprintf(a[k], sizeof a[k], "--");
+                else snprintf(a[k], sizeof a[k], "%d.%d", ct_ph[i][k] / 10, ct_ph[i][k] % 10);
+            }
+            snprintf(p, sizeof p, "%s / %s / %s A", a[0], a[1], a[2]);
+            snprintf(reading, sizeof reading, "%s%s", util_online ? "phases " : "node offline; last ", p);
+        } else {
+            snprintf(reading, sizeof reading, "pedestal %lu-%lu mV, reading %s",
+                     (unsigned long)ct_lo[i], (unsigned long)ct_hi[i],
+                     ct_a[i] < 0 ? "none (no clamp or no pedestal)" : "live");
+        }
+
         n += snprintf(page + n, sizeof(page) - n,
-            "<h3>%s</h3><p>pedestal <b>%lu-%lu mV</b>, reading %s</p>"
+            "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/ct'>"
             "<input type=hidden name=ct value='%s'>"
             "A per V <input name=apv size=6 value='%u.%02u'> "
             "turns <input name=turns size=3 value='%u'> "
-            "trip A <input name=oc size=5 value='%u.%u'> "
             "run A <input name=run size=5 value='%u.%u'> "
+            "trip A <input name=oc size=5 value='%u.%u'> "
             "<button>Save</button></form>",
-            cal_ct_label(i), (unsigned long)ct_lo[i], (unsigned long)ct_hi[i],
-            ct_a[i] < 0 ? "none (no clamp or no pedestal)" : "live",
-            cal_ct_key(i),
-            c->amps_per_volt_x100 / 100, c->amps_per_volt_x100 % 100,
-            c->turns, c->oc_deci_amps / 10, c->oc_deci_amps % 10,
-            c->run_deci_amps / 10, c->run_deci_amps % 10);
+            cal_ct_label(i), reading, cal_ct_key(i),
+            c->amps_per_volt_x100 / 100, c->amps_per_volt_x100 % 100, c->turns,
+            c->run_deci_amps / 10, c->run_deci_amps % 10,
+            c->oc_deci_amps / 10, c->oc_deci_amps % 10);
     }
     n += snprintf(page + n, sizeof(page) - n,
         "<p><small>An SCT-013-030 is nominally 30 A per volt, but two-point "
@@ -598,7 +721,10 @@ static esp_err_t cal_get(httpd_req_t *req)
         "consistency matters more than absolute accuracy. <b>Turns</b> is how many "
         "times the conductor passes through the jaws &mdash; the reading divides by "
         "it. A pedestal that is not ~1650 mV means the breakout is not right, and "
-        "no current will be reported at all.</small></p></fieldset>");
+        "no current will be reported at all. <b>Run A</b>: the borewell has no "
+        "contact of its own, so it is running when its highest phase is above "
+        "this. Borewell and sump motor share one calibration across their three "
+        "channels.</small></p></fieldset>");
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset id=fan><legend>Battery room fan</legend>"
@@ -641,6 +767,32 @@ static esp_err_t cal_get(httpd_req_t *req)
         "Nameplate is 1200; read the skid's flow meter while producing and put that "
         "here instead &mdash; it falls as the membranes age. %d&ndash;%d.</small></p></fieldset>",
         cal_plant_lph(), PLANT_LPH_MIN, PLANT_LPH_MAX);
+
+    n += snprintf(page + n, sizeof(page) - n,
+        "<fieldset id=gf><legend>Ground floor nodes</legend>"
+        "<p><small>Wi-Fi nodes the hub polls every %d s. Give each a fixed address on the "
+        "router (or in its firmware) and type it here. Empty = not fitted: nothing is polled "
+        "and nothing alerts. <code>a.b.c.d</code>, or <code>a.b.c.d:port</code> for a bench "
+        "node.</small></p>", GF_POLL_MS / 1000);
+    static const char *gf_label[CAL_GF_COUNT] = { "Sump level node 0x05", "Utility room node 0x06" };
+    bool gf_on[CAL_GF_COUNT] = { sump_online, util_online };
+    const char *gf_fw[CAL_GF_COUNT] = { s_sump_fw, s_util_fw };
+    for (int i = 0; i < CAL_GF_COUNT; i++) {
+        const char *ip = cal_gf_ip(i);
+        n += snprintf(page + n, sizeof(page) - n,
+            "<h3>%s</h3><p>%s</p>"
+            "<form method=post action='/api/cal/gf'>"
+            "<input type=hidden name=node value='%s'>"
+            "IP <input name=ip size=21 value='%s' placeholder='192.168.1.50'> "
+            "<button>Save</button></form>",
+            gf_label[i],
+            ip[0] == '\0' ? "not fitted" : (gf_on[i] ? "online" : "configured, not answering"),
+            cal_gf_key(i), ip);
+        if (ip[0] && gf_on[i] && gf_fw[i][0]) {
+            n += snprintf(page + n, sizeof(page) - n, "<p><small>fw %s</small></p>", gf_fw[i]);
+        }
+    }
+    n += snprintf(page + n, sizeof(page) - n, "</fieldset>");
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset id=relays><legend>Relay test</legend>");
@@ -688,12 +840,23 @@ static esp_err_t cal_get(httpd_req_t *req)
 
 /* ------------------------------------------------------------ POST plumbing */
 
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 /* Read the body and pull one field out of an application/x-www-form-urlencoded
- * payload. No URL-decoding: every field on this page is a number or a password,
- * and a password containing '%' or '+' would be silently mangled by a partial
- * decoder - which is worse than rejecting it. Passwords are validated for length
- * only, so the honest limit is documented rather than half-implemented.
- * ponytail: no percent-decoding. Add it if a field ever needs to carry '&' or '='. */
+ * payload.
+ *
+ * %XX is decoded, because the node IP field carries a colon for "a.b.c.d:port"
+ * and a browser sends that as %3A - undecoded it reaches gf_ip_valid() as three
+ * characters and every bench address is rejected. '+' is deliberately left
+ * alone: nothing on this page wants a leading or embedded space, and turning it
+ * into one would change what an existing password means.
+ * ponytail: %XX only, no '+'. Decode it too if a field ever needs a space. */
 static bool form_field(const char *body, const char *name, char *out, size_t out_len)
 {
     char needle[24];
@@ -706,11 +869,21 @@ static bool form_field(const char *body, const char *name, char *out, size_t out
             const char *v = p + nlen;
             const char *end = strchr(v, '&');
             size_t len = end ? (size_t)(end - v) : strlen(v);
-            if (len >= out_len) {
+            if (len >= out_len) {   /* decoding only shrinks, so this is safe */
                 return false;
             }
-            memcpy(out, v, len);
-            out[len] = '\0';
+            size_t o = 0;
+            for (size_t i = 0; i < len; i++) {
+                int hi, lo;
+                if (v[i] == '%' && i + 2 < len &&
+                    (hi = hex_digit(v[i + 1])) >= 0 && (lo = hex_digit(v[i + 2])) >= 0) {
+                    out[o++] = (char)(hi * 16 + lo);
+                    i += 2;
+                } else {
+                    out[o++] = v[i];
+                }
+            }
+            out[o] = '\0';
             return true;
         }
         p = strchr(p, '&');
@@ -834,6 +1007,15 @@ static esp_err_t cal_tank_post(httpd_req_t *req)
     if (cal_set_tank((cal_tank_t)idx, (uint16_t)full, (uint16_t)empty) != ESP_OK) {
         return bad(req, "rejected: empty must exceed full, and full must clear the blind zone");
     }
+
+    /* Only the sump form carries this one, so its absence is not an error. */
+    char rs[8];
+    if (form_field(body, "range", rs, sizeof(rs))) {
+        unsigned r = (unsigned)strtoul(rs, NULL, 10);
+        if (cal_set_press_range((cal_tank_t)idx, (uint16_t)r) != ESP_OK) {
+            return bad(req, "rejected: transducer range must be 0 (ultrasonic) or 500-10000 mm");
+        }
+    }
     return redirect_to(req, "/cal#tanks");
 }
 
@@ -904,6 +1086,27 @@ static esp_err_t cal_wq_post(httpd_req_t *req)
         return bad(req, "rejected: k 0.50-2.00, level 0-100");
     }
     return redirect_to(req, "/cal#wq");
+}
+
+static const char *gf_key_i(int i) { return cal_gf_key((cal_gf_t)i); }
+
+static esp_err_t cal_gf_post(httpd_req_t *req)
+{
+    char body[128], f[8], ip[24];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "node", f, sizeof(f))) return bad(req, "need node");
+    int idx = key_index(f, gf_key_i, CAL_GF_COUNT);
+    if (idx < 0) return bad(req, "unknown node");
+    if (!form_field(body, "ip", ip, sizeof(ip))) ip[0] = '\0';   /* empty field = clear */
+
+    /* Trim the spaces a phone keyboard adds either side of a typed address. */
+    char *q = ip; while (*q == ' ') q++;
+    size_t l = strlen(q); while (l && q[l - 1] == ' ') q[--l] = '\0';
+
+    if (cal_set_gf_ip((cal_gf_t)idx, q) != ESP_OK) {
+        return bad(req, "rejected: a.b.c.d or a.b.c.d:port, or empty to remove");
+    }
+    return redirect_to(req, "/cal#gf");
 }
 
 static esp_err_t cal_plant_post(httpd_req_t *req)
@@ -982,6 +1185,7 @@ esp_err_t web_start(void)
         { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
         { "/api/cal/plant", HTTP_POST, cal_plant_post, false },
         { "/api/cal/wq",    HTTP_POST, cal_wq_post,    false },
+        { "/api/cal/gf",    HTTP_POST, cal_gf_post,    false },
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
