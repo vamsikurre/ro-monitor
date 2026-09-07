@@ -1504,7 +1504,7 @@ function updatePlant(s) {
       c.className = "chip " + kind;
     }
 
-    const ct = s.motors && s.motors[id];
+    const ct = s.motors && s.motors[key];
     const aEl = u.querySelector(".amps");
     if (aEl) {
       aEl.innerHTML = ampsText(ct ? ct.amps : null);
@@ -1994,7 +1994,7 @@ function drawTrend() {
   svg.appendChild(txt(0, tempY - 6, "ROOM °C", "lane"));
   endLabel(line(7, "ro", Yc), "RO", v => (v / 10).toFixed(1));
   endLabel(line(8, "bat", Yc), "BAT", v => (v / 10).toFixed(1));
-  endLabel(line(12, "util", Yc), "UTIL", v => (v / 10).toFixed(1) + "°");
+  endLabel(line(12, "util", Yc), "UTIL", v => (v / 10).toFixed(1));
 
   /* x axis: a tick every 4 h on the hour */
   const first = Math.ceil(t0 / 14400) * 14400;
