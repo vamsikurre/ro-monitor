@@ -85,7 +85,7 @@ happens at deployment.
 - [ ] **6 × SCT-013-030** for the ground floor: three phases each on the sump and borewell motors (§11.3). Neither motor has a readable nameplate, so size from the starter's overload dial and a clamp meter (§11.3.1)
 - [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
 - [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 100 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
-- [ ] **Node `0x05` and `0x06`** — Phase 2. Node `0x06` has no firmware, and its pin map is currently validated by nothing (see `docs/check_pinmap.py`)
+- [ ] **Node `0x05` and `0x06`** — firmware built and OTA-capable (`firmware/gf_node`), polled from `/cal` by IP (§11, §11.4). Deployment is landing the CT clamps, `PUMP ON` and (after metering) `RWT FLOTY` on the physical panels — not writing any code.
 
 ### 0.3.1. Programming the hub
 
@@ -1346,54 +1346,91 @@ treatment, and this is the second data point saying so.
 
 ---
 
-## 11. Ground Floor Wi-Fi Nodes Wiring (Parking)
+## 11. Ground Floor Wi-Fi Nodes Wiring
 
-### 11.1. Ground Floor ESP32 Node 1: Sump Ultrasonic Level (0x05)
-* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
-* **ESP32 5V / VIN:** `+5V DC` from HLK-20M5
-* **ESP32 GND:** `GND` from HLK-20M5
-* **AJ-SR04M Sensor:**
-  * `VCC` $\to$ `5V DC`
+**Superseded 2026-09-07 — no relay board.** Everything below described a
+4-channel relay board on node `0x06` doing starter interlocks; that node was
+never built that way. What shipped is two ESP32s that only *read* the
+ground floor and are polled by the hub over the house LAN (`RS485_PROTOCOL.md`
+§5) — no relays, no pump control, no float cutoffs. The 4-channel interlock
+idea stays a Phase-2 option, out of scope for this round.
+
+### 11.1. Ground Floor ESP32 Node 1: Sump Level (0x05)
+
+* **Power:** 230 V AC $\to$ 12 V module $\to$ buck $\to$ 5 V — **not** the
+  5 V-only `HLK-20M5` this section specified before. A two-wire 4-20 mA loop
+  transducer needs the 12 V rail; the ESP32 and the AJ-SR04M run off the
+  buck's 5 V output. This is the same rail arrangement the roof tank nodes
+  use (§9, block diagram).
+* **ESP32 5V / VIN:** buck's `+5V` output. **ESP32 GND:** buck `GND`.
+* **AJ-SR04M sensor:**
+  * `VCC` $\to$ `5V`
   * `GND` $\to$ `GND`
   * `TRIG` $\to$ `ESP32 GPIO 5`
-  * `ECHO` $\to$ `1kΩ resistor` $\to$ `ESP32 GPIO 18` *(and 2kΩ from GPIO 18 to GND for 3.3V voltage divider)*
+  * `ECHO` $\to$ `1kΩ resistor` $\to$ `ESP32 GPIO 18` *(and 2kΩ from GPIO 18 to GND for the 3.3V divider)*
+* **`J-LOOP` (1×3) / `J-PRESS` (1×2):** the same two headers, the same
+  passives and the same sizing the tank nodes carry — **see §9.4.2 for the
+  100 R sense resistor, the 1 k/100 nF filter and why 100 R and not 150 R;
+  not repeated here.** On this node: `J-LOOP` pin 2 (loop sense) $\to$
+  `ESP32 GPIO 34` (`ADC1_CH6`); `J-PRESS` shunt to GND $\to$ `ESP32 GPIO 25`
+  (pull-up). Both headers are soldered whether or not a transducer is ever
+  bought, exactly as on `0x02`/`0x03`.
+* `source` in the telemetry (`RS485_PROTOCOL.md` §5.1) is decided by
+  `J-PRESS`, read once at boot: shunt fitted = pressure, off = ultrasonic.
 
-### 11.2. Ground Floor ESP32 Node 2: Motor AC Sensing & Float Relays (0x06)
-* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A)
-* **220V AC Optocoupler 1 (Sump Motor Monitor):**
-  * `AC L / N` $\to$ Connected across Sump Motor Starter Contactor 240V Coil
-  * `DC VCC` $\to$ `3.3V` from ESP32 — **not optional**, it feeds the onboard 47 k pull-up (§8)
-  * `DC GND` $\to$ `GND`
-  * `DC OUT` $\to$ `ESP32 GPIO 16` — **moved from GPIO 34 on 2026-08-27**, see §11.3
-* **220V AC Optocoupler 2 (Borewell Motor Monitor):**
-  * `AC L / N` $\to$ Connected across Borewell Motor Starter Contactor 240V Coil
-  * `DC VCC` $\to$ `3.3V` from ESP32
-  * `DC GND` $\to$ `GND`
-  * `DC OUT` $\to$ `ESP32 GPIO 17` — **moved from GPIO 35 on 2026-08-27**, see §11.3
-* **4-Channel Relay Board (Starter Interlocks):**
-  * `VCC` $\to$ `5V DC` from HLK-20M5
-  * `GND` $\to$ `GND`
-  * `IN1` (Sump Low Float Cutoff) $\to$ `ESP32 GPIO 25`
-  * `IN2` (Borewell High Float Cutoff) $\to$ `ESP32 GPIO 26`
-  * `IN3` (Aux Manual Override 1) $\to$ `ESP32 GPIO 27`
-  * `IN4` (Aux Manual Override 2) $\to$ `ESP32 GPIO 14`
+### 11.2. Ground Floor ESP32 Node 2: Utility Room Monitoring (0x06)
+
+* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A). No loop
+  here, so no 12 V is needed on this node.
+* **`PUMP ON` (C, NO)** — a spare dry contact on the sump motor's **Astero**
+  controller (§11.4; not the RO-room Aster panel of §6, a different device
+  at a different panel), unused until now: closed while the controller has
+  the pump on. This **is** the sump-motor run signal, and it is wired the
+  same way the hub's own `IN_ALARM` is (§6.6) — two wires straight to a GPIO
+  with a pull-up, no optocoupler, no module:
+  * `PUMP ON` `C` $\to$ `ESP32 GPIO 25`
+  * `PUMP ON` `NO` $\to$ `GND`
+* **RWT floaty $\to$ `ESP32 GPIO 26`, opto, pull-up — after metering the
+  Astero's `TWT FLOTY` terminal, not before.** §11.4 has the rule: the RWT
+  float cable lands on a pair labelled `TWT FLOTY` on this controller's
+  factory terminal strip — a preprinted label that has nothing to do with
+  the treated water tank here, only with what this Astero unit ships
+  labelled. Low-voltage DC across the loop gets an optocoupler; mains
+  potential gets nothing landed on it at all, and `rwt_floty` reports
+  `null`.
+* **SHT30** `SDA` $\to$ `GPIO 21`, `SCL` $\to$ `GPIO 22`.
+* **No relay board.** The 4-channel relay interlocks this section used to
+  describe (Sump Low Float Cutoff, Borewell High Float Cutoff, two aux
+  overrides) do not exist on the built node — see the note at the top of
+  §11.
 
 ### 11.3. Node 0x06 Current Clamps — Six Channels, Three Per Motor
 
-Both ground-floor motors are 3-phase and **all three phases of each are clamped**, for the imbalance figure rather than for fault detection — phase-B spec §7.3 has the reasoning and records that this reverses an earlier two-per-motor decision.
-
-**This is why the AC optos moved off `GPIO 34`/`35`.** Those are `ADC1_CH6`/`CH7`, and six analog channels need every ADC1 pin the module exposes. The optos need no ADC — the 240 V module supplies its own 47 k pull-up to `VCC` (§8) — so they take ordinary inputs and the analog pins go where only analog will do.
+Both ground-floor motors are 3-phase and **all three phases of each are
+clamped**, for the imbalance figure rather than for fault detection —
+phase-B spec §7.3 has the reasoning and records that this reverses an
+earlier two-per-motor decision.
 
 | Channel | GPIO | ADC1 | Conductor |
 | :--- | :---: | :---: | :--- |
-| `IN_SUMP_CT_L1` | **32** | CH4 | Sump starter, phase L1 |
-| `IN_SUMP_CT_L2` | **33** | CH5 | Sump starter, phase L2 |
-| `IN_SUMP_CT_L3` | **34** | CH6 | Sump starter, phase L3 |
-| `IN_BORE_CT_L1` | **35** | CH7 | Borewell starter, phase L1 |
-| `IN_BORE_CT_L2` | **36** | CH0 | Borewell starter, phase L2 |
-| `IN_BORE_CT_L3` | **39** | CH3 | Borewell starter, phase L3 |
+| `BORE_CT_L1` | **32** | CH4 | Borewell starter, phase L1 |
+| `BORE_CT_L2` | **33** | CH5 | Borewell starter, phase L2 |
+| `BORE_CT_L3` | **34** | CH6 | Borewell starter, phase L3 |
+| `SUMP_CT_L1` | **35** | CH7 | Sump starter, phase L1 |
+| `SUMP_CT_L2` | **36** | CH0 | Sump starter, phase L2 |
+| `SUMP_CT_L3` | **39** | CH3 | Sump starter, phase L3 — **socket built, no clamp fitted yet** |
 
-**ADC1 on this node is now full.** `GPIO 37`/`38` are the only other ADC1 channels on an ESP32 and are not broken out on a WROOM; everything else free is ADC2, which is dead whenever Wi-Fi is up.
+**All six ADC1 channels on this node are taken** — six bias networks and six
+clamp sockets are built; five clamps are fitted on day one and the sixth
+(sump L3) waits for a clamp to be bought. A channel with nothing plugged in
+reads its bias pedestal, and the hub reports that phase as `null` rather
+than `0 A` (`RS485_PROTOCOL.md` §5.2) — the built-but-empty sixth socket
+relies on exactly that rule to stay silent instead of looking like a real
+reading of zero.
+
+**ADC1 on this node is now full.** `GPIO 37`/`38` are the only other ADC1
+channels on an ESP32 and are not broken out on a WROOM; everything else free
+is ADC2, which is dead whenever Wi-Fi is up.
 
 **One shared bias rail, six series networks** — the same topology as the hub's two channels in §14, with the divider counted once:
 
@@ -1452,6 +1489,51 @@ these two motors, a future reader has no way to re-derive it — the stored scal
 factor and the turn count are the only record that the reading means amps.
 
 **The starter is 415 V between phases, not 240 V.** Split-core clamps break no conductor, but this panel is more dangerous open than the RO skid. Fit them with the supply isolated and locked off, one conductor per clamp — a clamp around two phases reads their vector sum, not either current.
+
+### 11.4. The two panels, as found 2026-09-07
+
+From `images/groundfloor/`, before anything of ours was landed on either panel.
+
+**Borewell** — a Lauritz Knudsen MK1 direct-on-line starter with an NEC-49
+three-phase level controller wired in series with the coil. Two things close
+off what a monitoring node can do here without opening either device up:
+
+* **The starter has no spare auxiliary contact.** There is nothing free to
+  read the contactor state from without adding one — hence the borewell's
+  `running` coming entirely from current (§11.3), not from a contact.
+* **The NEC-49 has no output**, and its float inputs tell their own story.
+  Its "Lower Sump Float" input carries the sump float, and its "Over Head
+  Tank Float" input is **shorted** — so in AUTO the borewell runs whenever
+  the sump float allows, with no overhead-tank interlock in the loop at all,
+  whatever the controller's own silkscreen suggests it does. Both float
+  loops sit at mains potential inside the NEC-49.
+
+**Nothing of ours touches this panel except the three CT clamps on the motor
+tails 2/T1, 4/T2, 6/T3** (§11.3).
+
+**Sump motor** — an Astero Submersible 2.0 HP controller (a different device
+from the RO-room's own Aster panel, §6). Its terminal strip: `PULSE O/P`,
+`TWT FLOTY (C, NC)`, `PUMP CONT. (C, NC)`, `RUNNING RELAY O/P (NO, C)`,
+`STARTING RELAY O/P (NO, C)`, `PUMP ON (C, NO)`.
+
+* `PUMP ON (C, NO)` was unused and is an isolated dry contact, closed while
+  the controller has the pump on. This is the sump-motor run signal
+  (§11.2).
+* `TWT FLOTY` is where the RWT float cable lands — a factory-printed label
+  that has nothing to do with the treated water tank on this particular
+  controller, only with what Astero prints on every unit of this model.
+  Whether the node can read it depends on the voltage the Astero puts across
+  the loop, **to be metered before any wire is connected**: low-voltage DC
+  across the loop gets an optocoupler; mains potential is not tapped at all,
+  and `rwt_floty` reports `null`.
+* `PUMP CONT.` has one wire that goes to nowhere — an abandoned
+  external-contactor option from some earlier configuration of this
+  controller. Tape the loose end and leave the pair alone.
+* **The rule, stated once for both panels: nothing lands on a pair that
+  already carries wires until the other end of those wires is known.** A
+  pair with no wires on it is safe to guess about; a pair with wires already
+  running somewhere is not — that is exactly how `PUMP CONT.` gets found
+  before it gets used for something else.
 
 ---
 

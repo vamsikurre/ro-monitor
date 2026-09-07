@@ -62,8 +62,8 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) + 120Ω end-of-bus termination. Optional TDS + DS18B20 pair (§4.5) |
 | `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). Optional TDS + DS18B20 pair (§4.5) |
 | `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
-| `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi | ESP32 | Waterproof Ultrasonic (AJ-SR04M - 3.5m Sump) |
-| `0x06` | **Ground Motors & Interlock** | Ground Floor Wi-Fi | ESP32 | 2x 220V AC Optos (Sump/Borewell) + 4-Ch Relays |
+| `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi (polled) | ESP32 | Waterproof Ultrasonic (AJ-SR04M), **or** a 4-20 mA submersible pressure transducer on the `J-LOOP`/`J-PRESS` provision (§5, `WIRING.md` §11.1) |
+| `0x06` | **Ground Utility Room** | Ground Floor Wi-Fi (polled) | ESP32 | 3× CT borewell + 3× CT sump motor, Astero `PUMP ON` dry contact, RWT floaty opto, SHT30. **No relays** — monitoring only (`WIRING.md` §11.2) |
 | `0xFF` | **Broadcast Address** | Global Sync | All Slaves | Global synchronization / Bus Reset |
 
 ---
@@ -146,36 +146,92 @@ Requests TDS and water temperature from a tank node that has the optional probe 
 
 ---
 
-## 5. Wi-Fi JSON Protocol Specification (Ground Floor Nodes)
+## 5. Wi-Fi nodes — polled JSON (Ground Floor)
 
-Ground Floor ESP32 nodes push telemetry to the Terrace ESP32 Hub via HTTP POST to `http://ro-hub.local/api/sump` and `http://ro-hub.local/api/motors`:
+**Supersedes the push design below.** The two ground-floor nodes never
+initiate anything — the same master-polled principle as §1, just over the
+house LAN instead of RS485. A dedicated hub task (`gf_task`) does
+`HTTP GET http://<ip>/api/telemetry`, one node at a time, **5 s** between polls
+while a node answers, **2 s timeout** per request. Three consecutive misses
+(≈15 s) mark it `OFFLINE`; an offline node is still polled, but only every
+**30 s**, cheaply, until it answers again — the same reply that took it
+offline puts it back at the 5 s cadence. The IP for each node is typed on
+`/cal` → "Ground floor nodes" (`gf_sump_ip` / `gf_util_ip` in NVS). **An empty
+IP means "not fitted"**: never polled, never alerted on, cards hatched — the
+same meaning an empty field has everywhere else on that page. Nodes are
+stateless and know nothing about the hub; a reflash never loses a
+calibration number because none of them live on the node.
 
-### 5.1. Ground Sump Node 1 (0x05) Payload:
+### 5.1. Sump `0x05`
+
 ```json
-{
-  "node_id": 5,
-  "distance_mm": 1750,
-  "water_depth_mm": 1750,
-  "level_percent": 50,
-  "signal_quality": 95,
-  "status": "OK",
-  "rssi": -64,
-  "uptime_s": 3840
-}
+{"id":5,"fw":"a3cb57d","uptime_s":3840,"rssi":-64,
+ "source":"ultrasonic","distance_mm":1750,"quality":95,"status":"OK",
+ "loop_ua":null}
 ```
 
-### 5.2. Ground Motor Node 2 (0x06) Payload:
 ```json
-{
-  "node_id": 6,
-  "sump_motor_active": false,
-  "borewell_motor_active": true,
-  "sump_float_cutoff": false,
-  "borewell_float_cutoff": false,
-  "rssi": -68,
-  "uptime_s": 3840
-}
+{"id":5,"fw":"a3cb57d","uptime_s":3840,"rssi":-64,
+ "source":"pressure","distance_mm":null,"quality":null,"status":"OK",
+ "loop_ua":11200}
 ```
+
+- `source` follows the node's `J-PRESS` shunt, read once at boot: fitted =
+  `pressure`, off = `ultrasonic`.
+- `status` is the same `sensor_status_t` the RS485 tank nodes use: `OK |
+  BLIND | NO_ECHO | HW_FAULT`. On the pressure source, `HW_FAULT` means the
+  loop current is outside **3.5-21 mA** — a cut cable, a dead supply or a
+  short, not a level (`WIRING.md` §9.4.4).
+- `loop_ua` is the raw loop current in microamps. **The hub converts it**,
+  not the node — the transducer's full-scale range is a `/cal` number
+  (`CAL_TANK_SUMP.press_range_mm`, 0 = ultrasonic only), never a node build
+  constant, so a reflash never loses it: `head_mm = (loop_ua − 4000) ×
+  range_mm / 16000`, then `distance = range − head`, so the same
+  distance-shrinks-as-it-fills convention and the same full/empty
+  calibration as every other tank apply unchanged (`WIRING.md` §9.4.1).
+
+### 5.2. Utility `0x06`
+
+```json
+{"id":6,"fw":"a3cb57d","uptime_s":3840,"rssi":-68,
+ "bore_mv":[412,405,398],
+ "sump_mv":[398,0,0],"sump_on":false,
+ "rwt_floty":null,
+ "t_deci_c":312,"rh_deci_pct":548,"sht_ok":true}
+```
+
+- `bore_mv` / `sump_mv`: three per-channel AC RMS millivolts each, exactly as
+  the node's ADC read them — no amps, no calibration, that is all hub-side.
+  A channel with no clamp plugged in sits on the bias pedestal and reads a
+  few mV of noise; the hub treats a bias midpoint outside **1250-2050 mV**
+  as "no clamp fitted" and reports that phase as `null`, **never as 0 A** —
+  a floating pin in a motor panel produces a large reading that looks
+  exactly like a running motor, and 0 A would be read as a real
+  measurement instead of a missing sensor.
+- `sump_on`: the Astero `PUMP ON` dry contact, closed while the controller
+  has the pump on. This is the sump motor's `running` state; the borewell
+  has no contact of its own and its `running` comes from current instead,
+  with a hysteresis band so a phase reading dithering at the threshold
+  cannot flip the state every cycle and flood the cloud with messages.
+- `rwt_floty`: `true` closed, `false` open, `null` not wired — this loop is
+  only ever tapped after being metered (`WIRING.md` §11.4).
+- SHT30 at I²C `0x44`, the same part the hub and the battery-room node use.
+- A dying sump sensor's readings decay to nothing within about ten seconds
+  rather than freezing at the last good value, and the hub additionally
+  refuses to report a level when a node's own `status` says the sensor is
+  faulted.
+
+### 5.3. Node GPIO
+
+| Utility `0x06` | GPIO | Sump `0x05` | GPIO |
+| :--- | :---: | :--- | :---: |
+| `BORE_CT_L1/L2/L3` | 32 / 33 / 34 (ADC1) | `TRIG` | 5 |
+| `SUMP_CT_L1/L2/L3` | 35 / 36 / 39 (ADC1) | `ECHO` (via 1 k / 2 k divider) | 18 |
+| `PUMP_ON` (pull-up) | 25 | `J-LOOP` pin 2, loop sense (ADC1) | 34 |
+| `RWT_FLOTY` opto (pull-up) | 26 | `J-PRESS` shunt to GND (pull-up) | 25 |
+| SHT30 `SDA` / `SCL` | 21 / 22 | | |
+
+Wiring, the bias network and the loop provision are `WIRING.md` §11.
 
 ---
 
@@ -207,4 +263,4 @@ uint16_t calculate_crc16(const uint8_t *buffer, size_t length) {
 
 1. **Slave Response Timeout:** Master sets a timer for **100 ms** upon finishing packet transmission. If no complete packet is received within 100 ms, the attempt is marked as `TIMEOUT`.
 2. **Retry Logic:** Master retries up to **2 consecutive times** (3 total attempts) before declaring the node `OFFLINE`.
-3. **Wi-Fi Heartbeat Expiry:** If no HTTP/UDP packet is received from Ground Floor nodes for **10 seconds**, status is set to `OFFLINE` and emergency pump interlocks engage.
+3. **Wi-Fi Heartbeat Expiry:** After 3 consecutive missed polls (≈15 s) from a Ground Floor node (§5), status is set to `OFFLINE`, the cards for that node hatch on the dashboard, and the node-lost alert names it. Nothing moves water — there is no interlock to engage.

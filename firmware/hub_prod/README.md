@@ -149,6 +149,10 @@ need when the *router* is the thing that has failed.
 Change the calibration password on first commissioning. It is stored in NVS, so
 it survives a reflash but not a factory reset.
 
+The two ground-floor Wi-Fi nodes have their own build, flash and OTA
+instructions — `firmware/gf_node/README.md`. This hub only needs their IPs,
+typed on `/cal` below.
+
 ---
 
 ## Ground-floor nodes on the bench
@@ -176,24 +180,38 @@ survives a node reflash because nothing else lives there.
 
 ## Calibration page
 
-Three groups, all range-checked before anything is stored — a typo must not be
-able to produce a reading that looks plausible and is wrong.
+Everything on this page is range-checked before it is stored — a typo must
+not be able to produce a reading that looks plausible and is wrong.
 
 **Tanks.** Full and empty distances in millimetres, transducer face to liquid
 surface. Empty must be the longer distance, and full must clear the 200 mm blind
-zone. The live reading is shown next to each field.
+zone. The live reading is shown next to each field. The **sump** row also takes
+a transducer range in mm (0 when the ultrasonic is fitted) and shows which
+source node `0x05` actually reported, so a wrong `J-PRESS` shunt is visible
+from the roof, not the manhole.
 
-**Current clamps.** Amps per volt, turns, and the over-current trip.
+**Current clamps.** Amps per volt, turns, run threshold and the over-current
+trip — now four rows, not two: HPP, RWP, **Borewell**, and **Sump motor**.
 - An SCT-013-030 is nominally **30 A/V**, but two-point calibrate against a clamp
   meter. This is a trend instrument; consistency beats absolute accuracy.
 - **Turns** is how many times the conductor passes through the jaws. A ~5 A pump
   gives only ~170 mV from a 30 A clamp, so 2–3 turns is usually worth it. The
   reading divides by this, and nothing else records it — write it on the
   enclosure too (`WIRING.md` §14.3).
-- The page shows each channel's **pedestal** in millivolts. ~1650 mV means the
+- HPP and RWP show each channel's **pedestal** in millivolts. ~1650 mV means the
   bias breakout is correct. Anything else means no current will be reported at
   all, deliberately: a floating input produces a large and entirely fictional
   RMS figure, which is the worst possible failure for a dry-run detector.
+- **Borewell and sump motor show live per-phase amps** instead — one clamp
+  calibration applies to all three channels of each motor. The borewell's
+  **run threshold** is what turns a phase current into `RUNNING`, since that
+  motor has no contact of its own; the sump motor's running state is the
+  Astero `PUMP ON` contact regardless of what the clamps read.
+
+**Ground floor nodes.** Sump and Utility node IPs (`gf_sump_ip`, `gf_util_ip`),
+polled every 5 s. Empty = not fitted: nothing is polled, nothing alerts, and
+the dashboard hatches that node's cards. See "Ground-floor nodes on the
+bench" above for testing this with no node hardware.
 
 **Fan.** On/off thresholds, clamped to 25.0–55.0 °C with at least 1.0 °C of
 hysteresis enforced.
@@ -202,14 +220,15 @@ hysteresis enforced.
 
 ## RainMaker devices
 
-Follows `docs/DASHBOARD_AND_RAINMAKER.md` §3.1, minus the Phase-2 ground floor.
+Follows `docs/DASHBOARD_AND_RAINMAKER.md` §3.1.
 
 ```
 RO Plant Monitor - XXXX
-├── Water Tanks      Raw Water Level, Treated Water Level, Dosing Level
+├── Water Tanks      Raw Water Level, Treated Water Level, Dosing Level, Sump Level, RWT Float Full
 ├── Pumps & Motors   HPP/RWP Running, HPP/RWP Current, Over Current
 ├── Environment      RO Room + Battery Room temperature and humidity
 ├── Ventilation      Exhaust Fan (read-only), Fan On Above (slider, writable)
+├── Ground Floor     Borewell/Sump Motor Running, Borewell/Sump Motor Current, Utility Room temperature and humidity
 └── RO Plant         Status (text), Controller Fault
 ```
 
@@ -264,10 +283,13 @@ in all three tables, passed the check, and was read by no firmware at all.
 
 ## Known limits
 
-- **Ground floor is Phase 2.** Sump level, borewell and sump-motor state come
-  from nodes `0x05`/`0x06`, which do not exist yet. They are reported as
-  `OFFLINE` rather than as zeros, so the dashboard hatches them instead of
-  drawing an empty tank that looks measured.
+- **Ground floor nodes are polled, not RS485.** Sump level, borewell and
+  sump-motor state come from nodes `0x05`/`0x06` over the house LAN
+  (`RS485_PROTOCOL.md` §5), not the RS485 bus — the addresses are kept for
+  consistency with the rest of the node table, nothing more. An unconfigured
+  or unreachable node is reported as `OFFLINE` rather than as zeros, so the
+  dashboard hatches its cards instead of drawing an empty tank that looks
+  measured.
 - **Calibration auth is HTTP Basic over plain HTTP** on the local network. The
   thing protected is a calibration constant; the alternative is provisioning and
   renewing a TLS certificate on an embedded box. Revisit if this ever gains a

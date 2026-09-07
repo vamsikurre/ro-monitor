@@ -32,9 +32,9 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
   * `POST /api/interlock/override` (Manual override for Aster float emulation relays)
 
 ### 2.2. Visual Component Layout & Process Flow Mirroring
-1. **Borewell Pump Card:** Shows 240V AC power status (`RUNNING` / `IDLE`), run duration counter, and emergency cutoff toggle.
-2. **Ground Floor Sump Tank (3.5m Depth):** Animated liquid SVG cylinder with percentage indicator, raw millimeter depth, and low-level warning indicator.
-3. **Sump Motor Card:** Shows 240V AC status when pumping water from ground floor to roof top RWT.
+1. **Borewell Pump Card:** Shows `RUNNING` / `IDLE` (the borewell has no contact of its own, so this comes from current past a threshold with hysteresis), per-phase amps and the imbalance figure, run duration counter. No cutoff control — nothing here moves water.
+2. **Ground Floor Sump Tank (3.5m Depth):** Animated liquid SVG cylinder with percentage indicator, raw millimeter depth, and which source (ultrasonic or 4-20 mA loop) the node reported.
+3. **Sump Motor Card:** Shows `RUNNING` / `IDLE` from the Astero `PUMP ON` contact, plus amps and imbalance from whichever of its three CT channels have a clamp fitted.
 4. **Raw Water Tank (RWT - Roof Top):** Real-time percentage, capacity volume (liters), and float status indicator.
 5. **RO Plant Skid (Dashed Enclosure):**
    * **Raw Water Pump (RWP):** 240V status indicator.
@@ -46,6 +46,7 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
    * Temperature & Relative Humidity gauge from Node `0x04`.
    * Animated exhaust fan icon showing rotation when active.
    * Auto-ventilation toggle (turns ON when Temp > 38°C or RH > 75%).
+8. **Utility Room card:** Temperature & Relative Humidity from Node `0x06`'s SHT30, the RWT float state, and an offline hatch — the same pattern as the RO Room and Battery Room environment cards.
 
 ### 2.3. Trends and run hours (added 2026-09-07)
 
@@ -107,10 +108,12 @@ ESP32 Central Hub (RainMaker Node: "RO Plant & Sump Monitor")
 │   ├── Param: level_percent (Integer, Read-Only, 0..100 %)
 │   ├── Param: water_depth_cm (Integer, Read-Only, 0..350 cm)
 │   └── Param: low_level_alert (Boolean, Read-Only)
-├── Device 2: "Rooftop Tanks" [Type: Multi-Tank Sensor]
+├── Device 2: "Water Tanks" [Type: Multi-Tank Sensor]
 │   ├── Param: rwt_level_percent (Integer, Read-Only, 0..100 %)
 │   ├── Param: twt_level_percent (Integer, Read-Only, 0..100 %)
-│   └── Param: dosing_level_percent (Integer, Read-Only, 0..100 %)
+│   ├── Param: dosing_level_percent (Integer, Read-Only, 0..100 %)
+│   ├── Param: Sump Level (Integer, Read-Only, 0..100 %) — Node 0x05, ground floor
+│   └── Param: RWT Float Full (Boolean, Read-Only) — Node 0x06's read of the roof RWT float
 ├── Device 3: "Pumps & Motors" [Type: Motor Controller]
 │   ├── Param: borewell_motor (Boolean, Read-Only, ON/OFF)
 │   ├── Param: sump_motor (Boolean, Read-Only, ON/OFF)
@@ -122,10 +125,20 @@ ESP32 Central Hub (RainMaker Node: "RO Plant & Sump Monitor")
 │   ├── Param: ro_room_humidity (Float, Read-Only, %)
 │   ├── Param: battery_room_temp (Float, Read-Only, °C)
 │   └── Param: battery_room_humidity (Float, Read-Only, %)
-└── Device 5: "Ventilation" [Type: Fan Controller]
-    ├── Param: exhaust_fan_power (Boolean, Read-Write, ON/OFF)
-    └── Param: auto_temp_threshold (Integer, Read-Write, 25..50 °C)
+├── Device 5: "Ventilation" [Type: Fan Controller]
+│   ├── Param: exhaust_fan_power (Boolean, Read-Write, ON/OFF)
+│   └── Param: auto_temp_threshold (Integer, Read-Write, 25..50 °C)
+└── Device 6: "Ground Floor" [Type: Other] — Node 0x06, utility/starter panel
+    ├── Param: Borewell Running (Boolean, Read-Only) — no contact of its own; current above the run threshold, with hysteresis
+    ├── Param: Sump Motor Running (Boolean, Read-Only) — the Astero `PUMP ON` contact
+    ├── Param: Borewell Current (Float, Read-Only, A) — highest phase, deadbanded
+    ├── Param: Sump Motor Current (Float, Read-Only, A)
+    ├── Param: Utility Room Temp (Float, Read-Only, °C) — SHT30 on Node 0x06
+    └── Param: Utility Room Humidity (Float, Read-Only, %)
 ```
+
+No relays, no float cutoffs, no pump control on either ground-floor node —
+they are monitoring only (`WIRING.md` §11).
 
 ---
 
@@ -141,7 +154,7 @@ ESP RainMaker automatically dispatches native push notifications to all paired m
 | **Dosing Level < 20%** | `WARNING` | ⚠️ **Dosing Chemical Low!** Replenish anti-scalant / dosing reagent tank. | Astero Dosing Relay opened; Alarm flag set. |
 | **Battery Room Temp > 38°C**| `ALERT` | 🌡️ **High Battery Room Temperature!** Room temp is {X}°C. Exhaust fan turned ON. | Node `0x04` Exhaust Fan Relay automatically energized. |
 | **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check feed pressure (LPS), dosing level and pump overload. | System status set to FAULT; Alarm flagged in UI. |
-| **Wi-Fi Node Disconnect** | `WARNING` | 📡 **Ground Floor Node Offline!** No telemetry received for > 10 seconds. | Plant interlocks revert to safe default state. |
+| **Wi-Fi Node Disconnect** | `WARNING` | 📡 **Node offline: 0x05 Sump / 0x06 Utility.** Fifteen seconds of no reply; re-probed every 30 s. | None to revert — nothing here moves water. The node's status is set to OFFLINE, its cards hatch on the dashboard, and this alert names it. |
 
 **Two constraints on the `alarm` field, both from `WIRING.md` Section 6:**
 1. ~~The Aster `ALARM` terminal is the configurable `AUX OP`. Until it is confirmed set to `ALARM` (password 678), the signal may actually mean "RWP running" and must not be surfaced as a fault.~~ **Closed 2026-08-26:** observed open in normal running and closed on a plant issue, so it is a genuine fault flag and may be surfaced as one. It does not say *which* fault — the panel multiplexes every condition onto the one contact — so alert text must read "controller fault, check the panel" rather than naming a cause (`WIRING.md` §6.3).
@@ -159,7 +172,8 @@ in that room on it.
 | :--- | :--- | :--- |
 | **RO Room** | `Status` | HPP/RWP running + current, over-current, RL1/RL2, LPS, controller fault, room temp/RH, and **HPP / RWP last run, TWT last full** |
 | **Battery Room** | `Battery Room Temp` | temp/RH, **the exhaust fan switch**, fan mode, fan-on threshold, fan last run |
-| **Water Tanks** | `Treated Water Level` | RWT/TWT/dosing levels, TWT float, TDS ×2, water temp ×2, salt rejection |
+| **Water Tanks** | `Treated Water Level` | RWT/TWT/dosing/**sump** levels, TWT float, **RWT float**, TDS ×2, water temp ×2, salt rejection |
+| **Ground Floor** | `Borewell Running` | borewell/sump-motor running + current, utility room temp/RH — Node `0x06` |
 
 ### 4.9.1. Nothing shows a plausible zero before it has been measured
 
