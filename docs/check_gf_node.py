@@ -9,7 +9,12 @@ hub log. This extracts each format string straight out of the .c file - not a
 frozen copy of it - fills in its printf conversions with placeholders, and
 checks the resulting object's key set against docs/fake_gf_node.py's STATE
 dicts (the already-agreed shape) and its null-vs-number keys against what the
-hub's app_gf.c parser (jint_or_null / cJSON_IsNull) actually requires.
+hub's app_gf.c parser (jint_or_null / cJSON_IsNull) actually requires. It also
+statically asserts (task 10 fix round 1, after a mutation-tested review found
+both silently passing): every quoted ALL-CAPS literal anywhere in the file is
+one of the hub's four recognised statuses, and every nullable sump reading is
+actually emitted through a bare %s splice - the only shape that can produce a
+real JSON null - rather than a hardcoded literal that never could be.
 
     python docs/check_gf_node.py
 """
@@ -45,6 +50,36 @@ SCHEMA = {
         't_deci_c': int, 'rh_deci_pct': int,
     },
 }
+
+# The hub's app_gf.c only recognises these four (SENSOR_OK/BLIND/NO_ECHO/
+# HW_FAULT in app_priv.h); anything else parses as SENSOR_OK by default in a
+# strcmp ladder that falls through silently - a typo'd status would read as
+# a healthy sensor instead of failing loudly.
+STATUS_VALUES = ('OK', 'BLIND', 'NO_ECHO', 'HW_FAULT')
+
+# distance_mm/quality/loop_ua are null on whichever sensor path is NOT
+# fitted (docs/fake_gf_node.py STATE, the hub's jint_or_null parse). The
+# format string can only encode that by splicing in a sub-buffer holding
+# either the literal "null" or a plain number - a bare, unquoted %s - since
+# extract_format() never sees which branch of the C code's ternary actually
+# ran. So it cannot check the VALUE a nullable field takes at runtime; what
+# it CAN check statically is that the field is even capable of being null -
+# that it is emitted through that bare-%s splice at all, rather than a
+# hardcoded literal number that could never be null no matter what the
+# sensor does.
+NULLABLE_BARE_KEYS = {
+    'sump': ('distance_mm', 'quality', 'loop_ua'),
+}
+
+def check_status_literals(src):
+    """Every quoted ALL-CAPS token anywhere in the file is a status string
+    literal, however it is assigned - a bare `=`, a ternary branch, the
+    static initializer - so this does not need to know the variable name or
+    the assignment shape to find them all. JSON keys ("distance_mm") and
+    English prose (comments, ESP_LOGI text) are never pure upper-case, so
+    this does not have to separate code from comments to stay accurate."""
+    bad = sorted(set(re.findall(r'"([A-Z][A-Z_]*)"', src)) - set(STATUS_VALUES))
+    return bad
 
 def _is_nullable(role, key):
     t = SCHEMA[role][key]
@@ -153,6 +188,16 @@ def check_role(role, c_path, fake_state):
     for arr_key in ('bore_mv', 'sump_mv'):
         if arr_key in schema and isinstance(obj.get(arr_key), list) and len(obj[arr_key]) != 3:
             fails.append('%s has %d elements, want 3' % (arr_key, len(obj[arr_key])))
+
+    if 'status' in schema:
+        bad = check_status_literals(io_read(c_path))
+        if bad:
+            fails.append('status literal(s) %s not in %s' % (bad, STATUS_VALUES))
+
+    for key in NULLABLE_BARE_KEYS.get(role, ()):
+        if ('"%s":%%s' % key) not in fmt:
+            fails.append('%s is not spliced via a bare %%s in the format string, so it can '
+                         'never be null at runtime regardless of what the sensor reports' % key)
 
     for f in fails:
         print('FAIL %s: %s' % (c_path, f))

@@ -1114,6 +1114,16 @@ static void gf_apply(hub_state_t *s)
         s->sump.last_ok_us  = gs.link.last_ok_us;
         uint8_t pct = (dist == 0) ? 255 : levelPercent(dist, c->full_mm, c->empty_mm);
         if (pct != 255 && !gs.pressure && gs.quality < MIN_LEVEL_QUALITY) pct = 255;
+        /* quality alone is not enough: a loop fault is not a quality problem
+         * at all (gs.quality is not even meaningful in pressure mode - see
+         * the "gs.pressure ? 100" line above), and trusting quality alone
+         * made a node that ever latched a stale-but-confident reading
+         * invisible to this gate (task 10 fix round 1 - fixed at the source
+         * in sensors_sump.c, but the node's own verdict is the more direct
+         * signal and a future regression there should not silently produce
+         * a percentage just because quality happens to still read
+         * acceptable). */
+        if (pct != 255 && (gs.sensor == SENSOR_NO_ECHO || gs.sensor == SENSOR_HW_FAULT)) pct = 255;
         s->sump.pct = (pct == 255) ? -1 : (int16_t)pct;
     } else {
         s->sump.pct = -1;

@@ -22,7 +22,6 @@
  * head; that arithmetic does not belong on the node (spec 4.1, gf.h).
  */
 #include <stdio.h>
-#include <string.h>
 #include "driver/gpio.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -49,8 +48,8 @@ static const char *TAG = "sump";
 #define PRESS_MAX_UA    21000    /* above 20 mA: a shorted loop or miswire */
 
 static bool     s_pressure;                  /* J-PRESS shunt read once at boot */
-static uint16_t s_win[WINDOW]; static uint8_t s_n, s_next;
-static uint16_t s_median_mm; static uint8_t s_quality; static uint8_t s_dead;
+static uint16_t s_win[WINDOW]; static uint8_t s_next, s_filled;
+static uint16_t s_median_mm; static uint8_t s_quality; static uint8_t s_n; static uint8_t s_dead;
 static uint32_t s_loop_ua;
 static const char *s_status = "NO_ECHO";
 static adc_oneshot_unit_handle_t s_adc; static adc_cali_handle_t s_cali; static bool s_cali_ok;
@@ -85,28 +84,39 @@ static uint16_t ping_once(void)
     return mm >= BLIND_ZONE_MM ? mm : 0;   /* sub-blind-zone pulses are artefacts, not water */
 }
 
-/* Rolling median over the last WINDOW raw samples (0 = no echo that cycle,
- * excluded). A median rides out the single wild outlier these sensors throw
- * (foaming borewell inflow, a stray reflection); an average would not. */
-static uint16_t median_push(uint16_t v)
+/* Push one raw sample - 0 included - and recompute the median and quality
+ * from whatever is CURRENTLY in the window, rather than maintaining a
+ * running valid-count that only ever grows. ro_node.ino's sampleTank()
+ * works the same way: every cycle it rebuilds `valid[]` from the whole
+ * window, so a run of dead pings evicts old good samples one slot at a
+ * time until none are left. Getting this wrong is how a transducer that
+ * dies after five good echoes would leave distance_mm/quality latched at
+ * the last good reading forever - reviewed in task 10 fix round 1: the
+ * earlier version only wrote a slot on a non-zero ping, so s_n could grow
+ * but never shrink, and a dead sensor was reported as a live, confident one
+ * (the hub's only gate is quality, so a frozen q100 never gets refused). */
+static void window_update(uint16_t raw)
 {
-    if (v) { s_win[s_next] = v; s_next = (s_next + 1) % WINDOW; if (s_n < WINDOW) s_n++; }
-    if (s_n == 0) return 0;
-    uint16_t t[WINDOW]; memcpy(t, s_win, sizeof t);
-    for (uint8_t i = 1; i < s_n; i++) { uint16_t k = t[i]; int j = i - 1; while (j >= 0 && t[j] > k) { t[j + 1] = t[j]; j--; } t[j + 1] = k; }
-    return t[s_n / 2];
-}
+    s_win[s_next] = raw;
+    s_next = (uint8_t)((s_next + 1) % WINDOW);
+    if (s_filled < WINDOW) s_filled++;
 
-/* How many of the window agree with the median, as a percent: the hub gates
- * a level under q60 (MIN_LEVEL_QUALITY), same rule as the RS485 tank nodes.
- * A single good reading among four timeouts scores low even though it agrees
- * with itself - agreement alone would call that q100, and it is not. */
-static uint8_t quality_of(uint16_t med)
-{
-    if (s_n == 0) return 0;
+    uint16_t valid[WINDOW]; uint8_t n = 0;
+    for (uint8_t i = 0; i < s_filled; i++) if (s_win[i]) valid[n++] = s_win[i];
+    s_n = n;
+    if (n == 0) { s_median_mm = 0; s_quality = 0; return; }   /* nothing credible: report nothing, not stale */
+
+    for (uint8_t i = 1; i < n; i++) { uint16_t k = valid[i]; int j = i - 1; while (j >= 0 && valid[j] > k) { valid[j + 1] = valid[j]; j--; } valid[j + 1] = k; }
+    s_median_mm = valid[n / 2];
+
+    /* How many of the window agree with the median, as a percent: the hub
+     * gates a level under q60 (MIN_LEVEL_QUALITY), same rule as the RS485
+     * tank nodes. Percent of the fixed WINDOW depth, not of n: one lonely
+     * sample among four timeouts scores q20, not q100 - agreeing with
+     * itself is not the same as having been reproduced. */
     uint8_t agree = 0;
-    for (uint8_t i = 0; i < s_n; i++) if ((s_win[i] > med ? s_win[i] - med : med - s_win[i]) <= AGREE_MM) agree++;
-    return (uint8_t)((agree * 100) / WINDOW);
+    for (uint8_t i = 0; i < n; i++) if ((valid[i] > s_median_mm ? valid[i] - s_median_mm : s_median_mm - valid[i]) <= AGREE_MM) agree++;
+    s_quality = (uint8_t)((agree * 100) / WINDOW);
 }
 
 /* Averaged raw microamps across the 100R sense resistor. No live-zero check
@@ -163,9 +173,15 @@ void sensors_sample(void)
     }
     uint16_t raw = ping_once();
     s_dead = raw ? 0 : (s_dead < 255 ? s_dead + 1 : 255);
-    s_median_mm = median_push(raw);
-    s_quality = quality_of(s_median_mm);
-    if (s_dead >= DEAD_CYCLES || s_n == 0) s_status = "NO_ECHO";   /* hardware fault: nothing credible in ten cycles */
+    window_update(raw);
+    /* s_n reaches 0 - and the reading above already zeroed - after WINDOW
+     * (5) consecutive dead pings, sooner than DEAD_CYCLES (10). DEAD_CYCLES
+     * is kept as the named backstop for the status transition itself,
+     * matching the interface's "NO_ECHO after 10 consecutive empty cycles";
+     * s_n == 0 is the condition that actually fires first and is what
+     * guarantees NO_ECHO is reached (never OK or BLIND) once the window has
+     * nothing credible left, however many cycles that took. */
+    if (s_dead >= DEAD_CYCLES || s_n == 0) s_status = "NO_ECHO";
     else if (s_median_mm < BLIND_ZONE_MM)  s_status = "BLIND";     /* echoing, but too close to trust - ladder/riser range */
     else                                    s_status = "OK";
 }
