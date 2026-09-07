@@ -461,6 +461,9 @@ typedef struct {
     int16_t  temp_deci_c;          /* water, not air */
     uint16_t ppm;                  /* TDS_INVALID when it cannot be computed */
     bool     fitted;               /* a DS18B20 answered its presence pulse */
+    bool     live;                 /* read this window with the probe under water;
+                                    * false = ppm/temp are HELD from the last time
+                                    * the level was above cal tds_min_pct */
     int64_t  last_ok_us;
 } wq_state_t;
 

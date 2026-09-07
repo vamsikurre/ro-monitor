@@ -1139,10 +1139,27 @@ static void poll_task(void *arg)
             /* An offline node has no water quality either. Without this the last
              * good reading sits in the app looking current, which is the failure
              * the tank levels already refuse. */
-            if (local.rwt_online) read_water_quality(NODE_ADDR_RWT, &local.rwt_wq, CAL_TANK_RWT);
-            else                  { local.rwt_wq.fitted = false; local.rwt_wq.ppm = TDS_INVALID; }
-            if (local.twt_online) read_water_quality(NODE_ADDR_TWT, &local.twt_wq, CAL_TANK_TWT);
-            else                  { local.twt_wq.fitted = false; local.twt_wq.ppm = TDS_INVALID; }
+            /* The probe leads only reach the water near the top of the tank
+             * (WIRING.md 9.5), so a reading taken with the level below
+             * tds_min_pct is a reading of air, or of half-wet electrodes - which
+             * is worse, because it is a plausible low number. Poll only when the
+             * probe is under water; otherwise HOLD the last good pair and let the
+             * page show its age. An offline node holds too: the water has not
+             * changed because the bus dropped. */
+            #define WQ_SUBMERGED(t, c) ((t).pct >= 0 && (t).pct >= (int16_t)cal_tank(c)->tds_min_pct)
+            if (local.rwt_online && WQ_SUBMERGED(local.rwt, CAL_TANK_RWT)) {
+                read_water_quality(NODE_ADDR_RWT, &local.rwt_wq, CAL_TANK_RWT);
+                local.rwt_wq.live = local.rwt_wq.fitted;
+            } else {
+                local.rwt_wq.live = false;
+            }
+            if (local.twt_online && WQ_SUBMERGED(local.twt, CAL_TANK_TWT)) {
+                read_water_quality(NODE_ADDR_TWT, &local.twt_wq, CAL_TANK_TWT);
+                local.twt_wq.live = local.twt_wq.fitted;
+            } else {
+                local.twt_wq.live = false;
+            }
+            #undef WQ_SUBMERGED
             /* Feed and permeate of the same plant. The ratio is the membrane's
              * health; either number alone mostly tracks the source water. */
             local.rejection_pct = rejectionPercent(local.rwt_wq.ppm, local.twt_wq.ppm);

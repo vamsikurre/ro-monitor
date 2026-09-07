@@ -401,8 +401,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"hpp\":{\"on\":%s,\"state\":\"ONLINE\"}"
         "},"
         "\"quality\":{"
-          "\"rwt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s},"
-          "\"twt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s},"
+          "\"rwt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s,\"live\":%s,\"age_s\":%d},"
+          "\"twt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s,\"live\":%s,\"age_s\":%d},"
           "\"rejection\":%s"
         "},"
         "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":false,\"sump_floty\":false,"
@@ -455,7 +455,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->hpp.running ? "true" : "false",
 
         rwt_ppm, rwt_wt, s->rwt_wq.fitted ? "true" : "false",
+        s->rwt_wq.live ? "true" : "false", age_s(s->rwt_wq.last_ok_us),
         twt_ppm, twt_wt, s->twt_wq.fitted ? "true" : "false",
+        s->twt_wq.live ? "true" : "false", age_s(s->twt_wq.last_ok_us),
         rejection,
 
         s->twt_float_closed ? "true" : "false",
@@ -512,7 +514,7 @@ static esp_err_t cal_get(httpd_req_t *req)
      * have tipped it. The guard at the end turns an overflow into a 500 rather
      * than a truncated page, which is the right failure, but it is still /cal
      * simply not opening. Static, so this is BSS rather than stack. */
-    static char page[8192];
+    static char page[10240];   /* grew past 8 k with the water-quality fieldset */
     int n = 0;
 
     n += snprintf(page + n, sizeof(page) - n,
@@ -609,6 +611,24 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_LIMIT_LOW_DECI / 10, FAN_LIMIT_LOW_DECI % 10,
         FAN_LIMIT_HIGH_DECI / 10, FAN_LIMIT_HIGH_DECI % 10,
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
+
+    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=wq><legend>Water quality probes</legend>");
+    for (int i = 0; i < CAL_TANK_COUNT - 1; i++) {          /* RWT, TWT - the dosing drum has none */
+        const cal_tank_cfg_t *c = cal_tank(i);
+        n += snprintf(page + n, sizeof(page) - n,
+            "<form method=post action='/api/cal/wq'><input type=hidden name=tank value=%d>"
+            "<b>%s</b> &nbsp; k <input name=k size=5 value='%u.%02u'> &nbsp; "
+            "probe under water at or above <input name=min size=3 value='%u'> %% "
+            "<button>Save</button></form>",
+            i, i == CAL_TANK_RWT ? "RWT" : "TWT",
+            c->tds_k_x100 / 100, c->tds_k_x100 % 100, c->tds_min_pct);
+    }
+    n += snprintf(page + n, sizeof(page) - n,
+        "<p><small><b>k</b> scales the TDS reading: a 707 ppm sachet reading 640 wants "
+        "707/640 = 1.10. Re-do it after extending a probe lead. <b>Under water at</b> is "
+        "the level where the probe tip goes dry: below it the hub keeps the last good "
+        "reading and the dashboard shows its age, instead of believing a probe in air. "
+        "0.50&ndash;2.00 and 0&ndash;100.</small></p></fieldset>");
 
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset id=plant><legend>Plant output</legend>"
@@ -860,6 +880,27 @@ static esp_err_t cal_fan_post(httpd_req_t *req)
     return redirect_to(req, "/cal#fan");
 }
 
+static esp_err_t cal_wq_post(httpd_req_t *req)
+{
+    char body[128], f[8], k[12], mn[8];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "tank", f, sizeof(f)) ||
+        !form_field(body, "k", k, sizeof(k)) ||
+        !form_field(body, "min", mn, sizeof(mn))) {
+        return bad(req, "need tank, k and min");
+    }
+    int idx = atoi(f);
+    if (idx < 0 || idx >= CAL_TANK_COUNT - 1) return bad(req, "tank must be 0 or 1");
+    /* k arrives as "1.10"; store x100. Two decimals is the resolution that matters. */
+    double kd = atof(k);
+    int    mp = atoi(mn);
+    if (kd <= 0 || mp < 0 || mp > 100) return bad(req, "k or min not a number in range");
+    if (cal_set_tds((cal_tank_t)idx, (uint16_t)(kd * 100.0 + 0.5), (uint8_t)mp) != ESP_OK) {
+        return bad(req, "rejected: k 0.50-2.00, level 0-100");
+    }
+    return redirect_to(req, "/cal#wq");
+}
+
 static esp_err_t cal_plant_post(httpd_req_t *req)
 {
     char body[64], lph[8];
@@ -935,6 +976,7 @@ esp_err_t web_start(void)
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
         { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
         { "/api/cal/plant", HTTP_POST, cal_plant_post, false },
+        { "/api/cal/wq",    HTTP_POST, cal_wq_post,    false },
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };

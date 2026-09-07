@@ -37,6 +37,11 @@ typedef struct {
      * k = 707/640 = 1.10, so 110. Per tank, because two probes of the same part
      * number do not agree out of the bag. */
     uint16_t tds_k_x100;
+    /* Level at or above which the TDS/temperature probe is under water. Below
+     * it the hub keeps the last good reading and shows its age instead of
+     * trusting a probe that is measuring air. 90 until the leads are extended
+     * to the tank's low mark, then whatever level the tip actually sits at. */
+    uint8_t  tds_min_pct;
 } cal_tank_cfg_t;
 
 typedef struct {
@@ -56,7 +61,7 @@ const cal_ct_cfg_t   *cal_ct(cal_ct_t c);
 /* Each setter validates before it stores. A typo from a phone must not be able
  * to produce a calibration that reads plausibly and is wrong. */
 esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm);
-esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100);
+esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100, uint8_t min_pct);
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps);
 esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c);
 

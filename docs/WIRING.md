@@ -1184,6 +1184,34 @@ raising the pin current.**
 **Both probes must be in the same water**, close together, or the compensation is
 compensating for a temperature the TDS probe never saw.
 
+#### 9.5.2.1. Probe depth — the leads are too short (found 2026-09-07)
+
+As delivered, both probe leads reach the water **only when the tank is nearly
+full**. The rest of the time the TDS electrodes are in air (reads ~0 mV, which the
+hub already rejects) or half-wet (reads a plausible LOW ppm, which it did not), and
+the DS18B20 is reading air temperature and "compensating" with it.
+
+Two fixes, do both:
+
+1. **Extend the leads and mount the tips at the tank's low mark, ~15–20 %.** Not
+   the floor — sediment on the electrodes is what ruins TDS. DS18B20: 1-Wire in
+   powered mode with the 4k7 pull-up is good for 10 m+, so 2–3 m of 3-core is
+   nothing. TDS probe: 2-core screened, 2–3 m; the added capacitance shifts the
+   reading by a constant that `k` absorbs — **re-run the 707 ppm calibration
+   after extending** (`/cal`, "Water quality probes"). Solder and heat-shrink
+   the joints. The node powers the TDS board only during its 10 s sample
+   (`PIN_TDS_POWER`), so a permanently wet probe does not electrolyse.
+2. **Tell the hub where the tip is.** `/cal` → "Water quality probes" → *probe
+   under water at or above N %*, default **90** until the leads are extended.
+   Below that level the hub does not poll water quality at all; it **holds the
+   last good pair** and the dashboard shows its age in grey ("612 ppm · 4 h ago,
+   probe above water"). An offline node holds too. "No reading" is reserved for a
+   probe that should be wet and is not answering.
+
+With a 90 % gate and no extension, expect one fresh reading per fill — enough
+for a daily rejection figure, since the plant fills TWT most days, but not for
+seeing a membrane change within a run. That is what the extension buys.
+
 #### 9.5.3. Calibration and what the numbers can mean
 
 The hub stores a **k factor per tank** (`tds_k_x100`, NVS, default `1.00`).

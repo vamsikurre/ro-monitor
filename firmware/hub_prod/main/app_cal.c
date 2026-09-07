@@ -25,9 +25,9 @@ static const char *NVS_NS = "ro_cal";
  * face. The old 900 mm "empty" assumed a bracket that was never fitted and could
  * never read below ~55 % - the dosing-low alert was unreachable. */
 static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
-    [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
-    [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100 },
-    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100 },
+    [CAL_TANK_RWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_TWT] = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_DOS] = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100, .tds_min_pct = 0 },
 };
 
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
@@ -111,6 +111,9 @@ esp_err_t cal_init(void)
         load_u16(h, s_tank_keys[i], "f", &s_tanks[i].full_mm);
         load_u16(h, s_tank_keys[i], "e", &s_tanks[i].empty_mm);
         load_u16(h, s_tank_keys[i], "k", &s_tanks[i].tds_k_x100);
+        uint16_t mp = s_tanks[i].tds_min_pct;
+        load_u16(h, s_tank_keys[i], "m", &mp);
+        s_tanks[i].tds_min_pct = (mp <= 100) ? (uint8_t)mp : 90;
     }
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         load_u16(h, s_ct_keys[i], "s", &s_cts[i].amps_per_volt_x100);
@@ -175,7 +178,7 @@ esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm)
     return err;
 }
 
-esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100)
+esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100, uint8_t min_pct)
 {
     if (t >= CAL_TANK_COUNT) {
         return ESP_ERR_INVALID_ARG;
@@ -187,7 +190,15 @@ esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100)
     }
     s_tanks[t].tds_k_x100 = k_x100;
     ESP_LOGI(TAG, "%s TDS k: %u.%02u", s_tank_keys[t], k_x100 / 100, k_x100 % 100);
-    return store_u16(s_tank_keys[t], "k", k_x100);
+    if (min_pct > 100) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_tanks[t].tds_min_pct = min_pct;
+    esp_err_t err = store_u16(s_tank_keys[t], "k", k_x100);
+    if (err == ESP_OK) {
+        err = store_u16(s_tank_keys[t], "m", min_pct);
+    }
+    return err;
 }
 
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns, uint16_t oc_deci_amps)

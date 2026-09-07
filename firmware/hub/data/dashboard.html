@@ -1652,9 +1652,14 @@ function render(s) {
   /* "Not fitted" and "no reading" are different facts and must not print the
      same: the first is a probe nobody has installed, the second is one that has
      stopped answering. Same distinction the tank levels draw. */
+  /* A probe above the water line is not a fault: the hub HOLDS the last good
+     pair and says how old it is. Grey chip, age in the sub-line. "No reading"
+     is reserved for a probe that should be wet and is not answering. */
   const ppm = w => !w.fitted ? "Not fitted" : w.ppm === null ? "No reading" : `${w.ppm} ppm`;
-  const kind = w => !w.fitted ? "off" : w.ppm === null ? "warn" : "on";
-  const wt  = w => (w.fitted && w.t !== null) ? `${w.t.toFixed(1)} °C` : null;
+  const kind = w => !w.fitted ? "off" : w.ppm === null ? "warn" : w.live === false ? "off" : "on";
+  const wt  = w => (w.fitted && w.t !== null)
+    ? `${w.t.toFixed(1)} °C${w.live === false && w.age_s !== undefined ? ` · ${ago(w.age_s)} ago, probe above water` : ""}`
+    : null;
   let rejLabel = "–", rejKind = "off";
   if (Q.rejection !== null) {
     rejLabel = `${Q.rejection}%`;
@@ -1817,8 +1822,8 @@ const demo = {
   },
   run: { hpp: { today_s: 13380, starts: 4, total_s: 2209000 }, rwp: { today_s: 13920, starts: 4, total_s: 2231000 }, plant_lph: 900 },
   quality: {
-    rwt: { ppm: 612, t: 28.4, fitted: true },
-    twt: { ppm: 31, t: 28.1, fitted: true },
+    rwt: { ppm: 612, t: 28.4, fitted: true, live: false, age_s: 14200 },
+    twt: { ppm: 31, t: 28.1, fitted: true, live: true, age_s: 4 },
     rejection: 95,
   },
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false, lps: false },
