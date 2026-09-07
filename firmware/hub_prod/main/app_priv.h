@@ -404,6 +404,16 @@ typedef enum {
 #define DEV_RO_ROOM             "RO Room"
 #define DEV_BATTERY_ROOM        "Battery Room"
 #define DEV_TANKS               "Water Tanks"
+#define DEV_GROUND              "Ground Floor"
+
+#define PARAM_SUMP_PCT          "Sump Level"
+#define PARAM_RWT_FLOAT         "RWT Float Full"
+#define PARAM_BORE_ON           "Borewell Running"
+#define PARAM_SMOT_ON           "Sump Motor Running"
+#define PARAM_BORE_AMPS         "Borewell Current"
+#define PARAM_SMOT_AMPS         "Sump Motor Current"
+#define PARAM_UTIL_TEMP         "Utility Room Temp"
+#define PARAM_UTIL_HUM          "Utility Room Humidity"
 
 #define PARAM_RWT_PCT           "Raw Water Level"
 #define PARAM_TWT_PCT           "Treated Water Level"

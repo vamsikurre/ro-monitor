@@ -241,6 +241,7 @@ static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_
 /* --------------------------------------------------------- RainMaker handles */
 
 static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
+static esp_rmaker_device_t *s_dev_ground;
 static esp_rmaker_device_t *s_dev_ro_room;
 static esp_rmaker_device_t *s_dev_ro_room;
 static esp_rmaker_device_t *s_dev_battery;
@@ -548,11 +549,15 @@ static void evaluate_alerts(const hub_state_t *s)
              "Check membranes, reject valve and feed.", NOPROD_WINDOW_MIN, s->twt.pct);
     alert_eval(&s_al_noprod, s->no_production, msg, ALERT_REPEAT_MS, 3);
 
-    bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online;
-    snprintf(msg, sizeof(msg), "RS485 node offline: %s%s%s. Check the bus and the terminators.",
+    bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online ||
+                    (s->sump_configured && !s->sump_online) ||
+                    (s->utility_configured && !s->utility_online);
+    snprintf(msg, sizeof(msg), "Node offline: %s%s%s%s%s. Check bus or LAN.",
              s->rwt_online ? "" : "0x02 RWT ",
              s->twt_online ? "" : "0x03 TWT ",
-             s->battery_online ? "" : "0x04 Battery ");
+             s->battery_online ? "" : "0x04 Battery ",
+             (s->sump_configured && !s->sump_online) ? "0x05 Sump " : "",
+             (s->utility_configured && !s->utility_online) ? "0x06 Utility " : "");
     alert_eval(&s_al_node_lost, any_lost, msg, 0, 1);
 }
 
@@ -1172,6 +1177,8 @@ static void poll_task(void *arg)
     float last_ro_t = -9999, last_ro_h = -9999, last_bat_t = -9999, last_bat_h = -9999;
     float last_hpp_a = -9999, last_rwp_a = -9999;
     float last_rwt_wt = -9999, last_twt_wt = -9999;
+    int   last_sump = INT32_MIN, last_bore_on = -1, last_smot_on = -1, last_rwt_float = -1;
+    float last_bore_a = -9999, last_smot_a = -9999, last_util_t = -9999, last_util_h = -9999;
 
     /* Survives a power cut: without this the first thing a returning hub reports
      * is that the plant has never run. */
@@ -1390,6 +1397,20 @@ static void poll_task(void *arg)
         if (local.rwt.pct >= 0) report_int(s_dev_tanks, PARAM_RWT_PCT, local.rwt.pct, &last_rwt, 3);
         if (local.twt.pct >= 0) report_int(s_dev_tanks, PARAM_TWT_PCT, local.twt.pct, &last_twt, 3);
         if (local.dosing.pct >= 0) report_int(s_dev_tanks, PARAM_DOS_PCT, local.dosing.pct, &last_dos, 3);
+        if (local.sump_online && local.sump.pct >= 0) report_int(s_dev_tanks, PARAM_SUMP_PCT, local.sump.pct, &last_sump, 3);
+        if (local.utility_online && local.rwt_floty >= 0) report_bool(s_dev_tanks, PARAM_RWT_FLOAT, local.rwt_floty == 1, &last_rwt_float);
+        if (local.utility_online) {
+            report_bool(s_dev_ground, PARAM_BORE_ON, local.borewell.running, &last_bore_on);
+            report_bool(s_dev_ground, PARAM_SMOT_ON, local.sump_motor.running, &last_smot_on);
+            if (local.borewell.deci_amps >= 0)
+                report_float(s_dev_ground, PARAM_BORE_AMPS, local.borewell.deci_amps / 10.0f, &last_bore_a, 0.3f);
+            if (local.sump_motor.deci_amps >= 0)
+                report_float(s_dev_ground, PARAM_SMOT_AMPS, local.sump_motor.deci_amps / 10.0f, &last_smot_a, 0.3f);
+            if (!local.utility_room.fault) {
+                report_float(s_dev_ground, PARAM_UTIL_TEMP, local.utility_room.temp_deci_c / 10.0f, &last_util_t, 0.3f);
+                report_float(s_dev_ground, PARAM_UTIL_HUM,  local.utility_room.hum_deci_pct / 10.0f, &last_util_h, 1.0f);
+            }
+        }
 
         report_bool(s_dev_ro_room, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
         report_bool(s_dev_ro_room, PARAM_RWP_ON, local.rwp.running, &last_rwp_on);
@@ -1729,6 +1750,10 @@ static void build_node(esp_rmaker_node_t *node)
      * reading low means one of the two is lying. */
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_FLOAT, "esp.param.toggle",
                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_SUMP_PCT, "esp.param.water-level",
+                                                      esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_FLOAT, "esp.param.toggle",
+                                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_RWT_TDS, "esp.param.concentration",
                                                       esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_TWT_TDS, "esp.param.concentration",
@@ -1740,6 +1765,26 @@ static void build_node(esp_rmaker_node_t *node)
     esp_rmaker_device_add_param(s_dev_tanks, ro_param(PARAM_REJECTION, "esp.param.percentage",
                                                       esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
     esp_rmaker_node_add_device(node, s_dev_tanks);
+
+    /* ============================== GROUND FLOOR ==============================
+     * Node 0x06 in the starter panel: what the two motors are doing and the
+     * air around them. The sump level itself sits with the other tanks. */
+    s_dev_ground = esp_rmaker_device_create(DEV_GROUND, "esp.device.other", NULL);
+    esp_rmaker_param_t *bo = ro_param(PARAM_BORE_ON, ESP_RMAKER_PARAM_POWER,
+                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE);
+    esp_rmaker_device_add_param(s_dev_ground, bo);
+    esp_rmaker_device_assign_primary_param(s_dev_ground, bo);
+    esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_SMOT_ON, ESP_RMAKER_PARAM_POWER,
+                                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));
+    esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_BORE_AMPS, "esp.param.current",
+                                                       esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_SMOT_AMPS, "esp.param.current",
+                                                       esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_UTIL_TEMP, ESP_RMAKER_PARAM_TEMPERATURE,
+                                                       esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_UTIL_HUM, "esp.param.humidity",
+                                                       esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_node_add_device(node, s_dev_ground);
 }
 
 /* ------------------------------------------------------------- connectivity */
