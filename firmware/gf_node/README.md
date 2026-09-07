@@ -99,11 +99,17 @@ booted), and reboots into it. `POST /ota` replies before the reboot:
 | :--- | :--- |
 | `200 OK N bytes, rebooting into ota_N` | written, validated, rebooting |
 | `400` | body too small, or not a valid ESP32 app image |
+| `408` | transfer stalled for 60 s (a dropped-association Wi-Fi failure looks like this, not like a clean disconnect) |
 | `413` | image larger than the OTA slot |
-| `500` | partition, write, or boot-partition-set failure |
+| `500` | no free partition, connection dropped, flash write failed, or the image is valid but the boot pointer could not be set — each with its own reason string in the body |
 
 None of the failure responses reboot the node or leave the target slot in a
-state that blocks a second attempt — a bad push just means try again.
+state that blocks a second attempt — a bad push just means try again. That
+includes a stall: without the 60 s deadline, a silently-dropped Wi-Fi
+association mid-transfer would leave the handler blocked forever, taking
+telemetry and every future OTA attempt down with it until someone power-cycled
+the node — the deadline exists specifically so that failure mode ends in a
+`408` and a free node, not a trip to a manhole.
 
 The new image boots **pending-verify**. `main.c`'s watch marks it good only
 once the node has Wi-Fi **and** has answered one `/api/telemetry` request;
