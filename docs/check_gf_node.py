@@ -93,10 +93,27 @@ def io_read(path):
 _CONV = re.compile(r'%[-+0 #]*\d*(?:\.\d+)?(?:hh|h|ll|l|j|z|t|L)?[diouxXeEfFgGaAcs]')
 
 def fill_format(fmt):
-    """Replace printf conversions with JSON-shaped placeholders. %s already
-    sits inside quotes the literal supplies; every other conversion here is a
-    bare number - so this only has to get the shape right, never the value."""
-    return _CONV.sub(lambda m: 'x' if m.group(0)[-1] == 's' else '0', fmt)
+    """Replace printf conversions with JSON-shaped placeholders.
+
+    A %s directly between two quotes ("...":"%s") is a JSON string field -
+    filled with an unquoted token so the literal's own quotes wrap it, same as
+    before. A BARE %s (no adjacent quote either side) is Task 10's pattern for
+    a field that is null on one sensor path and a plain number on the other
+    (sensors_sump.c's distance_mm/quality/loop_ua, spliced from a sub-buffer
+    the C code fills with either "null" or an snprintf'd number): this
+    extractor only sees the format string, never the branch that decides
+    which, so it cannot generate both shapes. It fills `null` instead of an
+    unquoted 'x' - one of the two values that spot can actually hold at
+    runtime, and syntactically valid either way, where 'x' is valid in
+    neither. Every other conversion here is a bare number."""
+    def repl(m):
+        conv = m.group(0)
+        if conv[-1] != 's':
+            return '0'
+        start, end = m.span()
+        quoted = start > 0 and end < len(fmt) and fmt[start - 1] == '"' and fmt[end] == '"'
+        return 'x' if quoted else 'null'
+    return _CONV.sub(repl, fmt)
 
 def load_fake_state():
     spec = importlib.util.spec_from_file_location('fake_gf_node', FAKE)
