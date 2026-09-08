@@ -560,7 +560,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <div class="hstat"><span class="legend">Bus</span><span class="readout" id="hBus">–</span></div>
     <div class="hstat"><span class="legend">Signal</span><span class="readout" id="hRssi">–</span></div>
     <div class="hstat"><span class="legend">Uptime</span><span class="readout" id="hUp">–</span></div>
-    <div class="hstat"><span class="legend">Updated</span><span class="readout" id="hClock">–</span></div>
+    <div class="hstat"><span class="legend" id="hClockLbl">Updated</span><span class="readout" id="hClock">–</span></div>
   </div>
 </header>
 
@@ -653,7 +653,11 @@ const node = (cls, html) => {
   return d;
 };
 const chip = (text, kind) => txt("chip " + (kind || ""), text);
-const ago = s => s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
+/* null-safe: with the hub unreachable there is no age to report, and the bare
+   version returned "nulls" for it. `null < 60` is true, which is the sort of
+   thing that reaches a plant screen rather than a compiler. */
+const ago = s => s == null ? "–"
+            : s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
 const dur = s => {
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   if (d) return `${d}d ${h}h`;
@@ -1674,18 +1678,28 @@ function updatePlant(s) {
   if (room) room.classList.toggle("alarm", !!s.aster.alarm);
 
   const e = s.env.ro_room;
-  const vt = document.querySelector('[data-env="t"]'), vh = document.querySelector('[data-env="rh"]');
-  if (vt && e.state === "ONLINE") vt.innerHTML = `${e.t.toFixed(1)}<u>\u00b0C</u>`;
-  if (vh && e.state === "ONLINE") vh.innerHTML = `${e.rh.toFixed(0)}<u>%</u>`;
+  /* These wrote only in the ONLINE case, with no else - so going offline did
+     not clear the reading, it merely stopped refreshing it. The last good
+     temperature then sat there in the same typeface as a live one for as long
+     as the node, or the hub, stayed down. That is the class of bug this file
+     argues against everywhere else - "null amps rather than 0.0 for a missing
+     clamp" - and it was still here. Clear, do not just stop refreshing. */
+  const envVal = (sel, txt) => {
+    const el = document.querySelector(sel);
+    if (el) el.innerHTML = txt === null ? "—" : txt;
+  };
+  const degC = v => `${v.toFixed(1)}<u>\u00b0C</u>`;
+  const pctRH = v => `${v.toFixed(0)}<u>%</u>`;
+  const envOk = o => !!o && o.state === "ONLINE" && o.t != null && o.rh != null;
+  envVal('[data-env="t"]',   envOk(e) ? degC(e.t)   : null);
+  envVal('[data-env="rh"]',  envOk(e) ? pctRH(e.rh) : null);
 
   const B = s.env.battery_room;
-  const bvt = document.querySelector('[data-env="bt"]'), bvh = document.querySelector('[data-env="brh"]');
-  if (bvt && B.state === "ONLINE") bvt.innerHTML = `${B.t.toFixed(1)}<u>\u00b0C</u>`;
-  if (bvh && B.state === "ONLINE") bvh.innerHTML = `${B.rh.toFixed(0)}<u>%</u>`;
+  envVal('[data-env="bt"]',  envOk(B) ? degC(B.t)   : null);
+  envVal('[data-env="brh"]', envOk(B) ? pctRH(B.rh) : null);
   const U = s.env && s.env.utility_room;
-  const uvt = document.querySelector('[data-env="ut"]'), uvh = document.querySelector('[data-env="urh"]');
-  if (uvt && U && U.state === "ONLINE") uvt.innerHTML = `${U.t.toFixed(1)}<u>°C</u>`;
-  if (uvh && U && U.state === "ONLINE") uvh.innerHTML = `${U.rh.toFixed(0)}<u>%</u>`;
+  envVal('[data-env="ut"]',  envOk(U) ? degC(U.t)   : null);
+  envVal('[data-env="urh"]', envOk(U) ? pctRH(U.rh) : null);
 
   const annex = document.querySelector(".annex");
   if (annex) {
@@ -1757,6 +1771,24 @@ function drawAlerts(s) {
   const out = [], T = s.tanks;
   const add = (kind, title, body, where) => out.push({ kind, title, body, where });
 
+  /* With the hub unreachable there is exactly one thing worth saying, and every
+     other test below is being fed cleared values. The node loop is the reason
+     this returns early rather than just adding a banner: offlineView() marks
+     every node OFFLINE, so it would raise six "Node offline" alerts naming
+     specific nodes whose state nobody actually knows - and the stack only has
+     room for about five before it reaches the drawing. */
+  if (HUB_STALE) {
+    const since = LAST_GOOD_AT
+      ? LAST_GOOD_AT.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "never";
+    add("fault", "Hub offline",
+        `No telemetry since ${since}. Every reading on this page has been cleared — ` +
+        `the plant is not necessarily faulty, but nothing here is current.`, "Hub");
+    out.forEach(a => { a.key = a.kind + "|" + a.title + "|" + a.where; });
+    paintAlerts(out);
+    return;
+  }
+
   if (T.sump.state === "ONLINE" && T.sump.pct < 15)
     add("fault", "Dry run risk", "Sump below 15 percent. Sump motor should be held off until it recovers.", "Sump");
   [["sump", "Sump"], ["rwt", "Raw Water"], ["twt", "Treated Water"]].forEach(([k, n]) => {
@@ -1787,6 +1819,12 @@ function drawAlerts(s) {
     add("warn", "Node offline", `The ${n.role} node has not answered for ${ago(n.age_s)}.`, n.id));
 
   out.forEach(a => { a.key = a.kind + "|" + a.title + "|" + a.where; });
+  paintAlerts(out);
+}
+
+/* The dismiss bookkeeping and the DOM build, split out so the hub-offline path
+   above can reuse it rather than keep a second copy in step. */
+function paintAlerts(out) {
   const live = new Set(out.map(a => a.key));
   [...DISMISSED].forEach(k => { if (!live.has(k)) DISMISSED.delete(k); });
 
@@ -1864,19 +1902,28 @@ function render(s) {
   ]);
 
   const A = s.aster;
+  /* Tri-state, all of them: true, false, and null for "nothing is reading this
+     contact". RWT FLOTY was the only one written this way, for the unfitted
+     optocoupler, and its comment gave the general rule - "Open" for a contact
+     nothing reads is a claim about the plant. The same is true of every row
+     here the moment the hub stops answering: `null ? "Closed" : "Open"` is
+     "Open", so a dead hub used to report eight healthy contacts. */
+  const contact = (v, closed, open, kind, note) =>
+    v == null ? ["—", "off", note || "No data"]
+              : [v ? closed : open, v ? kind : "off", ""];
   rows($("#cAster"), [
-    ["TWT FLOTY", A.twt_floty ? "Closed" : "Open", A.twt_floty ? "on" : "off"],
-    /* Tri-state: true closed, false open, null the optocoupler is not fitted.
-       "Open" for a contact nothing reads is a claim about the plant. */
-    ["RWT FLOTY", A.rwt_floty == null ? "—" : (A.rwt_floty ? "Closed" : "Open"),
-                  A.rwt_floty == null ? "off" : (A.rwt_floty ? "on" : "off"),
-                  A.rwt_floty == null ? "Not wired" : ""],
-    ["SUMP FLOTY", A.sump_floty ? "Closed" : "Open", A.sump_floty ? "on" : "off"],
-    ["DOS LVL", A.dos_lvl ? "Closed" : "Open", A.dos_lvl ? "on" : "off"],
-    ["RL1", A.rl1 ? "Active" : "Inactive", A.rl1 ? "on" : "off"],
-    ["RL2", A.rl2 ? "Active" : "Inactive", A.rl2 ? "on" : "off"],
-    ["LPS", A.lps ? "Low pressure" : "Normal", A.lps ? "warn" : "off"],
-    ["ALARM", A.alarm ? (A.lps ? "Low pressure" : "Active") : "Clear", A.alarm ? "fault" : "off"],
+    ["TWT FLOTY",  ...contact(A.twt_floty,  "Closed", "Open", "on")],
+    /* "Not wired" is only true when the hub is answering and reports null for
+       this one contact. With the hub offline every contact is null, and the
+       reason is the hub, not the optocoupler. */
+    ["RWT FLOTY",  ...contact(A.rwt_floty,  "Closed", "Open", "on",
+                              HUB_STALE ? "No data" : "Not wired")],
+    ["SUMP FLOTY", ...contact(A.sump_floty, "Closed", "Open", "on")],
+    ["DOS LVL",    ...contact(A.dos_lvl,    "Closed", "Open", "on")],
+    ["RL1",        ...contact(A.rl1, "Active", "Inactive", "on")],
+    ["RL2",        ...contact(A.rl2, "Active", "Inactive", "on")],
+    ["LPS",        ...contact(A.lps, "Low pressure", "Normal", "warn")],
+    ["ALARM",      ...contact(A.alarm, A.lps ? "Low pressure" : "Active", "Clear", "fault")],
   ]);
   rows($("#cNodes"), s.nodes.map(n => {
     let label = "Offline", kind = "fault";
@@ -1886,8 +1933,8 @@ function render(s) {
     return [`${n.id}  ${n.role}`, label, kind, `${n.link}${extra} · ${ago(n.age_s)}`];
   }));
 
-  $("#hBus").textContent = `${s.rs485.online}/${s.rs485.total}`;
-  $("#hRssi").textContent = `${s.sys.rssi} dBm`;
+  $("#hBus").textContent = HUB_STALE ? "–" : `${s.rs485.online}/${s.rs485.total}`;
+  $("#hRssi").textContent = HUB_STALE ? "–" : `${s.sys.rssi} dBm`;
   /* A git description - "2e3e447", or "2e3e447-dirty" for a build made from
      a tree that was not committed. Mono, because it is an identifier to be
      read character by character and compared, not a number to be skimmed. */
@@ -1903,18 +1950,97 @@ function render(s) {
      starts failing. */
   const kb = b => (b == null) ? "–" : Math.round(b / 1024) + "k";
   const hh = $("#hHeap");
-  hh.textContent = kb(s.sys.heap_free);
+  hh.textContent = HUB_STALE ? "–" : kb(s.sys.heap_free);
   hh.className = "readout mono" +
     (s.sys.heap_free == null ? "" :
      s.sys.heap_free < 20480 ? " bad" : s.sys.heap_free < 40960 ? " warn" : "");
   $("#fHeapMin").textContent = kb(s.sys.heap_min);
-  $("#hUp").textContent = dur(s.sys.uptime_s);
-  $("#hClock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  $("#hUp").textContent = HUB_STALE ? "–" : dur(s.sys.uptime_s);
+  /* Live: the time of this reading. Stale: the time of the LAST one, which is
+     the single most useful thing on the page once the hub goes quiet - it says
+     how old everything you are looking at is. The legend beside it switches
+     from "Updated" to "Last good" so the timestamp cannot be misread as now. */
+  $("#hClockLbl").textContent = HUB_STALE ? "Last good" : "Updated";
+  if (!HUB_STALE) LAST_GOOD_AT = new Date();
+  $("#hClock").textContent = (LAST_GOOD_AT || new Date())
+    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   $("#fReset").textContent = s.sys.reset_reason;
-  $("#fErr").textContent = s.rs485.errors;
-  $("#fPoll").textContent = s.rs485.last_poll_ms + " ms";
+  $("#fErr").textContent = HUB_STALE ? "–" : s.rs485.errors;
+  $("#fPoll").textContent = HUB_STALE ? "–" : s.rs485.last_poll_ms + " ms";
 }
 let LAST = null;
+/* True once the hub has missed telemetry for STALE_AFTER_MS. Read by the aster
+   rows and the header, which have to say WHY a reading is missing. */
+let HUB_STALE = false;
+/* Wall-clock of the last successful telemetry fetch. Survives going stale, so
+   the header can say how old what you are looking at actually is. */
+let LAST_GOOD_AT = null;
+/* One dropped poll is normal: the poll is 1 s, the hub is an ESP32 sharing a
+   16-socket pool with MQTT and the ground-floor poll, and it drops the odd
+   request. Going offline on a single miss would flicker constantly, which is
+   its own kind of confusion. Six seconds is about five consecutive misses -
+   fast enough to trust on a plant, slow enough not to chatter. */
+const STALE_AFTER_MS = 6000;
+
+/* Everything the hub reports, driven to its "no data" representation, so a
+   dead hub renders through the SAME offline paths a single dead node already
+   uses instead of a second, parallel idea of what offline looks like.
+   Cloned, never mutated in place: LAST stays the last thing that was actually
+   true, which is what the "last good HH:MM:SS" in the header refers to.
+
+   Left alone deliberately: run hours, the event log and the trend strip. Those
+   are historical by nature - a lifetime total is not a claim about right now -
+   and blanking a ledger tells you less than leaving it. What gets cleared is
+   everything that reads as a live measurement. */
+/* Every path that repaints from LAST has to go through here, not through
+   render(LAST) directly. LAST is deliberately the last payload that was
+   actually true, so rendering it raw while the hub is down puts live-looking
+   numbers back on screen. Measured: crossing the 900px breakpoint with the hub
+   offline flashed the real sump level and running pumps back for the ~1 s
+   until the next failed poll corrected it - which is exactly the confusion
+   clearing the page was meant to remove, just briefer. */
+function repaint() {
+  if (!LAST) return;
+  const good = LAST;
+  render(HUB_STALE ? offlineView(good) : good);
+  LAST = good;                 /* render() assigns it; keep the good one */
+}
+
+function offlineView(s) {
+  const v = JSON.parse(JSON.stringify(s));
+  /* pct 0 / distance 0, which is exactly what app_web.c sends for a tank whose
+     node is not answering. The point of this function is to produce a payload
+     the hub itself could have sent, so the render has nothing new to handle. */
+  Object.values(v.tanks || {}).forEach(t => { t.state = "OFFLINE"; t.pct = 0; t.distance_mm = 0; });
+  Object.values(v.pumps || {}).forEach(p => { p.state = "OFFLINE"; p.on = false; });
+  Object.values(v.env   || {}).forEach(e => { e.state = "OFFLINE"; e.t = null; e.rh = null; e.age_s = null; if ("fan" in e) e.fan = false; });
+  ["hpp", "rwp", "borewell", "sump_motor"].forEach(k => {
+    const m = v.motors && v.motors[k];
+    if (!m) return;
+    m.amps = null; m.running = false;
+    if (Array.isArray(m.phases)) m.phases = m.phases.map(() => null);
+    m.imbalance_pct = null;
+    if ("dry" in m) { m.dry = false; m.dry_why = 0; }
+  });
+  if (v.motors) { v.motors.overcurrent = false; v.motors.no_production = false; }
+  ["rwt", "twt"].forEach(k => {
+    const q = v.quality && v.quality[k];
+    if (q) { q.live = false; q.ppm = null; q.t = null; q.age_s = null; }
+  });
+  /* null, not -1: the renderer tests `Q.rejection !== null`, and app_web.c
+     emits the field through a %s so it prints the literal null. -1 sailed
+     straight through that test and rendered "Salt rejection -1%". */
+  if (v.quality) v.quality.rejection = null;
+  /* null, not false: every contact is tri-state now, and false would report
+     eight healthy contacts on a hub that is not answering. */
+  Object.keys(v.aster || {}).forEach(k => { v.aster[k] = null; });
+  /* age_s too, not just state: the nodes card prints "RS485 · 1s" beside each
+     row, so leaving it said a node had answered one second ago on a page whose
+     header says the hub is unreachable. There is no age to know from here. */
+  (v.nodes || []).forEach(n => { n.state = "OFFLINE"; n.age_s = null; });
+  if (v.rs485) { v.rs485.online = 0; }
+  return v;
+}
 
 /* The plant should be readable at a glance without scrolling; the cards
    below are reference material and may sit past the fold. */
@@ -1986,7 +2112,7 @@ function relayout() {
   PIPE_SIG = ROUTES.map(r => r.flow ? "1" : "0").join("");
 }
 new ResizeObserver(relayout).observe(document.documentElement);
-window.matchMedia("(max-width:900px)").addEventListener("change", () => { if (LAST) render(LAST); });
+window.matchMedia("(max-width:900px)").addEventListener("change", repaint);
 
 /* ── demo simulator ───────────────────────────────────────────
    Runs until /api/telemetry answers. Models the failure this project
@@ -2418,21 +2544,51 @@ function drawRun(s) {
  * -1 and -99 so RainMaker never shows a plausible zero. The dashboard was the
  * one place it could still happen, and it is the place a person actually looks.
  *
- * On failure the last good render stays on screen - stale data is at least data
- * that was once true - and the chip goes red to say it is no longer live.
+ * It used to leave the last good render on screen on failure - "stale data is
+ * at least data that was once true" - with only the corner chip going red to
+ * say so. That was the wrong call, and it is the same mistake in a quieter
+ * form: a 54% sump and a running borewell in live typeface, minutes after the
+ * hub stopped answering. Nobody reads the chip first.
+ *
+ * So a failure now drives the whole page to its no-data state, through the
+ * same offline paths a single dead node already uses. The last good VALUES are
+ * not what is kept - the last good TIME is, in the header, which is the part
+ * that tells you how much to distrust what you last saw.
  */
+let STALE_SINCE = 0;              /* first failure of the current run, 0 = none */
+
 async function poll() {
   const m = $("#mode");
   try {
     const r = await fetch("/api/telemetry", { cache: "no-store" });
     if (!r.ok) throw new Error("telemetry " + r.status);
     const s = await r.json();
+    STALE_SINCE = 0;
+    HUB_STALE = false;
     m.textContent = "Live";
     m.className = "mode live";
     render(s);
   } catch {
-    m.textContent = "No data from hub";
+    const now = Date.now();
+    if (!STALE_SINCE) STALE_SINCE = now;
+    const downMs = now - STALE_SINCE;
+    if (downMs < STALE_AFTER_MS) {
+      /* Inside the grace window a miss is just a miss: hold the last render
+         and say nothing, or a page on a busy hub would flicker every minute. */
+      m.textContent = "Reconnecting";
+      m.className = "mode";
+      return;
+    }
+    HUB_STALE = true;
+    m.textContent = "Hub offline · no data " + ago(Math.round(downMs / 1000));
     m.className = "mode dead";
+    /* Re-render from the last good payload with every live figure cleared. If
+       there has never been one, there is nothing on screen to correct.
+       render() assigns LAST, so put the good payload back afterwards: it is
+       what the next offline render derives from, and pollHistory() redraws the
+       run table off it once a minute. Without this the offline view would eat
+       its own source and the run figures would blank on the next history poll. */
+    repaint();
   }
 }
 
