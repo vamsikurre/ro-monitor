@@ -202,12 +202,16 @@ calibration number because none of them live on the node.
 
 - `bore_mv` / `sump_mv`: three per-channel AC RMS millivolts each, exactly as
   the node's ADC read them — no amps, no calibration, that is all hub-side.
-  A channel with no clamp plugged in sits on the bias pedestal and reads a
-  few mV of noise; the hub treats a bias midpoint outside **1250-2050 mV**
-  as "no clamp fitted" and reports that phase as `null`, **never as 0 A** —
-  a floating pin in a motor panel produces a large reading that looks
-  exactly like a running motor, and 0 A would be read as a real
-  measurement instead of a missing sensor.
+  The **node** tests its own bias pedestal first: a midpoint outside
+  **1250-2050 mV** (the same divider tolerance as the hub's own two CT
+  channels) means nothing plausible is plugged in, and it reports **0 mV**
+  for that channel rather than a real-looking number — the wire format has
+  no null to give it instead (`WIRING.md` §11.3). The **hub** then
+  applies its own, simpler rule on top of whatever it receives: anything
+  under its `CT_NOISE_FLOOR_MV` (15 mV) is "no clamp fitted", reported as
+  `null`, **never as 0 A** — a floating pin in a motor panel produces a
+  large reading that looks exactly like a running motor, and 0 A would be
+  read as a real measurement instead of a missing sensor.
 - `sump_on`: the Astero `PUMP ON` dry contact, closed while the controller
   has the pump on. This is the sump motor's `running` state; the borewell
   has no contact of its own and its `running` comes from current instead,

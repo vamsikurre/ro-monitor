@@ -44,15 +44,22 @@
 └────────────────────┘
 
 ========================================================================================
-GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
+GROUND FLOOR SUBSYSTEM (WI-FI LAN, POLLED BY THE HUB) - MONITORING ONLY, NO RELAYS
 ========================================================================================
 ┌───────────────────────────────┐        ┌─────────────────────────────────────────┐
 │     ESP32 NODE 1 (0x05)       │        │           ESP32 NODE 2 (0x06)           │
-│  - 3.5m Deep Sump Level       │        │  - Sump & Borewell 240V AC Monitoring   │
-│  - AJ-SR04M Sensor           │        │  - 4-Ch Relay Motor Starter Interlock   │
-│  - Hi-Link HLK-20M5 (5V DC)   │        │  - Hi-Link HLK-20M5 (5V DC)             │
+│  - Sump Level: ultrasonic OR  │        │  - Borewell + sump motor CT clamps      │
+│    4-20 mA loop (J-LOOP)      │        │    (6 channels, 5 fitted, 1 empty)      │
+│  - AJ-SR04M Sensor            │        │  - Astero PUMP ON dry contact (sump)    │
+│  - 230V -> 12V module -> buck │        │  - RWT floaty opto (after metering)     │
+│    -> 5V (loop needs the 12V) │        │  - SHT30 (utility room temp/RH)         │
+│                                │        │  - Hi-Link HLK-20M5 (5V DC)             │
 └───────────────────────────────┘        └─────────────────────────────────────────┘
 ```
+
+**No relay board on either node.** This subsystem only reads the ground
+floor; it does not switch anything. The 4-channel relay interlock design
+this document described until 2026-09-08 was never built — see §3.5.
 
 ---
 
@@ -61,13 +68,13 @@ GROUND FLOOR PARKING SUBSYSTEM (WI-FI LAN)
 | Item Description | Model / SKU | Qty | Location / Role |
 | :--- | :--- | :---: | :--- |
 | **Main RO Bus Power Supply** | Hi-Link `HLK-20M12` (12V / 20W / 1.6A) | 1 | RO Room - Master 12V DC RS485 bus power |
-| **Ground Floor Power Supplies**| Hi-Link `HLK-20M5` (5V / 20W / 4.0A) | 2 | Ground Floor - Node 1 & Node 2 dedicated 5V power |
+| **Ground Floor Power Supplies**| Hi-Link `HLK-20M5` (5V / 20W / 4.0A) | 1 | Ground Floor - **Node 2 (Utility, `0x06`) only.** Node 1 (Sump, `0x05`) needs 12 V for its `J-LOOP` transducer provision and runs 230V → 12V module → buck → 5V instead — `WIRING.md` §11.1 |
 | **Auxiliary Supply** | Hi-Link `HLK-10M05` (5V / 10W / 2.0A) | 1 | Spare / Local 5V high-current logic rail |
 | **RS485 Transceiver** | `XY-485` (Auto-Flow Control) | 4 | Hardware auto TX/RX direction switching (1x Hub, 3x slave nodes) |
 | **Current Clamp** | `SCT-013-030` split-core CT, 30 A / 1 V output | 8 | 1x HPP + 1x RWP on the hub (`WIRING.md` §14; nameplates in §14.5 — RWP is 6.2 A max, so 3 turns), then **3 phases each** on the ground-floor sump and borewell motors (§11.3). Voltage-output variant: burden resistor is inside, do not add one. Sump and borewell have **no readable nameplate** (submersible, confirmed 2026-08-27) — size from the starter overload dial and a clamp meter, and expect to need 2-3 turns for resolution (`WIRING.md` §11.3.1) |
-| **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 4 | 2x RO Room (HPP/RWP) + 2x Ground Floor (Sump/Borewell). **A 5th is needed only if the Aster `ALARM` output measures as switched mains** — see `WIRING.md` 6.4 |
+| **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 2 | RO Room (HPP/RWP) only. **The ground floor has none** — its motors are read by CT clamps and the Astero `PUMP ON` dry contact, not by sensing the contactor coil (`WIRING.md` §11.2). A DC optocoupler for the ground floor's `RWT FLOTY` loop is a separate part, added only if metering that loop finds low-voltage DC (§11.4) — **a 5th of this AC part** is still needed only if the Aster `ALARM` output measures as switched mains — see `WIRING.md` 6.4 |
 | **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. `IN_ALARM` needed no optocoupler and moved to a direct input on GPIO 13, which freed channel 3 for `LPS` (`WIRING.md` §6.6). **An 8-channel PC817 board is already owned and unused** (order 2026-08-16) — the 4-channel one was fitted because it was to hand, so extra taps need no purchase, only a rewire. See §0.4 of `WIRING.md` for why pins, not channels, are now the limit |
-| **Relay Modules** | 4-Channel 5V Relay Board | 2 | 1x RO Room (Aster Float Emulation) + 1x Ground Floor (Starter Control) |
+| **Relay Modules** | 4-Channel 5V Relay Board | 1 | RO Room (Aster Float Emulation) only. **No relay board on the ground floor** — the interlock design once specified for node `0x06` (§3.5) was never built and is out of scope for this round (`WIRING.md` §11) |
 | **Relay Module (Single)** | 1-Channel 5V Relay Board | 1 | Battery Room (Exhaust Fan Switching) |
 | **Ultrasonic Sensors** | Waterproof Ultrasonic (**AJ-SR04M**) | 4 | **Dosing (wired direct to hub)**, RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`). Confirm `R19` mode pad is empty (Trig/Echo mode) — `WIRING.md` §9.0 |
 | **Resistors** | 1 kΩ + 1.8 kΩ (1/4 W) | 2 pairs | `ECHO` 5V→3.3V dividers: hub dosing sensor + ground-floor sump sensor. **1.8 kΩ as built**, not the 2 kΩ originally specified — `WIRING.md` §1, §13 |
@@ -145,24 +152,34 @@ Built on a **Pro Mini (5V / 16 MHz)**, not a Nano. Pin functions are identical �
 | :--- | :--- | :--- | :--- | :--- |
 | **GPIO 5** | `US_TRIG` | AJ-SR04M Sensor `TRIG` | Output | 10µs ultrasonic trigger |
 | **GPIO 18** | `US_ECHO` | AJ-SR04M Sensor `ECHO` | Input | 5V $\to$ 3.3V resistor voltage divider (1kΩ/2kΩ) |
+| **GPIO 34** | `LOOP_SENSE` | `J-LOOP` pin 2, 4-20 mA loop sense | Input | Analog, ADC1_CH6. 0 when no transducer is fitted — `WIRING.md` §11.1, §9.4.2 |
+| **GPIO 25** | `PRESS_FIT` | `J-PRESS` shunt to GND | Input, pull-up | Shunt fitted = pressure transducer is the source; off = ultrasonic — `WIRING.md` §11.1 |
 | **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
 
 ---
 
-### 3.5. Ground Floor ESP32 Node 2: Motor Control & Interlocks (0x06)
+### 3.5. Ground Floor ESP32 Node 2: Utility Room Monitoring (0x06)
+
+**Corrected 2026-09-08: this table described a 4-channel relay board doing
+starter interlocks. That node was never built that way — it only reads the
+panel; nothing here switches anything, and the relay interlock idea stays a
+Phase-2 option, out of scope for this round (`WIRING.md` §11).** Two of the
+four GPIOs this table used to list as relay outputs, 25 and 26, are real
+inputs on the built node — the Astero `PUMP ON` contact and the RWT floaty
+opto — so wiring this table as printed would have driven a relay coil into
+what is actually a sensor input.
+
 | ESP32 GPIO | Pin Function | Connected Hardware | Direction | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **GPIO 16** | `IN_SUMP_AC` | 220V AC Optocoupler 1 `OUT` | Input | Sump Motor 240V AC Active Sense. **Moved off GPIO 34 (2026-08-27)** — that pin is ADC1 and is needed for a CT channel |
-| **GPIO 17** | `IN_BORE_AC` | 220V AC Optocoupler 2 `OUT` | Input | Borewell Motor 240V AC Active Sense. **Moved off GPIO 35** |
-| **GPIO 32** | `IN_SUMP_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH4. Sump phase L1 — `WIRING.md` §11.3 |
-| **GPIO 33** | `IN_SUMP_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH5. Sump phase L2 |
-| **GPIO 34** | `IN_SUMP_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH6. Sump phase L3 |
-| **GPIO 35** | `IN_BORE_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH7. Borewell phase L1 |
-| **GPIO 36** | `IN_BORE_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH0. Borewell phase L2 |
-| **GPIO 39** | `IN_BORE_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH3. Borewell phase L3 |
-| **GPIO 25** | `OUT_SUMP_FLOT` | 4-Ch Relay Module `IN1` | Output | Dry contact to Sump Motor Starter |
-| **GPIO 26** | `OUT_BORE_FLOT` | 4-Ch Relay Module `IN2` | Output | Dry contact to Borewell Starter (Overflow Cutoff) |
-| **GPIO 27** | `OUT_AUX_RLY1` | 4-Ch Relay Module `IN3` | Output | Auxiliary remote override |
-| **GPIO 14** | `OUT_AUX_RLY2` | 4-Ch Relay Module `IN4` | Output | Auxiliary remote override |
+| **GPIO 32** | `BORE_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH4. Borewell phase L1 — `WIRING.md` §11.3 |
+| **GPIO 33** | `BORE_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH5. Borewell phase L2 |
+| **GPIO 34** | `BORE_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH6. Borewell phase L3 |
+| **GPIO 35** | `SUMP_CT_L1` | SCT-013-030 clamp | Input | Analog, ADC1_CH7. Sump motor phase L1 |
+| **GPIO 36** | `SUMP_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH0. Sump motor phase L2 |
+| **GPIO 39** | `SUMP_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH3. Sump motor phase L3 — socket built, no clamp fitted yet |
+| **GPIO 25** | `PUMP_ON` | Astero `PUMP ON (C, NO)` dry contact | Input, pull-up | Sump-motor run signal, wired like the hub's own `IN_ALARM` — `WIRING.md` §11.2, §11.4 |
+| **GPIO 26** | `RWT_FLOTY` | Astero `TWT FLOTY` terminal, via opto | Input, pull-up | Only after metering the loop — mains potential is never tapped — `WIRING.md` §11.2, §11.4 |
+| **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` | Bidirectional | Utility room temperature/humidity |
+| **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` | Output | I2C SCL |
 | **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
 

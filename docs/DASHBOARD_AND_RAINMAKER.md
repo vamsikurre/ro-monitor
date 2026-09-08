@@ -46,7 +46,7 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
    * Temperature & Relative Humidity gauge from Node `0x04`.
    * Animated exhaust fan icon showing rotation when active.
    * Auto-ventilation toggle (turns ON when Temp > 38°C or RH > 75%).
-8. **Utility Room card:** Temperature & Relative Humidity from Node `0x06`'s SHT30, the RWT float state, and an offline hatch — the same pattern as the RO Room and Battery Room environment cards.
+8. **Utility Room card:** Temperature & Relative Humidity from Node `0x06`'s SHT30, source and reading age, and an offline hatch — built by the same shared climate card the RO Room and Battery Room use (`env.utility_room`). The RWT float itself is not on this card; it shows in the Aster contact rows with the rest of that panel's state.
 
 ### 2.3. Trends and run hours (added 2026-09-07)
 
@@ -102,43 +102,62 @@ ESP RainMaker provides AWS IoT cloud synchronization, remote out-of-home telemet
 
 ### 3.1. ESP RainMaker Node Hierarchy
 
+**Four devices, one per room** — not one per signal type. `app_main.c`'s
+`build_node()` is the source; the tree below is that function's param order,
+not an aspirational layout.
+
 ```
-ESP32 Central Hub (RainMaker Node: "RO Plant & Sump Monitor")
-├── Device 1: "Ground Sump" [Type: Water Tank Sensor]
-│   ├── Param: level_percent (Integer, Read-Only, 0..100 %)
-│   ├── Param: water_depth_cm (Integer, Read-Only, 0..350 cm)
-│   └── Param: low_level_alert (Boolean, Read-Only)
-├── Device 2: "Water Tanks" [Type: Multi-Tank Sensor]
-│   ├── Param: rwt_level_percent (Integer, Read-Only, 0..100 %)
-│   ├── Param: twt_level_percent (Integer, Read-Only, 0..100 %)
-│   ├── Param: dosing_level_percent (Integer, Read-Only, 0..100 %)
+ESP32 Central Hub (RainMaker Node: "RO Plant Monitor - XXXX", MAC-suffixed)
+├── Device 1: "RO Room" [Type: esp.device.other]
+│   ├── Param: Status (String, Read-Only) — primary
+│   ├── Param: Controller Fault (Boolean, Read-Only) — Aster AUX OP
+│   ├── Param: Low Pressure (Boolean, Read-Only) — Aster LPS
+│   ├── Param: RL1 Multiport (Boolean, Read-Only)
+│   ├── Param: RL2 Multiport (Boolean, Read-Only)
+│   ├── Param: HPP Running (Boolean, Read-Only)
+│   ├── Param: RWP Running (Boolean, Read-Only)
+│   ├── Param: HPP Current (Float, Read-Only, A)
+│   ├── Param: RWP Current (Float, Read-Only, A)
+│   ├── Param: Over Current (Boolean, Read-Only)
+│   ├── Param: No Production (Boolean, Read-Only)
+│   ├── Param: RO Room Temp (Float, Read-Only, °C)
+│   ├── Param: RO Room Humidity (Float, Read-Only, %)
+│   ├── Param: HPP Last Run (String, Read-Only)
+│   ├── Param: RWP Last Run (String, Read-Only)
+│   └── Param: TWT Last Full (String, Read-Only)
+├── Device 2: "Battery Room" [Type: esp.device.temp-sensor]
+│   ├── Param: Battery Room Temp (Float, Read-Only, °C) — primary
+│   ├── Param: Battery Room Humidity (Float, Read-Only, %)
+│   ├── Param: Exhaust Fan (Boolean, Read-Write) — the switch; on = Force On, off = Force Off
+│   ├── Param: Fan Mode (String, Read-Write) — Auto / On / Off, expires back to Auto (§4.9.2)
+│   ├── Param: Fan On Above (Integer, Read-Write, °C) — the Auto threshold
+│   └── Param: Fan Last Run (String, Read-Only)
+├── Device 3: "Water Tanks" [Type: esp.device.water-tank]
+│   ├── Param: Treated Water Level (Integer, Read-Only, 0..100 %) — primary
+│   ├── Param: Raw Water Level (Integer, Read-Only, 0..100 %)
+│   ├── Param: Dosing Level (Integer, Read-Only, 0..100 %)
+│   ├── Param: TWT Float Full (Boolean, Read-Only) — Aster contact, next to the ultrasonic reading of the same tank
 │   ├── Param: Sump Level (Integer, Read-Only, 0..100 %) — Node 0x05, ground floor
-│   └── Param: RWT Float Full (Boolean, Read-Only) — Node 0x06's read of the roof RWT float
-├── Device 3: "Pumps & Motors" [Type: Motor Controller]
-│   ├── Param: borewell_motor (Boolean, Read-Only, ON/OFF)
-│   ├── Param: sump_motor (Boolean, Read-Only, ON/OFF)
-│   ├── Param: rwp_pump (Boolean, Read-Only, ON/OFF)
-│   ├── Param: hpp_pump (Boolean, Read-Only, ON/OFF)
-│   └── Param: dry_run_cutoff (Boolean, Read-Write)
-├── Device 4: "Environment & Climate" [Type: Climate Monitor]
-│   ├── Param: ro_room_temp (Float, Read-Only, °C)
-│   ├── Param: ro_room_humidity (Float, Read-Only, %)
-│   ├── Param: battery_room_temp (Float, Read-Only, °C)
-│   └── Param: battery_room_humidity (Float, Read-Only, %)
-├── Device 5: "Ventilation" [Type: Fan Controller]
-│   ├── Param: exhaust_fan_power (Boolean, Read-Write, ON/OFF)
-│   └── Param: auto_temp_threshold (Integer, Read-Write, 25..50 °C)
-└── Device 6: "Ground Floor" [Type: Other] — Node 0x06, utility/starter panel
-    ├── Param: Borewell Running (Boolean, Read-Only) — no contact of its own; current above the run threshold, with hysteresis
+│   ├── Param: RWT Float Full (Boolean, Read-Only) — Node 0x06's read of the Astero `TWT FLOTY` terminal (`WIRING.md` §11.4)
+│   ├── Param: Raw Water TDS (Integer, Read-Only)
+│   ├── Param: Treated Water TDS (Integer, Read-Only)
+│   ├── Param: Raw Water Temp (Float, Read-Only, °C)
+│   ├── Param: Treated Water Temp (Float, Read-Only, °C)
+│   └── Param: Salt Rejection (Integer, Read-Only, %)
+└── Device 4: "Ground Floor" [Type: esp.device.other] — Node 0x06, utility/starter panel
+    ├── Param: Borewell Running (Boolean, Read-Only) — primary; no contact of its own, current past the run threshold with hysteresis
     ├── Param: Sump Motor Running (Boolean, Read-Only) — the Astero `PUMP ON` contact
-    ├── Param: Borewell Current (Float, Read-Only, A) — highest phase, deadbanded
+    ├── Param: Borewell Current (Float, Read-Only, A) — highest phase
     ├── Param: Sump Motor Current (Float, Read-Only, A)
     ├── Param: Utility Room Temp (Float, Read-Only, °C) — SHT30 on Node 0x06
     └── Param: Utility Room Humidity (Float, Read-Only, %)
 ```
 
 No relays, no float cutoffs, no pump control on either ground-floor node —
-they are monitoring only (`WIRING.md` §11).
+they are monitoring only (`WIRING.md` §11). There is no separate "Ground
+Sump" or "Pumps & Motors" or "Ventilation" device: the sump level lives on
+Water Tanks, the fan controls live on Battery Room, and there are only ever
+these four devices on the node.
 
 ---
 
