@@ -165,11 +165,15 @@ these four devices on the node.
 
 ESP RainMaker automatically dispatches native push notifications to all paired mobile devices under the following conditions:
 
+**`(PLANNED)` below marks something that does not fire, or does not act,
+today** — design spec §7 future work, not yet wired to anything. It is not
+a claim about the rest of this table, which has not been re-verified row by
+row in this pass.
+
 | Alert Trigger | Severity | Mobile Push Notification Message | Automated Interlock Action |
 | :--- | :---: | :--- | :--- |
-| **Sump Level < 15%** | `CRITICAL` | 🚨 **Ground Sump Low!** Level is at {X}%. Sump pump shut off to prevent dry-run damage. | Sump Motor Float Relay opened; RWP paused on Astero. |
-| **Sump Level > 95%** | `WARNING` | 💧 **Ground Sump Full!** Level is at {X}%. Borewell pump cutoff activated. | Borewell Motor Float Relay opened to stop overflow. |
-| **TWT Level > 95%** | `INFO` | ✅ **Treated Water Tank Full!** RO Plant entering standby flush cycle. | Astero TWT Float Relay opened. |
+| **Sump Level low / high** `(PLANNED)` | — | No alert fires for either threshold today — the hub raises no sump-level alert at all. Sump-low, borewell dry-run and imbalance alarms are design spec §7 future work, once the ground-floor numbers have been watched. | None — nothing performs an action for this today. |
+| **TWT Level > 95%** | `INFO` | ✅ **Treated Water Tank Full!** RO Plant entering standby flush cycle. | `(PLANNED)` The relay hardware is real (`WIRING.md` §14, Phase C) but nothing wires this alert to it — the four relays are de-energised at boot and left alone. |
 | **Dosing Level < 20%** | `WARNING` | ⚠️ **Dosing Chemical Low!** Replenish anti-scalant / dosing reagent tank. | Astero Dosing Relay opened; Alarm flag set. |
 | **Battery Room Temp > 38°C**| `ALERT` | 🌡️ **High Battery Room Temperature!** Room temp is {X}°C. Exhaust fan turned ON. | Node `0x04` Exhaust Fan Relay automatically energized. |
 | **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check feed pressure (LPS), dosing level and pump overload. | System status set to FAULT; Alarm flagged in UI. |
