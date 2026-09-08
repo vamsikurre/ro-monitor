@@ -181,7 +181,15 @@ typedef struct {
     cal_ct_t which;
     int64_t  last_us;               /* previous accounting instant */
     uint32_t run_ms;                /* today's, sub-second precision */
-    uint32_t run_since_start_s;     /* this run, for the NVS write on stop */
+    /* This run, in MILLISECONDS, for the NVS write on stop. Milliseconds, not
+     * seconds, because it used to be `+= dt_ms / 1000` once per cycle: the poll
+     * lands a few ms under POLL_CYCLE_MS, so each call truncated ~1 s off a
+     * ~2 s tick and this run - and therefore the lifetime total written to NVS,
+     * and the duration in the stop event - accumulated at roughly HALF the real
+     * rate. Measured on the bench 2026-09-08: today_s climbed 21 s in 21 s
+     * while total_s climbed 10 s. today's figure was always right because
+     * run_ms already accumulated ms and divided once; this now does the same. */
+    uint32_t run_since_start_ms;
     uint32_t da_sum;                /* deci-amps summed over this run, for the log */
     uint16_t da_n;
     bool     was_running;
@@ -227,7 +235,7 @@ static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_am
          * blind gap is discarded rather than counted. The reported figures keep
          * whatever they last honestly were. */
         *today_s = a->run_ms / 1000;
-        *total_s = cal_runtime_get(a->which) + (a->was_running ? a->run_since_start_s : 0);
+        *total_s = cal_runtime_get(a->which) + (a->was_running ? a->run_since_start_ms / 1000 : 0);
         return;
     }
 
@@ -235,21 +243,21 @@ static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_am
         a->run_ms += dt_ms;
         if (!a->was_running) {
             (*starts)++;
-            a->run_since_start_s = 0;
+            a->run_since_start_ms = 0;
             a->da_sum = 0; a->da_n = 0;
             event_push(on_evt, 0, 0, 0);
         }
-        a->run_since_start_s += dt_ms / 1000;
+        a->run_since_start_ms += dt_ms;
         if (deci_amps >= 0 && a->da_n < 0xFFFF) { a->da_sum += deci_amps; a->da_n++; }
     } else if (a->was_running) {
-        cal_runtime_set(a->which, cal_runtime_get(a->which) + a->run_since_start_s);
-        event_push(off_evt, 0, (uint16_t)(a->run_since_start_s / 60),
+        cal_runtime_set(a->which, cal_runtime_get(a->which) + a->run_since_start_ms / 1000);
+        event_push(off_evt, 0, (uint16_t)(a->run_since_start_ms / 60000),
                    a->da_n ? (uint16_t)(a->da_sum / a->da_n) : 0xFFFF);
     }
     a->was_running = running;
     *today_s = a->run_ms / 1000;
     /* Lifetime = stored total + the run in progress, so it moves while running */
-    *total_s = cal_runtime_get(a->which) + (running ? a->run_since_start_s : 0);
+    *total_s = cal_runtime_get(a->which) + (running ? a->run_since_start_ms / 1000 : 0);
 }
 
 /* Local midnight of today as epoch seconds, or 0 without a synced clock. The
