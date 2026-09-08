@@ -87,10 +87,36 @@ h1 span{color:var(--ink-3); font-weight:400}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
 
 /* ── alerts ─────────────────────────────────────────────── */
-/* Fixed, so an alert appearing or clearing never resizes the plant. */
+/* These were fixed to the bottom right, so an alert appearing or clearing
+   never resized the plant. Worth it for a toast that comes and goes; these are
+   not that. "The Treated Water node has not answered for 2h" is true for as
+   long as it is true, so the stack just sits there - and being fixed, it sits
+   on whatever the viewport has under it. Measured: 187px of an 844px phone
+   screen over the sump motor's state and current; on a wide desktop scrolled
+   down, 568px across the event log, hiding a row.
+   In flow it cannot cover anything at any width or scroll position, it lands
+   under the header where a banner belongs (already its source order), and one
+   rule replaces the desktop-fixed / phone-static split this had grown. The
+   Out of flow, so an alert appearing or clearing never resizes the plant or
+   pushes the dashboard down - but absolute against .plantwrap rather than
+   fixed to the viewport. That difference is the whole fix. Fixed meant the
+   stack rode the scroll and came to rest on whatever happened to be at the
+   bottom right of the window: measured, 568px across the event log with a row
+   hidden under it, and on a phone 187px over the sump motor's state and
+   current. Absolute pins it to the empty right-hand side of the below-ground
+   band - which is where it already appeared to sit, and where there is nothing
+   to cover - and it scrolls away with the drawing it belongs to.
+   Width stays the 580px the fixed version picked: the locator chip
+   right-aligns, so full bleed on a 2000px screen strands it a foot from the
+   message it belongs to. */
+/* bottom:56px, not 18: the utility room's air readout is pinned to the bottom
+   right of the earth band and occupies the first 40px, so 18 sat on it. 56
+   clears it with a gap. The stack grows upward from there into empty hatching -
+   ponytail: fine to about five alerts, at six it reaches the "Ground level"
+   legend 292px up. Cap the rendered list if that ever happens. */
 #alerts{
-  position:fixed; right:22px; bottom:18px; z-index:25;
-  width:min(580px,calc(100vw - 44px));
+  position:absolute; right:22px; bottom:56px; z-index:25;
+  width:min(580px,calc(100% - 44px));
   display:flex; flex-direction:column; gap:8px; pointer-events:none;
 }
 .alert{
@@ -122,7 +148,8 @@ h1 span{color:var(--ink-3); font-weight:400}
 .alert .where{color:var(--ink-2); margin-left:auto; font-size:12px; flex:none}
 
 /* ── the plant, in elevation (signature) ────────────────── */
-.plantwrap{padding:26px 22px 8px; overflow:hidden}
+/* relative: the containing block for #alerts, which is absolute inside here */
+.plantwrap{padding:26px 22px 8px; overflow:hidden; position:relative}
 .plant{
   position:relative; display:grid; min-width:1240px; transform-origin:top left;
   grid-template-columns:[lbl] 108px [c1] 2fr [c2] .8fr [c3] 1.2fr [c4] 1.32fr [c5] 1fr [c6] 1.2fr [c7] 1.9fr [c8] 2.1fr;
@@ -365,10 +392,13 @@ h1 span{color:var(--ink-3); font-weight:400}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── instrument strip ───────────────────────────────────── */
-/* align-items:start, or every card in a row grows to the tallest one in it -
-   the eight-contact Aster panel dragged the three climate cards to 333px and
-   left 150px of empty panel under each. Cards size to their own content now. */
-.grid{display:grid; gap:14px; padding:20px 22px 0; align-items:start; grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+/* Cards stretch to the tallest in their row, and they should. This carried
+   align-items:start for a while, on the theory that the 150px of empty panel
+   the eight-contact Aster card forced under each climate card was waste. It is
+   not: the default stretch is what gives a row one bottom edge, and six cards
+   ending at six different heights reads as broken far louder than an inch of
+   quiet panel reads as wasted. Leave it to stretch. */
+.grid{display:grid; gap:14px; padding:20px 22px 0; grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
 .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px 15px}
 .card > .legend{display:block; margin-bottom:12px; padding-bottom:9px; border-bottom:1px solid var(--line)}
 .climate{display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap}
@@ -465,15 +495,15 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
    would throw away the one thing the drawing exists to show. */
 @media (max-width:900px){
   header,.grid,footer,.plantwrap{padding-left:16px; padding-right:16px}
-  /* Fixed to the bottom of the viewport, three node-offline alerts are 187px
-     of an 844px phone screen - and they do not go away, because "has not
-     answered for 2h" stays true. Measured on the live hub they were sitting on
-     top of the sump motor's state and current, which is the reading you open
-     the page on the ground floor to see. #alerts is already the element right
-     after <header> in source order, so letting it back into normal flow puts
-     the banners exactly where a banner belongs and gives the drawing its
-     pixels back. */
-  #alerts{position:static; width:auto; margin:14px 16px 0}
+  /* The wide layout can tuck the stack into the empty right-hand side of the
+     below-ground band. This one cannot: flattened to a single column the
+     drawing has no empty side, and bottom-right of it is the sump - measured,
+     the stack sat on the sump motor's state and current, which is the reading
+     you open this page on the ground floor to see. So on a phone it goes back
+     into flow, above the drawing. It does push the drawing down; on a screen
+     you are already scrolling top to bottom that costs a swipe, and covering
+     the sump costs you the number. */
+  #alerts{position:static; width:auto; margin:0 0 16px}
   .hstats{margin-left:0; width:100%; gap:4px 15px}
   .hstat .readout{font-size:12px}
   header{gap:7px 15px; padding-top:13px; padding-bottom:13px}
@@ -534,9 +564,10 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
   </div>
 </header>
 
-<div id="alerts"></div>
-
 <div class="plantwrap">
+  <!-- #alerts lives inside the drawing so it can be positioned against it
+       rather than against the viewport. See the CSS for why. -->
+  <div id="alerts"></div>
   <div class="plant" id="plant"><svg class="pipes" id="pipes" aria-hidden="true"></svg></div>
 </div>
 
