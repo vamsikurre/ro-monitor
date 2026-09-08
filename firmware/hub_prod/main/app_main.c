@@ -1993,7 +1993,11 @@ void app_main(void)
     ESP_ERROR_CHECK(cal_init());
     ESP_ERROR_CHECK(sensors_init());
     ESP_ERROR_CHECK(rs485_init());
-    ESP_ERROR_CHECK(gf_init());
+    /* gf_init() is NOT here. It starts a task that immediately does a
+     * getaddrinfo, and app_network_init() is what brings up esp_netif and the
+     * lwIP thread - so from here it asserts "Invalid mbox" in
+     * tcpip_send_msg_wait_sem() and panics the hub. It is started below,
+     * with the rest of the network-dependent startup. */
 
     app_network_init();
 
@@ -2043,6 +2047,15 @@ void app_main(void)
      * and none of the following ever started. */
     start_softap();
     start_mdns();
+    /* Here, not up with rs485_init(), and the position is load-bearing: the gf
+     * task resolves a hostname on its first tick, and doing that before
+     * app_network_init() has created the lwIP mailbox asserts inside
+     * tcpip_send_msg_wait_sem() and reboots the hub. It was invisible until a
+     * node address was actually stored - gf_poll_one() returns early on an
+     * empty address - and then it is a boot loop for exactly the sites that
+     * have the feature configured. gf_poll_one() also refuses to touch the
+     * network without a station IP, so this ordering is belt AND braces. */
+    ESP_ERROR_CHECK(gf_init());
     if (web_start() != ESP_OK) {
         /* Same reasoning as the AP: losing the local dashboard is degraded
          * operation, not a reason to stop monitoring the plant. RainMaker

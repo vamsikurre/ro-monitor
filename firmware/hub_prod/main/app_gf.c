@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -183,6 +184,32 @@ static int gf_fetch(const char *ip_port, char *buf, size_t len)
     return got;
 }
 
+/* Does the hub itself have a LAN? A node lives on the local network, so with no
+ * station IP the poll cannot possibly succeed - and worse, before
+ * app_network_init() has run there is no lwIP mailbox at all and getaddrinfo
+ * asserts "Invalid mbox", which panicked the hub on every boot once a node
+ * address was stored. app_main() now starts this task after the network, but
+ * start order in another file is not a guarantee anybody will preserve, so the
+ * check lives here, where the network is actually used.
+ *
+ * The interface-count test comes FIRST and is not decoration.
+ * esp_netif_get_handle_from_ifkey() runs its lookup on the TCP/IP task via
+ * tcpip_send_msg_wait_sem() - the very call that asserts - so asking it
+ * anything before the stack exists panics in exactly the way this function is
+ * meant to prevent. esp_netif_get_nr_of_ifs() is a plain counter read that
+ * touches no lwIP at all, and it can only be non-zero once esp_netif_new() has
+ * succeeded, which cannot happen before esp_netif_init() has run tcpip_init().
+ * So a non-zero count is proof the mailbox is there. */
+static bool gf_lan_up(void)
+{
+    if (esp_netif_get_nr_of_ifs() == 0) return false;
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta == NULL) return false;
+    esp_netif_ip_info_t ip;
+    if (esp_netif_get_ip_info(sta, &ip) != ESP_OK) return false;
+    return ip.ip.addr != 0;
+}
+
 static void gf_poll_one(cal_gf_t which, int64_t now_us)
 {
     /* cal_set_gf_ip() (app_cal.c) writes this string with no lock of its own,
@@ -207,6 +234,13 @@ static void gf_poll_one(cal_gf_t which, int64_t now_us)
     bool due = now_us >= l->next_poll_us;
     xSemaphoreGive(s_mux);
     if (!due) return;
+
+    /* Deliberately NOT counted as a miss, and next_poll_us is left alone: the
+     * node is not the thing that failed. Latching it offline because the hub's
+     * own Wi-Fi dropped would report a fault at the far end of the link and
+     * send somebody to the wrong floor. The node keeps whatever it last
+     * honestly was, and the page shows the age. */
+    if (!gf_lan_up()) return;
 
     static char body[GF_REPLY_MAX];
     int n = gf_fetch(ip, body, sizeof(body));
