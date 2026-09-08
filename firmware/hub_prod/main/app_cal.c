@@ -36,7 +36,8 @@ static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
     [CAL_CT_HPP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_HPP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
     [CAL_CT_RWP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_RWP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
-    [CAL_CT_BORE] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_BORE_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT },
+    [CAL_CT_BORE] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_BORE_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT,
+                      .dry_deci_amps = BORE_DRY_DECI_A_DEFAULT },
     [CAL_CT_SUMP] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_SUMP_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT },
 };
 
@@ -130,6 +131,11 @@ esp_err_t cal_init(void)
         load_u16(h, s_ct_keys[i], "s", &s_cts[i].amps_per_volt_x100);
         load_u16(h, s_ct_keys[i], "o", &s_cts[i].oc_deci_amps);
         load_u16(h, s_ct_keys[i], "n", &s_cts[i].run_deci_amps);
+        /* "d" is newer than the other four. load_u16 leaves the compiled
+         * default when a key is absent, so a hub calibrated before this
+         * existed reads 0 here and the dry detector stays off - no migration,
+         * because these are separate u16 keys and not one blob. */
+        load_u16(h, s_ct_keys[i], "d", &s_cts[i].dry_deci_amps);
         uint16_t turns = s_cts[i].turns;
         load_u16(h, s_ct_keys[i], "t", &turns);
         s_cts[i].turns = (turns >= 1 && turns <= 10) ? (uint8_t)turns : 1;
@@ -261,9 +267,45 @@ esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns,
     if (err == ESP_OK) err = store_u16(s_ct_keys[c], "t", turns);
     if (err == ESP_OK) err = store_u16(s_ct_keys[c], "o", oc_deci_amps);
     if (err == ESP_OK) err = store_u16(s_ct_keys[c], "n", run_deci_amps);
+    /* The dry threshold has to sit between the two figures just written, and
+     * this call can move either of them out from under it. Switch it off
+     * rather than keep a threshold that can no longer mean anything - a
+     * detector that quietly never fires is worse than one plainly off, and the
+     * log says so where somebody recalibrating will see it. */
+    if (s_cts[c].dry_deci_amps != 0 &&
+        (s_cts[c].dry_deci_amps <= run_deci_amps || s_cts[c].dry_deci_amps >= oc_deci_amps)) {
+        ESP_LOGW(TAG, "%s CT: dry threshold %u.%u A no longer between run and OC - switched off",
+                 s_ct_keys[c], s_cts[c].dry_deci_amps / 10, s_cts[c].dry_deci_amps % 10);
+        s_cts[c].dry_deci_amps = 0;
+        if (err == ESP_OK) err = store_u16(s_ct_keys[c], "d", 0);
+    }
     ESP_LOGI(TAG, "%s CT: %u.%02u A/V, %u turns, run at %u.%u A, OC at %u.%u A",
              s_ct_keys[c], amps_per_volt_x100 / 100, amps_per_volt_x100 % 100, turns,
              run_deci_amps / 10, run_deci_amps % 10, oc_deci_amps / 10, oc_deci_amps % 10);
+    return err;
+}
+
+esp_err_t cal_set_ct_dry(cal_ct_t c, uint16_t dry_deci_amps)
+{
+    if (c >= CAL_CT_COUNT) return ESP_ERR_INVALID_ARG;
+    /* 0 switches the detector off. Any other value has to sit strictly between
+     * "the motor is energised" and "the motor is in trouble": at or below
+     * run_deci_amps it could never fire while running, and at or above
+     * oc_deci_amps a healthy loaded pump would read dry the whole time it ran.
+     * Both are silent failures, so they are refused rather than clamped. */
+    if (dry_deci_amps != 0 &&
+        (dry_deci_amps <= s_cts[c].run_deci_amps || dry_deci_amps >= s_cts[c].oc_deci_amps)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s_cts[c].dry_deci_amps = dry_deci_amps;
+    esp_err_t err = store_u16(s_ct_keys[c], "d", dry_deci_amps);
+    if (dry_deci_amps == 0) {
+        ESP_LOGI(TAG, "%s CT: dry-run detection off", s_ct_keys[c]);
+    } else {
+        ESP_LOGI(TAG, "%s CT: dry below %u.%u A for %d s",
+                 s_ct_keys[c], dry_deci_amps / 10, dry_deci_amps % 10, BORE_DRY_DEBOUNCE_S);
+    }
     return err;
 }
 

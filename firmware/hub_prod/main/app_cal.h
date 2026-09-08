@@ -69,6 +69,11 @@ typedef struct {
     /* Highest phase at or above this = motor running. Only the remote motors
      * use it (the hub's own pumps have contactor optos); 1.0 A default. */
     uint16_t run_deci_amps;
+    /* Borewell only. Running, but drawing less than this for BORE_DRY_DEBOUNCE_S
+     * = pumping air, not water. 0 = detector off, which is the default: see
+     * BORE_DRY_DECI_A_DEFAULT for why there is no honest guess to ship. Must
+     * sit between run_deci_amps and oc_deci_amps when set. */
+    uint16_t dry_deci_amps;
 } cal_ct_cfg_t;
 
 esp_err_t cal_init(void);
@@ -82,6 +87,9 @@ esp_err_t cal_set_tank(cal_tank_t t, uint16_t full_mm, uint16_t empty_mm);
 esp_err_t cal_set_tds(cal_tank_t t, uint16_t k_x100, uint8_t min_pct);
 esp_err_t cal_set_ct(cal_ct_t c, uint16_t amps_per_volt_x100, uint8_t turns,
                      uint16_t oc_deci_amps, uint16_t run_deci_amps);
+/* Separate from cal_set_ct because only the borewell has one and the CT form
+ * posts the four fields above for every channel. Pass 0 to switch it off. */
+esp_err_t cal_set_ct_dry(cal_ct_t c, uint16_t dry_deci_amps);
 esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c);
 esp_err_t cal_set_press_range(cal_tank_t t, uint16_t range_mm);
 

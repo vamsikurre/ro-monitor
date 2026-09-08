@@ -509,7 +509,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"motors\":{"
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
-          "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s},"
+          "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s,"
+                        "\"dry\":%s,\"dry_why\":%u,\"dry_at_deci_a\":%u},"
           "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s},"
           "\"overcurrent\":%s,\"no_production\":%s"
         "},"
@@ -598,6 +599,12 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
         bore_amps, bore_ph, bore_imb,
         s->borewell.running ? "true" : "false",
+        /* dry_at_deci_a is the configured threshold, not the reading: it is 0
+         * when the detector is off, which is how the dashboard tells "not dry"
+         * from "never armed". The reading is already in "amps" above. */
+        s->bore_dry ? "true" : "false",
+        (unsigned)s->bore_dry_why,
+        (unsigned)cal_ct(CAL_CT_BORE)->dry_deci_amps,
         smot_amps, smot_ph, smot_imb,
         s->sump_motor.running ? "true" : "false",
         s->overcurrent ? "true" : "false",
@@ -760,6 +767,31 @@ static esp_err_t cal_get(httpd_req_t *req)
             c->amps_per_volt_x100 / 100, c->amps_per_volt_x100 % 100, c->turns,
             c->run_deci_amps / 10, c->run_deci_amps % 10,
             c->oc_deci_amps / 10, c->oc_deci_amps % 10);
+
+        /* Only the borewell has a dry threshold: it is the one motor here that
+         * can be energised with nothing to lift. Its own form, because the
+         * figure comes from a different observation than the other four - you
+         * cannot derive it from a nameplate, only from watching the bore fail. */
+        if (i == CAL_CT_BORE) {
+            n += snprintf(page + n, sizeof(page) - n,
+                "<form method=post action='/api/cal/ct_dry'>"
+                "dry below A <input name=dry size=5 value='%u.%u'> "
+                "<button>Save</button> "
+                "<small>%s</small></form>"
+                "<p><small>A submersible with no water to lift draws far less "
+                "current than a loaded one, and that drop is how a dry bore is "
+                "caught in seconds. There is no default worth shipping &mdash; "
+                "<b>0 switches it off</b>, which is how it leaves the factory. "
+                "Set it to roughly 70%% of the loaded current you see above "
+                "while the bore is healthy; it must sit between run A and trip "
+                "A. Until it is set, the hub still catches a dry bore the slow "
+                "way: %d minutes running with the sump not rising (and the sump "
+                "motor off throughout). When it does trip, the event log records "
+                "the exact current &mdash; that is the number to put here.</small></p>",
+                c->dry_deci_amps / 10, c->dry_deci_amps % 10,
+                c->dry_deci_amps == 0 ? "off" : "armed",
+                BORE_DRY_WINDOW_MIN);
+        }
     }
     n += snprintf(page + n, sizeof(page) - n,
         "<p><small>An SCT-013-030 is nominally 30 A per volt, but two-point "
@@ -1104,6 +1136,29 @@ static esp_err_t cal_ct_post(httpd_req_t *req)
     return redirect_to(req, "/cal#clamps");
 }
 
+/* No ct field: the borewell is the only channel with a dry threshold, so the
+ * form cannot address the wrong one. */
+static esp_err_t cal_ct_dry_post(httpd_req_t *req)
+{
+    char body[192], dry[16];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "dry", dry, sizeof(dry))) return bad(req, "need dry");
+
+    uint16_t dry_deci = 0;
+    if (!parse_deci(dry, &dry_deci)) return bad(req, "dry current not a number");
+
+    if (cal_set_ct_dry(CAL_CT_BORE, dry_deci) != ESP_OK) {
+        const cal_ct_cfg_t *c = cal_ct(CAL_CT_BORE);
+        char m[128];
+        snprintf(m, sizeof m, "rejected: use 0 to switch off, or a value between "
+                 "run (%u.%u A) and trip (%u.%u A)",
+                 c->run_deci_amps / 10, c->run_deci_amps % 10,
+                 c->oc_deci_amps / 10, c->oc_deci_amps % 10);
+        return bad(req, m);
+    }
+    return redirect_to(req, "/cal#clamps");
+}
+
 static esp_err_t cal_fan_post(httpd_req_t *req)
 {
     char body[192], on[16], off[16];
@@ -1244,6 +1299,7 @@ esp_err_t web_start(void)
         { "/cal",           HTTP_GET,  cal_get,        false },
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
+        { "/api/cal/ct_dry", HTTP_POST, cal_ct_dry_post, false },
         { "/api/cal/fan",   HTTP_POST, cal_fan_post,   false },
         { "/api/cal/plant", HTTP_POST, cal_plant_post, false },
         { "/api/cal/wq",    HTTP_POST, cal_wq_post,    false },

@@ -152,6 +152,15 @@ static void diff_events(const hub_state_t *was, const hub_state_t *now)
     EDGE(no_production,  EVT_NOPROD_ON, EVT_NOPROD_OFF, 0);
     EDGE(fan_on,         EVT_FAN_ON,   EVT_FAN_OFF,   0);
     #undef EDGE
+    /* Not an EDGE: this one carries the current it tripped at in `a`, which is
+     * the figure somebody setting the dry threshold actually needs and cannot
+     * otherwise get - the trip happens while nobody is watching, and the 24 h
+     * trend ring is gone by the time they look. The event log keeps it. */
+    if (was->bore_dry != now->bore_dry) {
+        event_push(now->bore_dry ? EVT_BORE_DRY_ON : EVT_BORE_DRY_OFF,
+                   now->bore_dry_why,
+                   now->borewell.deci_amps > 0 ? (uint16_t)now->borewell.deci_amps : 0, 0);
+    }
 }
 
 /* HPP has been on for every one of the last NOPROD_WINDOW_MIN rows and TWT is
@@ -170,6 +179,57 @@ static bool no_production_now(const hub_state_t *s)
     }
     return s->twt.pct < then->twt + NOPROD_RISE_PCT;
 }
+
+/* BORE_DRY_BEGIN - lifted and compiled by docs/check_bore_dry.py, so what is
+ * tested is what ships. Keep both functions inside the markers. */
+
+/* Borewell has run for every one of the last BORE_DRY_WINDOW_MIN rows, the
+ * sump motor was off for all of them, and the sump is no higher now than it
+ * was then. Same access rules as no_production_now(): poll task only, no lock.
+ *
+ * The sump-motor condition is the whole reason this is trustworthy. Borewell
+ * in and sump motor out run together in normal operation, and an outflow that
+ * matches the inflow leaves the level flat with a healthy bore. Requiring the
+ * outlet to have been shut for the entire window means a flat level can only
+ * mean nothing came in. */
+static bool bore_no_yield_now(const hub_state_t *s)
+{
+    if (!s->borewell.running || !s->sump_online || s->sump.pct < 0) return false;
+    if (s->sump.pct >= ALERT_TANK_FULL_PCT - BORE_DRY_RISE_PCT) return false;  /* nowhere to rise */
+    uint16_t n = history_count();
+    if (n < BORE_DRY_WINDOW_MIN) return false;
+    const hist_rec_t *then = history_at(n - BORE_DRY_WINDOW_MIN);
+    if (then->sump < 0) return false;
+    const uint16_t run_da  = cal_ct(CAL_CT_BORE)->run_deci_amps;
+    const uint16_t smot_da = cal_ct(CAL_CT_SUMP)->run_deci_amps;
+    for (uint16_t i = n - BORE_DRY_WINDOW_MIN; i < n; i++) {
+        const hist_rec_t *r = history_at(i);
+        /* -1 is "no clamp fitted", not "no current": without the clamp there is
+         * nothing to judge either motor by, so the window is void. */
+        if (r->bore_da < 0 || r->bore_da < (int16_t)run_da)  return false;  /* bore was off */
+        if (r->smot_da < 0 || r->smot_da >= (int16_t)smot_da) return false; /* sump was pumping out */
+    }
+    return s->sump.pct < then->sump + BORE_DRY_RISE_PCT;
+}
+
+/* The fast detector: running, and drawing less than the dry threshold for
+ * BORE_DRY_DEBOUNCE_S without interruption. Returns the seconds-under counter
+ * in *held so the caller keeps it across cycles; any reading at or above the
+ * threshold, or the motor stopping, resets it to zero. */
+static bool bore_dry_by_amps(const hub_state_t *s, uint32_t dt_ms, uint32_t *held_ms)
+{
+    const uint16_t thresh = cal_ct(CAL_CT_BORE)->dry_deci_amps;
+    if (thresh == 0 || !s->borewell.running || s->borewell.deci_amps < 0 ||
+        s->borewell.deci_amps >= (int16_t)thresh) {
+        *held_ms = 0;
+        return false;
+    }
+    /* Saturate rather than wrap: a dry pump nobody attends to would roll a
+     * uint32 of milliseconds in seven weeks and drop the flag for one cycle. */
+    if (*held_ms < UINT32_MAX - dt_ms) *held_ms += dt_ms;
+    return *held_ms >= (uint32_t)BORE_DRY_DEBOUNCE_S * 1000;
+}
+/* BORE_DRY_END */
 
 /* ------------------------------------------------------- run accounting */
 
@@ -385,6 +445,7 @@ typedef struct {
 
 static alert_t s_al_twt_full, s_al_rwt_full, s_al_dos_low, s_al_bat_hot;
 static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_noprod;
+static alert_t s_al_bore_dry;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
  * A non-zero value re-notifies on that interval for as long as the condition
@@ -593,6 +654,28 @@ static void evaluate_alerts(const hub_state_t *s)
     snprintf(msg, sizeof(msg), "RO producing nothing: HPP on %d min, TWT stuck at %d%%. "
              "Check membranes, reject valve and feed.", NOPROD_WINDOW_MIN, s->twt.pct);
     alert_eval(&s_al_noprod, s->no_production, msg, ALERT_REPEAT_MS, 3);
+
+    /* Dry borewell. Repeats like the no-production alert, and for the same
+     * reason: a submersible lifting nothing is destroying its own seals, and
+     * the bore itself needs hours to recover, so this is not a notice to show
+     * once and let scroll away. The message names the detector, because the
+     * two want different responses - a current trip means stop the pump now, a
+     * flat sump over 20 minutes means go and look. */
+    /* Both of these are kept short on purpose - docs/check_alerts.py measures
+     * them against ESP_RMAKER_MAX_ALERT_LEN with worst-case substitutions, and
+     * the first drafts came in at 100/100 and 113/100. Over the cap is a SILENT
+     * truncation in the one channel nobody is watching a console for. */
+    if (s->bore_dry_why == BORE_DRY_BY_NO_YIELD) {
+        snprintf(msg, sizeof(msg), "Borewell may be dry: %d min, sump flat at %d%%. "
+                 "Check the bore before the pump runs on.", BORE_DRY_WINDOW_MIN, s->sump.pct);
+    } else {
+        snprintf(msg, sizeof(msg), "Borewell dry: %d.%d A, under %u.%u A for %d s. "
+                 "Stop the pump, it is pumping air.",
+                 s->borewell.deci_amps / 10, s->borewell.deci_amps % 10,
+                 cal_ct(CAL_CT_BORE)->dry_deci_amps / 10,
+                 cal_ct(CAL_CT_BORE)->dry_deci_amps % 10, BORE_DRY_DEBOUNCE_S);
+    }
+    alert_eval(&s_al_bore_dry, s->bore_dry, msg, ALERT_REPEAT_MS, 3);
 
     bool any_lost = !s->rwt_online || !s->twt_online || !s->battery_online ||
                     (s->sump_configured && !s->sump_online) ||
@@ -1286,6 +1369,11 @@ static void poll_task(void *arg)
     int64_t  day_saved_us = 0;
     int64_t  hist_last_us = 0;
     bool     today_restored = false;
+    /* Dry-run debounce, accumulated from the cycle clock rather than counted in
+     * cycles - the same reason run_acct_t carries milliseconds: the poll lands a
+     * few ms under POLL_CYCLE_MS, so counting cycles x 2000 would drift. */
+    uint32_t bore_dry_held_ms = 0;
+    int64_t  bore_dry_last_us = 0;
 
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
@@ -1486,6 +1574,24 @@ static void poll_task(void *arg)
         }
 
         local.no_production = no_production_now(&local);
+
+        /* Two independent detectors, one flag. The clamp trips in seconds once
+         * the threshold is set; the yield check needs no calibration at all and
+         * is what covers the plant until somebody reads a real dry current off
+         * the event log. Either is enough to call it dry. */
+        {
+            int64_t dnow = esp_timer_get_time();
+            uint32_t dt_ms = bore_dry_last_us ? (uint32_t)((dnow - bore_dry_last_us) / 1000) : 0;
+            bore_dry_last_us = dnow;
+            bool by_amps = bore_dry_by_amps(&local, dt_ms, &bore_dry_held_ms);
+            bool by_yield = bore_no_yield_now(&local);
+            local.bore_dry = by_amps || by_yield;
+            /* Amps first when both fired: it is the more specific claim, and it
+             * is the one whose figure the log carries. */
+            local.bore_dry_why = by_amps  ? BORE_DRY_BY_AMPS
+                               : by_yield ? BORE_DRY_BY_NO_YIELD
+                                          : 0;
+        }
 
         hub_state_lock();
         diff_events(&s_state, &local);

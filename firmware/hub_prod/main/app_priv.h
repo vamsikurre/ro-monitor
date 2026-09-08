@@ -375,6 +375,47 @@ typedef enum {
  * themselves elsewhere in this file, and is generous next to a 1.0 A
  * threshold without hiding a real stop/start. */
 #define RUN_HYST_DECI           3       /*  0.3 A */
+
+/* Borewell dry-run. A submersible with no water to lift has almost no
+ * hydraulic load - air is about 1/800 the density of water - so its current
+ * collapses well below the loaded figure while the motor is still energised
+ * and still reads as "running". That drop is the signal; it is how a bought
+ * dry-run relay works, and this hub already has three clamps on that motor.
+ *
+ * NOT a second "running" threshold. run_deci_amps (1.0 A) answers "is the
+ * motor energised at all" and is deliberately left alone here: rewriting the
+ * running state machine would put run accounting and the borewell run hours at
+ * risk to detect a fault, which is the wrong trade. Dry is an independent test
+ * layered on top - running AND drawing less than the dry threshold.
+ *
+ * Default 0 = off, the same convention press_range_mm uses for "no
+ * transducer". A placeholder guess here would either cry wolf on a healthy
+ * pump or read plausibly and be wrong, and there is no honest number until
+ * somebody sees the real dry current. Set it on /cal to about 70% of the
+ * observed loaded current, between run_deci_amps and oc_deci_amps.
+ * Until then BORE_DRY_WINDOW_MIN below is the detector that works. */
+#define BORE_DRY_DECI_A_DEFAULT 0
+/* Seconds the current must stay under the threshold, while running, before the
+ * flag is raised. Rides out the start surge and the priming that follows it,
+ * and any reset clears the counter so a reading that dithers across the line
+ * cannot chatter the flag. 20 s: dry running costs a submersible its seals in
+ * minutes, so this is short next to the damage and long next to a start. */
+#define BORE_DRY_DEBOUNCE_S     20
+
+/* Second detector, and the only one that works before the clamp threshold
+ * above is set: the borewell has run for this many minutes without the sump
+ * rising. Same shape as NOPROD_* (architecture.txt 91 - the borewell fills the
+ * sump, which is why the sump high-level float cuts it off).
+ *
+ * Only evaluated across a window where the SUMP MOTOR was off throughout.
+ * The two run together in normal operation, and a sump motor pumping out as
+ * fast as the borewell fills leaves the level flat with a perfectly healthy
+ * bore - which this would otherwise report as dry. Costs coverage: if they
+ * always run together this never fires and the clamp threshold is the only
+ * detector. A backstop that stays quiet beats one that cries wolf. */
+#define BORE_DRY_WINDOW_MIN     20
+#define BORE_DRY_RISE_PCT       1
+
 /* Rated permeate output (L/h) - the skid meter says ~900 against a 1200
  * nameplate, so 900 is the default and /cal owns the real figure. */
 #define PLANT_LPH_DEFAULT       900
@@ -598,6 +639,8 @@ typedef struct {
     uint32_t last_cycle_ms;
     bool     overcurrent;
     bool     no_production;        /* HPP running, TWT not rising - see NOPROD_* */
+    bool     bore_dry;             /* borewell energised, not lifting water - BORE_DRY_* */
+    uint8_t  bore_dry_why;         /* BORE_DRY_BY_*, 0 while bore_dry is false */
 
     /* Run accounting. "today" resets at local midnight and is lost on reboot;
      * the totals are the NVS figure (cal_runtime_get) and survive both. */
@@ -646,7 +689,15 @@ typedef enum {
     /* Appended, never inserted: these codes are stored in the ring and decoded
      * by the dashboard's EV map, so renumbering would relabel history. */
     EVT_BORE_ON, EVT_BORE_OFF, EVT_SMOT_ON, EVT_SMOT_OFF,
+    /* Borewell energised but not lifting water. arg says which detector fired
+     * (BORE_DRY_BY_*), a carries the deci-amps at the moment it tripped. */
+    EVT_BORE_DRY_ON, EVT_BORE_DRY_OFF,
 } evt_kind_t;
+
+/* Why bore_dry went true. Carried in the event's arg so the log says which
+ * detector saw it, and so a current trip can be told from a 20-minute one. */
+#define BORE_DRY_BY_AMPS        1
+#define BORE_DRY_BY_NO_YIELD    2
 typedef struct {
     uint32_t up_s;
     uint8_t  kind;

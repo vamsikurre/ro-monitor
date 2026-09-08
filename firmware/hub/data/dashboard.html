@@ -1136,6 +1136,9 @@ function machineUnit(m, label, id, r, draw, ct) {
   u.appendChild(txt("name", label));
   let s = "Idle", kind = "off";
   if (dead) { s = "Offline"; kind = "fault"; }
+  /* Running dry outranks Running: the motor is turning either way, and which
+     of the two it is decides whether somebody has to walk down and stop it. */
+  else if (m.on && ct && ct.dry) { s = "Running dry"; kind = "fault"; }
   else if (m.on) { s = "Running"; kind = "on"; }
   u.appendChild(chip(s, kind));
 
@@ -1639,16 +1642,21 @@ function updatePlant(s) {
     const w = document.querySelector(`[data-a="${id}"]`);
     setSpin(w, m.on && !dead);
     paintRotor(w && w.querySelector("svg"), m.on, dead);
+    /* Read before the chip, not after: the chip needs ct.dry, and this used to
+       be declared below it. Without this the "Running dry" state machineUnit()
+       builds on first render was overwritten by plain "Running" on the very
+       next poll, one second later - the state would never have been seen. */
+    const ct = s.motors && s.motors[key];
     const c = u.querySelector(".chip");
     if (c) {
       let label = "Idle", kind = "off";
       if (dead) { label = "Offline"; kind = "fault"; }
+      else if (m.on && ct && ct.dry) { label = "Running dry"; kind = "fault"; }
       else if (m.on) { label = "Running"; kind = "on"; }
       c.textContent = label;
       c.className = "chip " + kind;
     }
 
-    const ct = s.motors && s.motors[key];
     const aEl = u.querySelector(".amps");
     if (aEl) {
       aEl.innerHTML = ampsText(ct ? ct.amps : null);
@@ -1760,6 +1768,17 @@ function drawAlerts(s) {
     add("fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room");
   if (s.motors && s.motors.no_production)
     add("fault", "No production", `HPP has run 20 min and treated water is not rising (${T.twt.pct}%). Check membranes, reject valve and feed.`, "RO Skid");
+  /* Distinct from the "Dry run risk" above, which is the SUMP motor about to
+     lose its suction. This is the borewell lifting nothing out of the ground -
+     the fault that empties the sump in the first place. */
+  if (s.motors && s.motors.borewell && s.motors.borewell.dry) {
+    const bd = s.motors.borewell;
+    add("fault", "Borewell dry",
+        bd.dry_why === 2
+          ? `Running 20 min with the sump flat at ${T.sump.pct}%. Check the bore before the pump runs on.`
+          : `Drawing ${ampsText(bd.amps).replace(/<[^>]+>/g, "")}, under the ${(bd.dry_at_deci_a / 10).toFixed(1)} A threshold. Stop the pump — it is pumping air.`,
+        "Borewell");
+  }
   if (s.motors && s.motors.overcurrent)
     add("fault", "Over-current", `HPP ${ampsText(s.motors.hpp.amps).replace(/<[^>]+>/g, "")} · RWP ${ampsText(s.motors.rwp.amps).replace(/<[^>]+>/g, "")}. Seized pump or lost phase.`, "RO Skid");
   if (s.env.battery_room.state === "ONLINE" && s.env.battery_room.t > 38)
@@ -2007,7 +2026,10 @@ const demo = {
   aster: { twt_floty: false, rwt_floty: true, sump_floty: false, dos_lvl: true, rl1: true, rl2: true, alarm: false, lps: false },
   motors: {
     hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false, no_production: false,
-    borewell:   { amps: 4.1, phases: [4.1, 4.0, 3.9], imbalance_pct: 5, running: true },
+    /* dry:false with a threshold set, so demo shows the armed-and-healthy case.
+       Flip dry to true and dry_why to 1 or 2 to review either alert wording. */
+    borewell:   { amps: 4.1, phases: [4.1, 4.0, 3.9], imbalance_pct: 5, running: true,
+                  dry: false, dry_why: 0, dry_at_deci_a: 29 },
     sump_motor: { amps: 3.3, phases: [3.3, 3.2, null], imbalance_pct: 3, running: true },
   },
   env: {
@@ -2277,6 +2299,12 @@ const EV = {
   20: e => ["",      "Borewell stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
   21: () => ["",     "Sump motor started", ""],
   22: e => ["",      "Sump motor stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
+  /* e[2] is BORE_DRY_BY_* and e[3] the deci-amps it tripped at. That current is
+     the whole point of logging it: the clamp threshold on /cal has no sensible
+     default, and this is the only place the real dry figure gets written down. */
+  23: e => ["fault", "Borewell dry", (e[2] === 2 ? "no yield · sump flat" : "on current")
+                                    + (e[3] ? " · " + (e[3] / 10).toFixed(1) + " A" : "")],
+  24: () => ["dim",  "Borewell dry cleared", ""],
 };
 const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room", 5: "0x05 Sump", 6: "0x06 Utility" })[a] || ("0x0" + a);
 const hmShort = sec => { const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`; };
