@@ -191,3 +191,19 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_UART=y
 # regeneration cannot lose it again. sdkconfig is not tracked - if a setting
 # matters, it belongs in this file.
 CONFIG_ESP_RMAKER_FACTORY_RESET_REPORTING=y
+
+# --- lwIP socket pool ---
+# 16, not the default 10. The web server is configured for 7 clients
+# (app_web.c) and esp_http_server reserves 3 more for its own working, so httpd
+# alone accounts for the whole default pool. Add RainMaker's MQTT socket and
+# mDNS's, and the ground-floor poll's HTTP client had none left:
+#
+#   E esp-tls: Failed to create socket (family 2 socktype 1 protocol 0)
+#   E transport_base: Failed to open a new connection: 32770
+#   W gf: sump node ... offline after 3 misses - probing every 30 s
+#
+# That is socket(), not memory, and it is why ground-floor polling worked
+# perfectly on 2026-09-08 while the cloud was down and stopped the moment MQTT
+# connected - the poll had been living in the socket MQTT was failing to take.
+# 16 is the ESP32 maximum. Cost is a few hundred bytes of descriptors.
+CONFIG_LWIP_MAX_SOCKETS=16
