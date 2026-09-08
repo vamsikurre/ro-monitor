@@ -20,7 +20,12 @@
    ───────────────────────────────────────────────────────────── */
 :root{
   --ground-c:#10161F; --panel:#18202C; --line:#2A3646; --line-2:#3E4E63;
-  --ink:#E6ECF3; --ink-2:#9AA7B8; --ink-3:#6B7787;
+  /* ink-2 measured 3.99:1 on panel and ink-3 3.6:1, both under the 4.5:1 that
+     small text needs - and these two carry nearly every label on the page at
+     9-12px: the card legends, the run-table headers, the event timestamps, the
+     unit suffixes. Lifted until the worst of them clears 4.5:1, which is what
+     a screen in a lit plant room needs anyway. */
+  --ink:#E6ECF3; --ink-2:#AEBACA; --ink-3:#8B97A7;
   /* fluids — categorical, ΔE 17.8 normal / 17.3 deutan */
   /* How far the earth band is pulled ABOVE its grid row so its top edge lands
      exactly on the grade slab. Not a taste value: it is the plant row-gap
@@ -34,7 +39,11 @@
      permeate, so a glance down the plant reads dirty -> clean. */
   --tds-feed:#C4703A; --tds-clean:#3E8F5F;
   /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
-  --warn:#B08F1A; --fault:#D93E68; --offline:#6B7787;
+  /* fault was #D93E68, 4.18:1 on panel - close, but it is the colour on the
+     OFFLINE chip, which is the one word on this page that has to be readable
+     at 9.5px from across a room. The wash tokens below stay at the old hue;
+     they are region tints, not text. */
+  --warn:#B08F1A; --fault:#E4577E; --offline:#6B7787;
   /* --fault at low alpha, for washing a whole region rather than a chip */
   --fault-wash:rgba(217,62,104,.06); --fault-wash-2:rgba(217,62,104,.19);
   --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -356,7 +365,10 @@ h1 span{color:var(--ink-3); font-weight:400}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── instrument strip ───────────────────────────────────── */
-.grid{display:grid; gap:14px; padding:20px 22px 0; grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+/* align-items:start, or every card in a row grows to the tallest one in it -
+   the eight-contact Aster panel dragged the three climate cards to 333px and
+   left 150px of empty panel under each. Cards size to their own content now. */
+.grid{display:grid; gap:14px; padding:20px 22px 0; align-items:start; grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
 .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px 15px}
 .card > .legend{display:block; margin-bottom:12px; padding-bottom:9px; border-bottom:1px solid var(--line)}
 .climate{display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap}
@@ -429,7 +441,15 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
    would throw away the one thing the drawing exists to show. */
 @media (max-width:900px){
   header,.grid,footer,.plantwrap{padding-left:16px; padding-right:16px}
-  #alerts{right:16px; bottom:14px; width:calc(100vw - 32px)}
+  /* Fixed to the bottom of the viewport, three node-offline alerts are 187px
+     of an 844px phone screen - and they do not go away, because "has not
+     answered for 2h" stays true. Measured on the live hub they were sitting on
+     top of the sump motor's state and current, which is the reading you open
+     the page on the ground floor to see. #alerts is already the element right
+     after <header> in source order, so letting it back into normal flow puts
+     the banners exactly where a banner belongs and gives the drawing its
+     pixels back. */
+  #alerts{position:static; width:auto; margin:14px 16px 0}
   .hstats{margin-left:0; width:100%; gap:4px 15px}
   .hstat .readout{font-size:12px}
   header{gap:7px 15px; padding-top:13px; padding-bottom:13px}
@@ -517,11 +537,13 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <span class="legend">Nodes</span>
     <div class="rows" id="cNodes"></div>
   </div>
-</div>
-
-<div class="grid">
+  <!-- These three used to sit in a second .grid of their own. Two containers
+       cannot share a row, so at four tracks the first grid ended on Aster +
+       Nodes with two tracks empty and the second ended on the event log with
+       two more empty - a third of the instrument strip was blank. In one grid
+       the trend panel packs into the gap beside Nodes and every track fills. -->
   <div class="card span2">
-    <span class="legend">Trends · last 24 h</span>
+    <span class="legend" id="trendSpan">Trends · last 24 h</span>
     <div class="trend" id="trend"><div class="empty">Collecting history…</div><div class="tip" id="trendTip"></div></div>
   </div>
   <div class="card span2">
@@ -2015,12 +2037,26 @@ function drawTrend() {
   if (rows.length < 3) { empty.style.display = ""; return; }
   empty.style.display = "none";
 
-  const t0 = rows[0][0], t1 = rows[rows.length - 1][0], span = Math.max(t1 - t0, 3600);
+  /* The floor was an hour, so twelve minutes of history after a reboot drew
+     itself into the leftmost fifth of the panel and left the rest blank. A
+     quarter-hour floor still stops two rows from stretching edge to edge while
+     letting a short strip use the width it has. The legend then says what the
+     strip actually covers instead of claiming 24 h of it. */
+  const t0 = rows[0][0], t1 = rows[rows.length - 1][0], span = Math.max(t1 - t0, 900);
+  $("#trendSpan").textContent = "Trends · last " + (t1 - t0 < 5400
+    ? Math.max(1, Math.round((t1 - t0) / 60)) + " min"
+    : Math.round((t1 - t0) / 3600) + " h");
   const PLOT_W = TREND_W - PAD_L - PAD_R;
   const X = t => PAD_L + (t - t0) / span * PLOT_W;
   const laneY = 14, tankY = laneY + 2 * LANE_H + GAP, tempY = tankY + TANK_H + GAP + 12;
   const H = tempY + TEMP_H + 18;
-  const svg = el("svg", { viewBox: `0 0 ${TREND_W} ${H}` });
+  /* The strip reached the accessibility tree as an unnamed image. The hover
+     tooltip is the only way to read a value off it, and that needs a pointer,
+     so the label is the one thing a keyboard or screen reader user gets. */
+  const svg = el("svg", {
+    viewBox: `0 0 ${TREND_W} ${H}`, role: "img",
+    "aria-label": `Pump lanes, tank levels and room temperature over the last ${hhmm(t0)} to ${hhmm(t1)}`,
+  });
   const txt = (x, y, str, cls, anchor) => { const t = el("text", { x, y, class: cls, "text-anchor": anchor || "start" }); t.textContent = str; return t; };
 
   /* pump lanes: a bar per contiguous "on" run, so a start/stop is a visible edge */
@@ -2107,9 +2143,15 @@ function drawTrend() {
     { pt: line(12, "util", Yc), name: "UTIL", fmt: deg },
   ], tempY + 4, tempY + TEMP_H + 4);
 
-  /* x axis: a tick every 4 h on the hour */
-  const first = Math.ceil(t0 / 14400) * 14400;
-  for (let t = first; t <= t1; t += 14400) {
+  /* x axis. This was hard-coded to a tick every 4 h, which is right for a full
+     strip and draws NOTHING for the first four hours after a reboot: the first
+     4 h boundary at or after t0 lands past t1, the loop never runs, and the
+     chart comes up with no time axis at all - exactly the state a hub is in
+     when someone is watching it because it just restarted. Step down through
+     the ladder until the visible span carries at least three ticks. */
+  const step = [120, 300, 900, 1800, 3600, 7200, 14400].find(s => span / s <= 6) || 14400;
+  const first = Math.ceil(t0 / step) * step;
+  for (let t = first; t <= t1; t += step) {
     svg.appendChild(el("line", { x1: X(t), x2: X(t), y1: laneY, y2: tempY + TEMP_H, class: "grid" }));
     svg.appendChild(txt(X(t), H - 4, hhmm(t), "ax", "middle"));
   }
@@ -2183,7 +2225,10 @@ function drawEvents() {
     const t = new Date((nowS - (up - e[0])) * 1000);
     const day = t < today ? t.toLocaleDateString(undefined, { day: "2-digit", month: "short" }) : "";
     return `<div class="ev ${cls}"><span class="t">${hhmm(t.getTime() / 1000)}</span><span class="d">${day}</span>` +
-           `<span class="w"><b>${esc(what)}</b>${detail ? `<span class="n">${esc(detail)}</span>` : ""}</span></div>`;
+           /* The gap between label and detail was a CSS margin only, so the
+              text content ran together: a screen reader, and anyone copying
+              the log out, got "Node online0x06 Utility". */
+           `<span class="w"><b>${esc(what)}</b>${detail ? ` <span class="n">${esc(detail)}</span>` : ""}</span></div>`;
   }).join("");
 }
 
@@ -2342,12 +2387,31 @@ if (DEMO_FORCE.has("demo")) {
   stepDemo();
   setInterval(stepDemo, 2000);
 } else {
-  poll();
-  setInterval(poll, 1000);
-  pollHistory();
-  setInterval(pollHistory, 60000);
-  pollEvents();
-  setInterval(pollEvents, 10000);
+  /* setInterval fired regardless of whether the previous fetch had come back.
+     The footer reports a poll cycle of ~1500 ms, so a 1000 ms interval could
+     leave two or three telemetry requests in flight at once - each holding an
+     lwIP socket out of a pool of 16 that the ground-floor poll and MQTT also
+     draw from. That is the exhaustion c450fd3 widened the pool for. Chaining
+     the next timer off completion caps each endpoint at one open request no
+     matter how slow the hub gets.
+
+     The hidden-tab gate matters more than it looks: a phone left on this page
+     in a background tab, or a wall tablet with the screen off, was polling all
+     three endpoints forever. Now it stops until the tab is looked at again,
+     and refreshes immediately when it is. */
+  const loop = (fn, ms) => {
+    const tick = async () => {
+      if (!document.hidden) await fn();
+      setTimeout(tick, ms);
+    };
+    tick();
+  };
+  loop(poll, 1000);
+  loop(pollHistory, 60000);
+  loop(pollEvents, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) { poll(); pollEvents(); pollHistory(); }
+  });
 }
 </script>
 </body>
