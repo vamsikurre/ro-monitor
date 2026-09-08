@@ -1698,7 +1698,11 @@ function render(s) {
   const A = s.aster;
   rows($("#cAster"), [
     ["TWT FLOTY", A.twt_floty ? "Closed" : "Open", A.twt_floty ? "on" : "off"],
-    ["RWT FLOTY", A.rwt_floty ? "Closed" : "Open", A.rwt_floty ? "on" : "off"],
+    /* Tri-state: true closed, false open, null the optocoupler is not fitted.
+       "Open" for a contact nothing reads is a claim about the plant. */
+    ["RWT FLOTY", A.rwt_floty == null ? "—" : (A.rwt_floty ? "Closed" : "Open"),
+                  A.rwt_floty == null ? "off" : (A.rwt_floty ? "on" : "off"),
+                  A.rwt_floty == null ? "Not wired" : ""],
     ["SUMP FLOTY", A.sump_floty ? "Closed" : "Open", A.sump_floty ? "on" : "off"],
     ["DOS LVL", A.dos_lvl ? "Closed" : "Open", A.dos_lvl ? "on" : "off"],
     ["RL1", A.rl1 ? "Active" : "Inactive", A.rl1 ? "on" : "off"],

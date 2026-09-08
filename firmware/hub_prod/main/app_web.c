@@ -135,6 +135,23 @@ static const char *tank_state_word(const tank_state_t *t, bool online)
     return link_word(t->last_ok_us, true);
 }
 
+/* The sump is the same question as tank_state_word() with a different link.
+ * gf_node_state() below answers "is the node answering", which is right for the
+ * nodes[] list and wrong here: a node that answers but cannot produce a level -
+ * a pressure transducer fitted while press_range_mm on /cal is still 0, or
+ * ultrasonic quality below MIN_LEVEL_QUALITY in a shaft holding a ladder, a
+ * riser and a foaming surface - would report ONLINE beside the pct field's
+ * 0-for-negative, which draws a confidently-measured empty tank with a green
+ * "Reading" chip. The dashboard's dead-state check only looks for OFFLINE and
+ * SENSOR_ERROR, so the absence has to be said in this word or it is not said. */
+static const char *sump_state_word(const tank_state_t *t, bool configured, bool online)
+{
+    if (!configured || !online)        return "OFFLINE";
+    if (t->sensor == SENSOR_HW_FAULT)  return "SENSOR_ERROR";
+    if (t->pct < 0)                    return "SENSOR_ERROR";
+    return "ONLINE";
+}
+
 /* ------------------------------------------------------------ Basic auth */
 
 static bool authorised(httpd_req_t *req)
@@ -422,11 +439,27 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     char rs485_failures[160];
     rs485_error_report(rs485_failures, sizeof(rs485_failures));
 
+    /* gf_apply() recomputes both motors' currents from the last good millivolts
+     * on every cycle - its branch tests "the node ever answered", not "the node
+     * is answering now", and motors.borewell has no state field of its own. So
+     * an offline utility node kept publishing hours-old amps rendered exactly
+     * like live ones, beside an "Offline" chip. Filtered here rather than in
+     * gf_apply() because /cal deliberately wants the retained values. */
+    bool util_live = s->utility_configured && s->utility_online;
     char bore_amps[12], smot_amps[12], bore_ph[40], smot_ph[40];
-    da_json(bore_amps, sizeof bore_amps, s->borewell.deci_amps);
-    da_json(smot_amps, sizeof smot_amps, s->sump_motor.deci_amps);
-    phases_json(bore_ph, sizeof bore_ph, s->borewell.phase_da);
-    phases_json(smot_ph, sizeof smot_ph, s->sump_motor.phase_da);
+    char bore_imb[8], smot_imb[8];
+    if (util_live) {
+        da_json(bore_amps, sizeof bore_amps, s->borewell.deci_amps);
+        da_json(smot_amps, sizeof smot_amps, s->sump_motor.deci_amps);
+        phases_json(bore_ph, sizeof bore_ph, s->borewell.phase_da);
+        phases_json(smot_ph, sizeof smot_ph, s->sump_motor.phase_da);
+        snprintf(bore_imb, sizeof bore_imb, "%u", (unsigned)s->borewell.imbalance_pct);
+        snprintf(smot_imb, sizeof smot_imb, "%u", (unsigned)s->sump_motor.imbalance_pct);
+    } else {
+        strcpy(bore_amps, "null"); strcpy(smot_amps, "null");
+        strcpy(bore_ph,   "null"); strcpy(smot_ph,   "null");
+        strcpy(bore_imb,  "null"); strcpy(smot_imb,  "null");
+    }
 
     /* gf_apply() clears only pct and distance when the sump node stops
      * answering, so sump_pressure and sensor still hold what it last said. This
@@ -473,8 +506,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"motors\":{"
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
-          "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%u,\"running\":%s},"
-          "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%u,\"running\":%s},"
+          "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s},"
+          "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s},"
           "\"overcurrent\":%s,\"no_production\":%s"
         "},"
         "\"run\":{"
@@ -506,7 +539,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         rs485_failures,
 
         s->sump.pct < 0 ? 0 : s->sump.pct, s->sump.distance_mm,
-        gf_node_state(s->sump_configured, s->sump_online), sump_sensor, sump_source,
+        sump_state_word(&s->sump, s->sump_configured, s->sump_online), sump_sensor, sump_source,
         s->rwt.pct < 0 ? 0 : s->rwt.pct, s->rwt.distance_mm,
         tank_state_word(&s->rwt, s->rwt_online), sensor_word(s->rwt.sensor),
         s->dosing.pct < 0 ? 0 : s->dosing.pct, s->dosing.distance_mm,
@@ -528,7 +561,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         rejection,
 
         s->twt_float_closed ? "true" : "false",
-        s->rwt_floty == 1 ? "true" : "false",
+        /* true closed, false open, null NOT WIRED. The node's optocoupler is
+         * unfitted by default, so flattening the -1 to false shipped "Open" -
+         * a definite statement about a contact nothing is reading. */
+        s->rwt_floty < 0 ? "null" : (s->rwt_floty ? "true" : "false"),
         s->rl1_active ? "true" : "false",
         s->rl2_active ? "true" : "false",
         s->alarm_active ? "true" : "false",
@@ -555,9 +591,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,
-        bore_amps, bore_ph, (unsigned)s->borewell.imbalance_pct,
+        bore_amps, bore_ph, bore_imb,
         s->borewell.running ? "true" : "false",
-        smot_amps, smot_ph, (unsigned)s->sump_motor.imbalance_pct,
+        smot_amps, smot_ph, smot_imb,
         s->sump_motor.running ? "true" : "false",
         s->overcurrent ? "true" : "false",
         s->no_production ? "true" : "false",
@@ -594,9 +630,12 @@ static esp_err_t cal_get(httpd_req_t *req)
 {
     /* 8 K, not 4 K. The page was 4027 bytes against a 4096 buffer before the relay
      * test was added - 69 bytes of headroom, and one more sentence anywhere would
-     * have tipped it. The guard at the end turns an overflow into a 500 rather
-     * than a truncated page, which is the right failure, but it is still /cal
-     * simply not opening. Static, so this is BSS rather than stack. */
+     * have tipped it. The guard at the end catches only the FIRST truncation and
+     * only after the fact: `n` is snprintf's would-have-written length, so once
+     * it passes sizeof(page) the `sizeof(page) - n` argument to every later call
+     * underflows to a huge size_t and those writes run past the end of the
+     * buffer. So the guard reports corruption rather than preventing it - keep
+     * the headroom, do not rely on the check. Static, so BSS rather than stack. */
     static char page[14336];   /* +1.5 k for the ground-floor rows and their notes */
     int n = 0;
 
