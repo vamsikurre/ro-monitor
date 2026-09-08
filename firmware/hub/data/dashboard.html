@@ -391,12 +391,20 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
    temperature. Lines 2px, grid recessive, the last value direct-labelled at the
    line end in text ink - colour carries identity, text stays text. */
 @media (min-width:600px){.card.span2{grid-column:span 2}}
-/* Between these two widths auto-fit gives THREE tracks, and every card down
-   here spans two - so each took its own row and left a third of the row empty.
-   Two explicit tracks makes a span-2 card exactly full width instead, which is
-   what the trend and the six-column run table both want at this size. Above
-   1160 there is room for four tracks and they pair up two to a row again. */
-@media (min-width:600px) and (max-width:1159px){.grid{grid-template-columns:repeat(2,1fr)}}
+/* Six single cards and three that span two only tile a row when the track
+   count is EVEN. Work it out for each: 2, 4 and 6 tracks come out flush, but 3
+   leaves three rows at 67%, 5 strands the event log alone on a row 39% full,
+   and 7 wastes a track on both rows. auto-fit picks purely on how many 268px
+   columns fit, so it walks straight through the odd counts - 5 tracks covers
+   1455-1736px, which is where a 1536 or 1600 or 1680 laptop sits. Measured on
+   the hub at 1600: 933px of empty row under the event log.
+   So the track count is named rather than derived, and only even numbers are
+   named. Each band starts where its tracks are still >=268px wide (4 x 268 +
+   3 x 14 = 1114 of grid, so 1173 of viewport; six wants 1737). Below 600 the
+   base auto-fit rule gives one column and .span2 stops spanning. */
+@media (min-width:600px)  and (max-width:1172px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:1173px) and (max-width:1736px){.grid{grid-template-columns:repeat(4,1fr)}}
+@media (min-width:1737px){.grid{grid-template-columns:repeat(6,1fr)}}
 .trend{position:relative; width:100%}
 .trend svg{display:block; width:100%; height:auto; overflow:visible}
 .trend .grid{stroke:var(--line); stroke-width:1}
@@ -424,8 +432,24 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .run .p{font-family:var(--mono); font-size:12px; color:var(--ink-2)}
 .run .v{font-family:var(--mono); font-weight:600}
 .run .v u{text-decoration:none; font-size:10px; color:var(--ink-3); margin-left:2px}
-.run .sum{grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; padding-top:10px; border-top:1px solid var(--line)}
-.run .sum .metric .legend{font-size:9px}
+/* Four summary metrics on a flex row wrapped 3 + 1, so "Lifetime · ground"
+   dropped onto a line of its own and the block read ragged. Four grid columns
+   fixed the raggedness and broke something worse: measured, the widest cell
+   ("4HPP 4RWP -BORE -SUMP") needs 210px on one line and four columns of a
+   732px card give it 170, so the figures themselves wrapped - "619h" on one
+   line and its "RWP" on the next, which reads as a different number.
+   Two columns it is. 210 x 2 + 18 = 438, so below that the card gets one
+   column and the four metrics stack instead of splitting a figure. Two and one
+   are both even over four items, so neither can come out ragged.
+   Queried against the card, not the window: how wide this panel ends up
+   depends on the track count as much as the viewport - at six tracks a wider
+   window makes this card narrower. */
+.run{container-type:inline-size}
+.run .sum{grid-column:1 / -1; display:grid; grid-template-columns:1fr; gap:10px 18px; margin-top:8px; padding-top:10px; border-top:1px solid var(--line)}
+@container (min-width:440px){.run .sum{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* was 9px - the only text on the page below 10px, and these are the same kind
+   of label as every other .legend. Matched to them. */
+.run .sum .metric .legend{font-size:10px}
 .run .sum .big{font-size:22px}
 .events{display:flex; flex-direction:column; max-height:330px; overflow-y:auto; margin:-4px -4px 0; padding:0 4px}
 .ev{display:grid; grid-template-columns:auto auto 1fr; gap:0 12px; align-items:baseline; padding:6px 0; border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
@@ -483,7 +507,12 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
    letting the table scroll keeps every number readable, which beats wrapping
    "12h 03m" onto two lines. The summary row below it is flex and wraps fine. */
 @media (max-width:600px){
-  .run{gap:6px 7px; grid-template-columns:auto repeat(5,minmax(44px,1fr)); overflow-x:auto}
+  /* 44px was enough for the four "* run" headers, which have a space to break
+     at and so wrap to two lines. "Produced" has none, cannot break, and ran
+     57px past its cell. The floor is the width of the widest unbreakable
+     header now; the table already scrolls, which is the trade this floor was
+     chosen for in the first place. */
+  .run{gap:6px 7px; grid-template-columns:auto repeat(5,minmax(58px,1fr)); overflow-x:auto}
   .run .p,.run .v{font-size:11px} .run .h{letter-spacing:.06em}
   .run .sum{position:sticky; left:0}
 }
@@ -2034,7 +2063,11 @@ function drawTrend() {
   const rows = HIST.filter(r => r[0] > 0);
   host.querySelectorAll("svg").forEach(n => n.remove());
   const empty = host.querySelector(".empty");
-  if (rows.length < 3) { empty.style.display = ""; return; }
+  /* The legend is set below from the span the strip actually covers, but this
+     path returns before reaching it - so a hub three minutes off a reboot sat
+     there reading "Trends · last 24 h" over the words "Collecting history…".
+     Drop the claim until there is a span to make one from. */
+  if (rows.length < 3) { empty.style.display = ""; $("#trendSpan").textContent = "Trends"; return; }
   empty.style.display = "none";
 
   /* The floor was an hour, so twelve minutes of history after a reboot drew
@@ -2043,9 +2076,10 @@ function drawTrend() {
      letting a short strip use the width it has. The legend then says what the
      strip actually covers instead of claiming 24 h of it. */
   const t0 = rows[0][0], t1 = rows[rows.length - 1][0], span = Math.max(t1 - t0, 900);
-  $("#trendSpan").textContent = "Trends · last " + (t1 - t0 < 5400
+  const spanTxt = t1 - t0 < 5400
     ? Math.max(1, Math.round((t1 - t0) / 60)) + " min"
-    : Math.round((t1 - t0) / 3600) + " h");
+    : Math.round((t1 - t0) / 3600) + " h";
+  $("#trendSpan").textContent = "Trends · last " + spanTxt;
   const PLOT_W = TREND_W - PAD_L - PAD_R;
   const X = t => PAD_L + (t - t0) / span * PLOT_W;
   const laneY = 14, tankY = laneY + 2 * LANE_H + GAP, tempY = tankY + TANK_H + GAP + 12;
@@ -2055,7 +2089,9 @@ function drawTrend() {
      so the label is the one thing a keyboard or screen reader user gets. */
   const svg = el("svg", {
     viewBox: `0 0 ${TREND_W} ${H}`, role: "img",
-    "aria-label": `Pump lanes, tank levels and room temperature over the last ${hhmm(t0)} to ${hhmm(t1)}`,
+    /* "from 16:06 to 16:06" is what a full 24 h strip gives you, since both
+       ends land on the same clock time. Say the span and where it ends. */
+    "aria-label": `Pump lanes, tank levels and room temperature, last ${spanTxt} ending ${hhmm(t1)}`,
   });
   const txt = (x, y, str, cls, anchor) => { const t = el("text", { x, y, class: cls, "text-anchor": anchor || "start" }); t.textContent = str; return t; };
 
@@ -2300,7 +2336,7 @@ function drawRun(s) {
   const lifeH = sec => Math.floor(sec / 3600).toLocaleString();
   host.innerHTML =
     `<span class="h"></span><span class="h">HPP run</span><span class="h">RWP run</span>` +
-    `<span class="h">Bore run</span><span class="h">Sump run</span><span class="h">produced</span>` +
+    `<span class="h">Bore run</span><span class="h">Sump run</span><span class="h">Produced</span>` +
     row("Today", P.today) + row("This week", P.week) + row("This month", P.month) +
     `<div class="sum">
        <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${g(R.borewell.starts)}<u>BORE</u> ${g(R.sump_motor.starts)}<u>SUMP</u></span></div>
