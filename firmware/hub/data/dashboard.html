@@ -396,7 +396,11 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
   border-radius:var(--r); padding:6px 8px; font:11px var(--mono); color:var(--ink-2); white-space:nowrap; display:none; z-index:5}
 .trend .tip b{color:var(--ink); font-weight:600}
 .trend .empty,.run .empty{color:var(--ink-3); font-size:12px; padding:18px 0}
-.run{display:grid; grid-template-columns:auto 1fr 1fr 1fr; gap:6px 14px; align-items:baseline}
+/* Six columns of monospace figures do not fit a 268px card - at one column
+   wide the four run times and the litres get ~30px each, which truncates. So
+   the panel spans two, like the trend strip and the event log already do, and
+   the row then packs level with the trend instead of leaving a gap. */
+.run{display:grid; grid-template-columns:auto repeat(5,minmax(0,1fr)); gap:6px 12px; align-items:baseline}
 .run .h:nth-child(n+2),.run .v{text-align:right}
 .run .h{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); font-weight:600}
 .run .p{font-family:var(--mono); font-size:12px; color:var(--ink-2)}
@@ -446,6 +450,10 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 }
 
 :focus-visible{outline:2px solid var(--treated); outline-offset:2px}
+/* Below 600px .card.span2 stops spanning, so the six columns land in one
+   narrow card. Tighten the gutters and the figures rather than dropping a
+   motor: a column that is not drawn reads as a motor that does not exist. */
+@media (max-width:600px){.run{gap:6px 7px} .run .p,.run .v{font-size:11px} .run .h{letter-spacing:.06em}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important; transition:none!important}}
 </style>
 </head>
@@ -503,7 +511,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <span class="legend">Trends · last 24 h</span>
     <div class="trend" id="trend"><div class="empty">Collecting history…</div><div class="tip" id="trendTip"></div></div>
   </div>
-  <div class="card">
+  <div class="card span2">
     <span class="legend">Pumps · today</span>
     <div class="run" id="cRun"></div>
   </div>
@@ -1893,7 +1901,9 @@ const demo = {
     rwp:        { on: true, state: "ONLINE" },
     hpp:        { on: true, state: "ONLINE" },
   },
-  run: { hpp: { today_s: 13380, starts: 4, total_s: 2209000 }, rwp: { today_s: 13920, starts: 4, total_s: 2231000 }, plant_lph: 900 },
+  run: { hpp: { today_s: 13380, starts: 4, total_s: 2209000 }, rwp: { today_s: 13920, starts: 4, total_s: 2231000 },
+         borewell: { today_s: 7200, starts: 3, total_s: 918000 }, sump_motor: { today_s: 5040, starts: 6, total_s: 604000 },
+         plant_lph: 900 },
   quality: {
     rwt: { ppm: 612, t: 28.4, fitted: true, live: false, age_s: 14200 },
     twt: { ppm: 31, t: 28.1, fitted: true, live: true, age_s: 4 },
@@ -1971,7 +1981,10 @@ function stepDemo() {
  *    sump%, bore_dA, smot_dA, util_dC]
  * -1 / null = no reading. Fetched once a minute; the hub keeps it in RAM, so a
  * reboot starts the strip again from empty and the cloud has the long record. */
-let HIST = [], DAYS = [];   /* DAYS: [local_midnight, hpp_min, rwp_min], oldest first */
+/* DAYS: [local_midnight, hpp_min, rwp_min, bore_min, smot_min], oldest first.
+   Positional and appended-to, never inserted into - the hub writes it the same
+   way, so an older row shape would shift every figure one motor along. */
+let HIST = [], DAYS = [];
 const TREND_W = 720, LANE_H = 12, TANK_H = 96, TEMP_H = 64, GAP = 22, PAD_L = 34, PAD_R = 56;
 
 function hhmm(t) { const d = new Date(t * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
@@ -2103,6 +2116,10 @@ const EV = {
   16: () => ["dim",  "Battery fan off", ""],
   17: () => ["dim",  "Cloud connected", ""],
   18: () => ["warn", "Cloud disconnected", ""],
+  19: () => ["",     "Borewell started", ""],
+  20: e => ["",      "Borewell stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
+  21: () => ["",     "Sump motor started", ""],
+  22: e => ["",      "Sump motor stopped", `${hmShort(e[3] * 60)}${e[4] !== 65535 ? " · avg " + (e[4] / 10).toFixed(1) + " A" : ""}`],
 };
 const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room", 5: "0x05 Sump", 6: "0x06 Utility" })[a] || ("0x0" + a);
 const hmShort = sec => { const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`; };
@@ -2164,9 +2181,11 @@ function periodTotals(R) {
   const now = new Date(), midToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
   const monday = midToday - ((now.getDay() + 6) % 7) * 86400;
   const first = new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000;
+  const today = { hpp: R.hpp.today_s, rwp: R.rwp.today_s, bore: R.borewell.today_s, smot: R.sump_motor.today_s };
   const sum = from => DAYS.filter(d => d[0] >= from && d[0] < midToday)
-    .reduce((a, d) => ({ hpp: a.hpp + d[1] * 60, rwp: a.rwp + d[2] * 60 }), { hpp: R.hpp.today_s, rwp: R.rwp.today_s });
-  return { today: { hpp: R.hpp.today_s, rwp: R.rwp.today_s }, week: sum(monday), month: sum(first) };
+    .reduce((a, d) => ({ hpp: a.hpp + d[1] * 60, rwp: a.rwp + d[2] * 60,
+                         bore: a.bore + d[3] * 60, smot: a.smot + d[4] * 60 }), today);
+  return { today, week: sum(monday), month: sum(first) };
 }
 
 function drawRun(s) {
@@ -2174,14 +2193,18 @@ function drawRun(s) {
   if (!R) { host.innerHTML = `<div class="empty">No run data</div>`; return; }
   const P = periodTotals(R), days = dosingDays();
   const L = sec => Math.round(sec / 3600 * R.plant_lph).toLocaleString();
-  const row = (name, p) => `<span class="p">${name}</span><span class="v">${hm(p.hpp)}</span><span class="v">${hm(p.rwp)}</span><span class="v">${L(p.hpp)}<u>L</u></span>`;
+  const row = (name, p) => `<span class="p">${name}</span><span class="v">${hm(p.hpp)}</span><span class="v">${hm(p.rwp)}</span>` +
+    `<span class="v">${hm(p.bore)}</span><span class="v">${hm(p.smot)}</span><span class="v">${L(p.hpp)}<u>L</u></span>`;
+  const lifeH = sec => Math.floor(sec / 3600).toLocaleString();
   host.innerHTML =
-    `<span class="h"></span><span class="h">HPP run</span><span class="h">RWP run</span><span class="h">produced</span>` +
+    `<span class="h"></span><span class="h">HPP run</span><span class="h">RWP run</span>` +
+    `<span class="h">Bore run</span><span class="h">Sump run</span><span class="h">produced</span>` +
     row("Today", P.today) + row("This week", P.week) + row("This month", P.month) +
     `<div class="sum">
-       <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u></span></div>
+       <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${R.borewell.starts}<u>BORE</u> ${R.sump_motor.starts}<u>SUMP</u></span></div>
        <div class="metric"><span class="legend">Dosing drum</span><span class="big">${days === null ? "--" : days.toFixed(0)}<u>days</u></span></div>
-       <div class="metric"><span class="legend">Lifetime</span><span class="big">${Math.floor(R.hpp.total_s / 3600).toLocaleString()}<u>h HPP</u> ${Math.floor(R.rwp.total_s / 3600).toLocaleString()}<u>h RWP</u></span></div>
+       <div class="metric"><span class="legend">Lifetime · roof</span><span class="big">${lifeH(R.hpp.total_s)}<u>h HPP</u> ${lifeH(R.rwp.total_s)}<u>h RWP</u></span></div>
+       <div class="metric"><span class="legend">Lifetime · ground</span><span class="big">${lifeH(R.borewell.total_s)}<u>h BORE</u> ${lifeH(R.sump_motor.total_s)}<u>h SUMP</u></span></div>
      </div>`;
 }
 
@@ -2256,7 +2279,8 @@ if (DEMO_FORCE.has("demo")) {
     EVENTS.push([up - 5 * 3600, 6, 4, 0, 0], [up - 4.6 * 3600, 5, 4, 0, 0]);
     EVENTS.sort((x, y) => x[0] - y[0]); }
   { const n = new Date(), m0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime() / 1000;
-    DAYS = Array.from({ length: 34 }, (_, i) => [m0 - (34 - i) * 86400, 200 + (i * 37) % 90, 210 + (i * 37) % 90]); }
+    DAYS = Array.from({ length: 34 }, (_, i) => [m0 - (34 - i) * 86400, 200 + (i * 37) % 90, 210 + (i * 37) % 90,
+                                                 90 + (i * 23) % 60, 60 + (i * 17) % 40]); }
   drawTrend();
   stepDemo();
   setInterval(stepDemo, 2000);

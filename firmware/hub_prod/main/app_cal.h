@@ -137,9 +137,11 @@ esp_err_t cal_runtime_set(cal_ct_t c, uint32_t seconds);
 typedef struct {
     uint32_t midnight;             /* local midnight, epoch seconds */
     uint16_t hpp_min, rwp_min;
+    uint16_t bore_min, smot_min;   /* ground floor, node 0x06 */
 } cal_day_t;
 uint16_t  cal_days(const cal_day_t **out);
-esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min);
+esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min,
+                      uint16_t bore_min, uint16_t smot_min);
 
 /* Calibration page credentials. The password is stored so a site can change it
  * without a reflash; the default is in app_priv.h and is not a secret. */

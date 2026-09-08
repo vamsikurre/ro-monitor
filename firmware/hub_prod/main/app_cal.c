@@ -151,8 +151,14 @@ esp_err_t cal_init(void)
         key_for(key, sizeof(key), s_ct_keys[i], "rt");
         nvs_get_u32(h, key, &s_runtime_s[i]);       /* absent leaves 0 */
     }
+    /* "days2", not "days": cal_day_t grew two fields for the ground-floor
+     * motors, so a blob written by an older build is a different record size.
+     * Read under the old key it would divide into a plausible row count and
+     * come back as garbage midnights and impossible minutes. A new key leaves
+     * the old blob unread, which is what is wanted - nothing is deployed, and
+     * a lost bench ledger costs nothing next to a misparsed one. */
     size_t dlen = sizeof(s_days);
-    if (nvs_get_blob(h, "days", s_days, &dlen) == ESP_OK) {
+    if (nvs_get_blob(h, "days2", s_days, &dlen) == ESP_OK) {
         s_day_n = (uint16_t)(dlen / sizeof(cal_day_t));
         if (s_day_n > CAL_DAYS) s_day_n = CAL_DAYS;
     }
@@ -528,13 +534,15 @@ uint16_t cal_days(const cal_day_t **out)
     return s_day_n;
 }
 
-esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min)
+esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min,
+                      uint16_t bore_min, uint16_t smot_min)
 {
     if (midnight == 0) {
         return ESP_ERR_INVALID_ARG;                 /* no clock, no day to book it to */
     }
     if (s_day_n > 0 && s_days[s_day_n - 1].midnight == midnight) {
-        if (s_days[s_day_n - 1].hpp_min == hpp_min && s_days[s_day_n - 1].rwp_min == rwp_min) {
+        if (s_days[s_day_n - 1].hpp_min == hpp_min && s_days[s_day_n - 1].rwp_min == rwp_min &&
+            s_days[s_day_n - 1].bore_min == bore_min && s_days[s_day_n - 1].smot_min == smot_min) {
             return ESP_OK;                          /* nothing moved, spare the flash */
         }
     } else {
@@ -545,15 +553,17 @@ esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min)
         s_day_n++;
         s_days[s_day_n - 1].midnight = midnight;
     }
-    s_days[s_day_n - 1].hpp_min = hpp_min;
-    s_days[s_day_n - 1].rwp_min = rwp_min;
+    s_days[s_day_n - 1].hpp_min  = hpp_min;
+    s_days[s_day_n - 1].rwp_min  = rwp_min;
+    s_days[s_day_n - 1].bore_min = bore_min;
+    s_days[s_day_n - 1].smot_min = smot_min;
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) {
         return err;
     }
-    err = nvs_set_blob(h, "days", s_days, sizeof(cal_day_t) * s_day_n);
+    err = nvs_set_blob(h, "days2", s_days, sizeof(cal_day_t) * s_day_n);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }

@@ -589,6 +589,13 @@ typedef struct {
     uint32_t hpp_run_today_s, rwp_run_today_s;
     uint16_t hpp_starts_today, rwp_starts_today;
     uint32_t hpp_run_total_s, rwp_run_total_s;
+    /* Same three figures for the ground-floor motors. They are accounted only
+     * while node 0x06 is answering: an offline node reports nothing, and
+     * neither a stop that may not have happened nor hours of running nobody
+     * could see is a fact worth storing. See run_account() in app_main.c. */
+    uint32_t bore_run_today_s, smot_run_today_s;
+    uint16_t bore_starts_today, smot_starts_today;
+    uint32_t bore_run_total_s, smot_run_total_s;
 } hub_state_t;
 
 /* One minute of history. Percentages -1 = no level, amps -1 = no clamp,
@@ -621,6 +628,9 @@ typedef enum {
     EVT_ALARM_ON, EVT_ALARM_OFF, EVT_LPS_ON, EVT_LPS_OFF,
     EVT_OC_ON, EVT_OC_OFF, EVT_NOPROD_ON, EVT_NOPROD_OFF,
     EVT_FAN_ON, EVT_FAN_OFF, EVT_CLOUD_ON, EVT_CLOUD_OFF,
+    /* Appended, never inserted: these codes are stored in the ring and decoded
+     * by the dashboard's EV map, so renumbering would relabel history. */
+    EVT_BORE_ON, EVT_BORE_OFF, EVT_SMOT_ON, EVT_SMOT_OFF,
 } evt_kind_t;
 typedef struct {
     uint32_t up_s;

@@ -187,14 +187,49 @@ typedef struct {
     bool     was_running;
 } run_acct_t;
 
-static void run_account(run_acct_t *a, bool running, int16_t deci_amps, int64_t now_us,
+/* Which pair of event codes a channel logs. A conditional was fine while there
+ * were two pumps; with four it books a borewell start as an RWP one. */
+static const uint8_t s_run_evt[CAL_CT_COUNT][2] = {
+    [CAL_CT_HPP]  = { EVT_HPP_ON,  EVT_HPP_OFF  },
+    [CAL_CT_RWP]  = { EVT_RWP_ON,  EVT_RWP_OFF  },
+    [CAL_CT_BORE] = { EVT_BORE_ON, EVT_BORE_OFF },
+    [CAL_CT_SUMP] = { EVT_SMOT_ON, EVT_SMOT_OFF },
+};
+
+/*
+ * `known` = this motor is observable right now. False is NOT "off".
+ *
+ * The roof pumps are always observable - the hub reads their contactor optos
+ * itself - so they pass true, and hold their last state through a floating
+ * channel at the call site. The ground-floor motors sit behind a Wi-Fi node
+ * that can be gone for hours, and gf_apply() forces `running` false the whole
+ * time it is. Booking that as a stop invents a stop that may never have
+ * happened; holding `running` true instead books hours of running nobody could
+ * see. Both are invented data, which is what this codebase refuses everywhere.
+ *
+ * So an unobservable motor is not accounted at all: the clock is advanced so
+ * the blind window can never be credited retroactively, and nothing else
+ * moves. A node that comes back with its motor still running finds was_running
+ * still true and books no second start; one that comes back stopped books the
+ * stop then, with the run length measured to the last moment it was visible.
+ */
+static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_amps, int64_t now_us,
                         uint32_t *today_s, uint16_t *starts, uint32_t *total_s)
 {
     if (a->last_us == 0) a->last_us = now_us;
     uint32_t dt_ms = (uint32_t)((now_us - a->last_us) / 1000);
     a->last_us = now_us;
-    uint8_t on_evt  = (a->which == CAL_CT_HPP) ? EVT_HPP_ON  : EVT_RWP_ON;
-    uint8_t off_evt = (a->which == CAL_CT_HPP) ? EVT_HPP_OFF : EVT_RWP_OFF;
+    uint8_t on_evt  = s_run_evt[a->which][0];
+    uint8_t off_evt = s_run_evt[a->which][1];
+
+    if (!known) {
+        /* last_us is already advanced above, which is the entire point: the
+         * blind gap is discarded rather than counted. The reported figures keep
+         * whatever they last honestly were. */
+        *today_s = a->run_ms / 1000;
+        *total_s = cal_runtime_get(a->which) + (a->was_running ? a->run_since_start_s : 0);
+        return;
+    }
 
     if (running) {
         a->run_ms += dt_ms;
@@ -233,9 +268,11 @@ static uint32_t local_midnight(void)
 /* Today's run minutes into the ledger. Called on each stop and every
  * DAY_SAVE_S while a pump runs, so a reboot loses minutes, not hours. */
 #define DAY_SAVE_S 300
-static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_acct_t *rwp)
+static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_acct_t *rwp,
+                            const run_acct_t *bore, const run_acct_t *smot)
 {
-    cal_day_set(midnight, (uint16_t)(hpp->run_ms / 60000), (uint16_t)(rwp->run_ms / 60000));
+    cal_day_set(midnight, (uint16_t)(hpp->run_ms / 60000), (uint16_t)(rwp->run_ms / 60000),
+                (uint16_t)(bore->run_ms / 60000), (uint16_t)(smot->run_ms / 60000));
 }
 
 /* --------------------------------------------------------- RainMaker handles */
@@ -1219,6 +1256,7 @@ static void poll_task(void *arg)
     static median_u16_t s_dosing_win;
 
     run_acct_t hpp_acct = { .which = CAL_CT_HPP }, rwp_acct = { .which = CAL_CT_RWP };
+    run_acct_t bore_acct = { .which = CAL_CT_BORE }, smot_acct = { .which = CAL_CT_SUMP };
     uint32_t acct_midnight = local_midnight();
     int64_t  day_saved_us = 0;
     int64_t  hist_last_us = 0;
@@ -1375,32 +1413,50 @@ static void poll_task(void *arg)
                 acct_midnight = mid;
                 const cal_day_t *d; uint16_t n = cal_days(&d);
                 if (n > 0 && d[n - 1].midnight == mid) {
-                    hpp_acct.run_ms = (uint32_t)d[n - 1].hpp_min * 60000;
-                    rwp_acct.run_ms = (uint32_t)d[n - 1].rwp_min * 60000;
+                    hpp_acct.run_ms  = (uint32_t)d[n - 1].hpp_min  * 60000;
+                    rwp_acct.run_ms  = (uint32_t)d[n - 1].rwp_min  * 60000;
+                    bore_acct.run_ms = (uint32_t)d[n - 1].bore_min * 60000;
+                    smot_acct.run_ms = (uint32_t)d[n - 1].smot_min * 60000;
                 }
             }
             if (mid != 0 && mid != acct_midnight) {
-                day_ledger_save(acct_midnight, &hpp_acct, &rwp_acct);   /* close yesterday */
+                /* close yesterday */
+                day_ledger_save(acct_midnight, &hpp_acct, &rwp_acct, &bore_acct, &smot_acct);
                 acct_midnight = mid;
-                hpp_acct.run_ms = rwp_acct.run_ms = 0;
+                hpp_acct.run_ms = rwp_acct.run_ms = bore_acct.run_ms = smot_acct.run_ms = 0;
                 local.hpp_starts_today = local.rwp_starts_today = 0;
+                local.bore_starts_today = local.smot_starts_today = 0;
             }
             int64_t now_us = esp_timer_get_time();
             bool hpp_was = hpp_acct.was_running, rwp_was = rwp_acct.was_running;
+            bool bore_was = bore_acct.was_running, smot_was = smot_acct.was_running;
             /* An opto with a broken wire reads "not running" and means nothing;
              * do not book that as idle time either way - hold the last state. */
-            run_account(&hpp_acct, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running,
+            run_account(&hpp_acct, true, local.hpp.ac_floating ? hpp_acct.was_running : local.hpp.running,
                         local.hpp.deci_amps, now_us,
                         &local.hpp_run_today_s, &local.hpp_starts_today, &local.hpp_run_total_s);
-            run_account(&rwp_acct, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running,
+            run_account(&rwp_acct, true, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running,
                         local.rwp.deci_amps, now_us,
                         &local.rwp_run_today_s, &local.rwp_starts_today, &local.rwp_run_total_s);
+            /* Node 0x06 answering IS "these two are observable". An unfitted
+             * node counts as unobservable too - it has no motors to report
+             * idle, and a hub that has never had one must not accrue idle days
+             * that read as a motor sitting still. */
+            bool gf_seen = local.utility_configured && local.utility_online;
+            run_account(&bore_acct, gf_seen, local.borewell.running,
+                        local.borewell.deci_amps, now_us,
+                        &local.bore_run_today_s, &local.bore_starts_today, &local.bore_run_total_s);
+            run_account(&smot_acct, gf_seen, local.sump_motor.running,
+                        local.sump_motor.deci_amps, now_us,
+                        &local.smot_run_today_s, &local.smot_starts_today, &local.smot_run_total_s);
 
-            bool stopped = (hpp_was && !hpp_acct.was_running) || (rwp_was && !rwp_acct.was_running);
-            bool running = hpp_acct.was_running || rwp_acct.was_running;
+            bool stopped = (hpp_was && !hpp_acct.was_running) || (rwp_was && !rwp_acct.was_running) ||
+                           (bore_was && !bore_acct.was_running) || (smot_was && !smot_acct.was_running);
+            bool running = hpp_acct.was_running || rwp_acct.was_running ||
+                           bore_acct.was_running || smot_acct.was_running;
             if (mid != 0 && (stopped || (running && now_us - day_saved_us >= (int64_t)DAY_SAVE_S * 1000000))) {
                 day_saved_us = now_us;
-                day_ledger_save(mid, &hpp_acct, &rwp_acct);
+                day_ledger_save(mid, &hpp_acct, &rwp_acct, &bore_acct, &smot_acct);
             }
         }
 

@@ -361,14 +361,17 @@ static esp_err_t history_get(httpd_req_t *req)
         }
     }
     hub_state_unlock();
-    /* The day ledger rides along: [local_midnight, hpp_min, rwp_min], oldest
-     * first, up to CAL_DAYS entries. Week and month totals are sums over it. */
+    /* The day ledger rides along: [local_midnight, hpp_min, rwp_min, bore_min,
+     * smot_min], oldest first, up to CAL_DAYS entries. Week and month totals
+     * are sums over it. Positional, so the two ground-floor motors are
+     * APPENDED - inserting them would silently redate every existing row. */
     n += snprintf(buf + n, sizeof(buf) - n, "],\"days\":[");
     const cal_day_t *d; uint16_t nd = cal_days(&d);
     for (uint16_t i = 0; i < nd; i++) {
-        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%u,%u]", i ? "," : "",
-                      (unsigned long)d[i].midnight, d[i].hpp_min, d[i].rwp_min);
-        if (n > (int)sizeof(buf) - 80) {
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%lu,%u,%u,%u,%u]", i ? "," : "",
+                      (unsigned long)d[i].midnight, d[i].hpp_min, d[i].rwp_min,
+                      d[i].bore_min, d[i].smot_min);
+        if (n > (int)sizeof(buf) - 100) {   /* a five-field ledger row is ~30 chars */
             if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) return ESP_FAIL;
             n = 0;
         }
@@ -399,7 +402,7 @@ static esp_err_t events_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[4200];   /* +200 quality, +300 run block, +900 ground floor */
+    static char json[4400];   /* +200 quality, +420 run block, +900 ground floor */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -513,6 +516,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"run\":{"
           "\"hpp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
           "\"rwp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
+          "\"borewell\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
+          "\"sump_motor\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
           "\"plant_lph\":%u"
         "},"
         "\"nodes\":["
@@ -600,6 +605,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
         (unsigned long)s->hpp_run_today_s, (unsigned)s->hpp_starts_today, (unsigned long)s->hpp_run_total_s,
         (unsigned long)s->rwp_run_today_s, (unsigned)s->rwp_starts_today, (unsigned long)s->rwp_run_total_s,
+        (unsigned long)s->bore_run_today_s, (unsigned)s->bore_starts_today, (unsigned long)s->bore_run_total_s,
+        (unsigned long)s->smot_run_today_s, (unsigned)s->smot_starts_today, (unsigned long)s->smot_run_total_s,
         (unsigned)cal_plant_lph(),
 
         link_word(s->rwt.last_ok_us, s->rwt_online), age_s(s->rwt.last_ok_us),

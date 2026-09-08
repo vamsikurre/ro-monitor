@@ -58,6 +58,13 @@ REQUIRED = [
     'motors.borewell.imbalance_pct', 'motors.borewell.running',
     'motors.sump_motor.amps', 'motors.sump_motor.phases',
     'motors.sump_motor.imbalance_pct', 'motors.sump_motor.running',
+    # drawRun() dereferences all four motors unconditionally, so a missing one
+    # throws inside render() and the page goes to 'No data from hub'.
+    'run.hpp.today_s', 'run.hpp.starts', 'run.hpp.total_s',
+    'run.rwp.today_s', 'run.rwp.starts', 'run.rwp.total_s',
+    'run.borewell.today_s', 'run.borewell.starts', 'run.borewell.total_s',
+    'run.sump_motor.today_s', 'run.sump_motor.starts', 'run.sump_motor.total_s',
+    'run.plant_lph',
     'nodes',
 ]
 
