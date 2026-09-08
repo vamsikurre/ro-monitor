@@ -142,7 +142,13 @@ static bool sht30_read(int16_t *t, uint16_t *rh)
 {
     const uint8_t cmd[2] = { 0x2C, 0x06 };
     if (i2c_master_transmit(s_sht, cmd, 2, 100) != ESP_OK) return false;
-    vTaskDelay(pdMS_TO_TICKS(20));
+    /* 40 ms, not 20. vTaskDelay() rounds DOWN to whole ticks and the first one
+     * is already in progress, so 20 ms at the default 100 Hz tick is two ticks
+     * that can elapse in as little as ~10 ms - against a high-repeatability
+     * conversion the datasheet allows 15.5 ms for. The short read NAKs, the
+     * poll reports sht_ok:false, and the hub hatches the climate card for one
+     * cycle for no reason. Four ticks cannot finish early enough to matter. */
+    vTaskDelay(pdMS_TO_TICKS(40));
     uint8_t d[6];
     if (i2c_master_receive(s_sht, d, 6, 100) != ESP_OK) return false;
     if (sht30_crc8(d[0], d[1]) != d[2] || sht30_crc8(d[3], d[4]) != d[5]) return false;

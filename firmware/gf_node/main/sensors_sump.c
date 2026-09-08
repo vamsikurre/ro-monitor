@@ -51,6 +51,9 @@ static bool     s_pressure;                  /* J-PRESS shunt read once at boot 
 static uint16_t s_win[WINDOW]; static uint8_t s_next, s_filled;
 static uint16_t s_median_mm; static uint8_t s_quality; static uint8_t s_n; static uint8_t s_dead;
 static uint32_t s_loop_ua;
+/* Overwritten by sensors_init() once J-PRESS has been read, and by the first
+ * sensors_sample() ~2 s later. NO_ECHO here is only the ultrasonic path's
+ * "nothing yet"; a current loop has no echo to miss, so init picks per role. */
 static const char *s_status = "NO_ECHO";
 static adc_oneshot_unit_handle_t s_adc; static adc_cali_handle_t s_cali; static bool s_cali_ok;
 
@@ -156,6 +159,11 @@ void sensors_init(void)
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc, ADC_CHANNEL_6, &c));   /* GPIO_LOOP_SENSE = GPIO 34 */
     adc_cali_line_fitting_config_t cc = { .unit_id = ADC_UNIT_1, .atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_DEFAULT };
     s_cali_ok = adc_cali_create_scheme_line_fitting(&cc, &s_cali) == ESP_OK;
+    /* "No echo" is a statement about an ultrasonic sensor and means nothing on
+     * a current loop; HW_FAULT is what an unfitted or dead loop reads anyway
+     * (0 uA, below PRESS_MIN_UA). Either way the hub refuses to compute a
+     * level, so the fail-safe is unchanged - only the reason given for it. */
+    s_status = s_pressure ? "HW_FAULT" : "NO_ECHO";
     ESP_LOGI(TAG, "source: %s", s_pressure ? "4-20 mA loop on GPIO 34 (J-PRESS shunted)" : "AJ-SR04M ultrasonic");
 }
 

@@ -92,8 +92,20 @@ curl --data-binary @build_sump/gf_node.bin http://192.168.1.51/ota
 
 The node streams the image into whichever slot is not currently running,
 validates it (`esp_ota_end` checks the image header and checksum — a text
-file or the wrong role's `.bin` is refused with `400` before it is ever
-booted), and reboots into it. `POST /ota` replies before the reboot:
+file or a truncated upload is refused with `400` before it is ever booted),
+and reboots into it. `POST /ota` replies before the reboot:
+
+**Nothing here catches the wrong role's `.bin`.** It is a perfectly valid
+ESP32 app image: it passes the checksum, flashes, boots, answers
+`/api/telemetry` and therefore confirms itself and cancels its own rollback.
+What you get is the failure described at the top of this file — a node that
+reports the wrong `id` forever while the hub logs only `unparseable reply`.
+So after every push, fetch the node's root page and read the role and id back:
+
+```
+curl http://192.168.1.51/
+gf_node sump id 5 fw v1.4.2-3-gab12cd4
+```
 
 | Response | Meaning |
 | :--- | :--- |
@@ -101,7 +113,7 @@ booted), and reboots into it. `POST /ota` replies before the reboot:
 | `400` | body too small, or not a valid ESP32 app image |
 | `408` | transfer stalled for 60 s (a dropped-association Wi-Fi failure looks like this, not like a clean disconnect) |
 | `413` | image larger than the OTA slot |
-| `500` | no free partition, connection dropped, flash write failed, or the image is valid but the boot pointer could not be set — each with its own reason string in the body |
+| `500` | no free partition, the OTA write could not be started, connection dropped, flash write failed, or the image is valid but the boot pointer could not be set — each with its own reason string in the body |
 
 None of the failure responses reboot the node or leave the target slot in a
 state that blocks a second attempt — a bad push just means try again. That
@@ -119,7 +131,33 @@ password costs two minutes of monitor log, not a trip to a manhole or a
 motor starter panel.
 
 The hub shows each node's `fw` (the git description) in its node list, which
-is how you know a push actually landed.
+is how you know a push actually landed. It does not show the role, which is
+why the `curl http://<node>/` above is the check that matters.
+
+A push during the 120 s confirmation window is refused: `esp_ota_begin()`
+returns `ESP_ERR_OTA_ROLLBACK_INVALID_STATE` while the running image is still
+on trial, and the `500` says so. Wait it out, or let it roll back, then push
+again.
+
+### Built size per role
+
+Both roles are the same tree; the difference is which `sensors_*.c` and which
+role constants compile in. Against the 0x1E0000 (1920 KB) OTA slots in
+`partitions.csv`, measured 2026-09-08 on ESP-IDF 5.4.4:
+
+| Role | `gf_node.bin` | Free in the slot |
+| :--- | ---: | ---: |
+| Sump `0x05` | 743,744 bytes (0xB5940) | 62 % |
+| Utility `0x06` | 759,104 bytes (0xB9540) | 61 % |
+
+**The two sizes differing is itself the check that you built two roles** — the
+`-D SDKCONFIG=` trap at the top of this file produces two identical `.bin`
+files, and identical byte counts are the first thing that shows it. Confirm
+properly with `strings gf_node.bin | findstr /x sump utility`, or from
+`build_<role>/config/sdkconfig.h`, which must carry `CONFIG_GF_ROLE_SUMP` or
+`CONFIG_GF_ROLE_UTILITY` and never both.
+
+The tail of each build prints its own `gf_node.bin binary size` line.
 
 ## What it answers
 

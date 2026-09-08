@@ -54,6 +54,16 @@ esp_err_t ota_handle(httpd_req_t *req)
 
     esp_ota_handle_t h;
     esp_err_t err = esp_ota_begin(next, OTA_WITH_SEQUENTIAL_WRITES, &h);
+    if (err == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+        /* The running image is still pending-verify, so the slot this write
+         * would take is the one it would roll back into, and esp_ota_begin()
+         * refuses for the whole confirmation window. "try again" is the one
+         * piece of advice that cannot work here - the window has to close
+         * first, either by the node confirming itself or by rolling back. */
+        ESP_LOGE(TAG, "esp_ota_begin: running image still on trial");
+        return err500(req, "the running image is still on trial - wait out the confirmation "
+                           "window (up to 120 s from its boot), then push again\n");
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin: %s", esp_err_to_name(err));
         return err500(req, "could not start the OTA write - try again\n");
