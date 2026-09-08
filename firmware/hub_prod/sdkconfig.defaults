@@ -84,14 +84,23 @@ CONFIG_NETWORK_PROV_BLE_SEC_CONN=y
 
 # --- OTA updates ---
 # A push from the RainMaker dashboard reaches the node over its OTA topic
-# whether or not autofetch is on; the period below only decides how often the
-# node ASKS for a job it might have missed while offline.
+# whether or not autofetch is on - in theory. In practice, observed 2026-09-08:
+# a job triggered against an online, subscribed node (cloud up 35 min, no
+# disconnect in the event log) never arrived. Serial was silent, the job sat at
+# "triggered", and pressing Retrigger on the same job delivered it within two
+# seconds. So the push is not something to rely on as the only delivery path.
+# The period below is how often the node ASKS for a job it might have missed,
+# and it is therefore the actual floor on how late an update can be.
 #
 # ESP_RMAKER_OTA_AUTOFETCH_PERIOD is in HOURS, range 0-168. This file said 3600,
 # which is not seconds and not in range - it was silently ignored and the build
-# ran with 0 (ask once per boot, then never again). 24 is a daily catch-up.
+# ran with 0 (ask once per boot, then never again). It then said 24, a daily
+# catch-up, which is what turned that missed push into "stuck until someone
+# notices and clicks Retrigger". 1 hour: a missed push costs an hour unattended
+# instead of a day, and one MQTT publish an hour is nothing next to the
+# telemetry this node already sends.
 CONFIG_ESP_RMAKER_OTA_AUTOFETCH=y
-CONFIG_ESP_RMAKER_OTA_AUTOFETCH_PERIOD=24
+CONFIG_ESP_RMAKER_OTA_AUTOFETCH_PERIOD=1
 
 # Roll back automatically if a new image cannot reach the cloud.
 #
