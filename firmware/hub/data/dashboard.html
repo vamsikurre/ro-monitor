@@ -208,11 +208,12 @@ h1 span{color:var(--ink-3); font-weight:400}
    absent measurement rather than a clean one. */
 .tds.none{color:var(--ink-3); font-weight:500}
 .amps.over{color:var(--fault)}
-.room > .roomenv,.annex > .roomenv{
+.room > .roomenv,.annex > .roomenv,.earth > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
   background:var(--ground-c); padding:4px 9px; border-radius:3px;
 }
 .annex > .roomenv{gap:9px; right:10px}
+.earth > .roomenv{gap:9px; bottom:14px; right:16px}
 .annex .vals{font-size:16px}
 .roomenv > .legend{align-self:center}
 .roomenv .vals{font-family:var(--mono); font-weight:700; font-size:18px; color:var(--ink); letter-spacing:-.02em}
@@ -1317,6 +1318,26 @@ function buildPlant(s) {
     add(grade, "1 / -1", 2);
     const earth = node("earth");
     earth.appendChild(txt("legend", "Ground level"));
+    /* Utility room air, pinned to the earth band the way the RO room and the
+       battery room pin theirs to their own boxes. It carries its own name
+       rather than the bare "Room air" those two use, because the band it sits
+       in is labelled "Ground level" - so "Room air" alone would not say whose. */
+    {
+      const u = s.env && s.env.utility_room;
+      const uenv = node("roomenv");
+      uenv.appendChild(txt("legend", "Utility room"));
+      if (u && u.state === "ONLINE") {
+        const ut = node("vals", `${u.t.toFixed(1)}<u>°C</u>`);
+        const uh = node("vals", `${u.rh.toFixed(0)}<u>%</u>`);
+        ut.dataset.env = "ut";
+        uh.dataset.env = "urh";
+        uenv.appendChild(ut);
+        uenv.appendChild(uh);
+      } else {
+        uenv.appendChild(chip(u ? "Sensor offline" : "Not fitted", "fault"));
+      }
+      earth.appendChild(uenv);
+    }
     add(earth, "1 / -1", 3);
 
     const rwtCell = cell("rwt", "c3", 1);
@@ -1378,7 +1399,27 @@ function buildPlant(s) {
     cap.dataset.u = "smotor";
     cap.appendChild(txt("name", "Sump Motor"));
     cap.appendChild(chip("", ""));
-    sumpCell.querySelector('[data-u="sump"]').appendChild(cap);
+    const sumpHost = sumpCell.querySelector('[data-u="sump"]');
+    sumpHost.appendChild(cap);
+    /* This pump is drawn by hand rather than through machineUnit(), because it
+       is submersible and hangs INSIDE the vessel. That is why it spent a while
+       as the one clamped machine on the elevation with no current under it:
+       machineUnit() is where the readouts are built, and this branch never
+       calls it. Same two elements, same data- attributes, so updatePlant()
+       refreshes them without knowing which of the two drew this pump. */
+    const sct = s.motors && s.motors.sump_motor;
+    if (sct) {
+      const sa = node("amps");
+      sa.dataset.amps = "smotor";
+      sa.innerHTML = ampsText(sct.amps);
+      sumpHost.appendChild(sa);
+      if (Array.isArray(sct.phases) && sct.phases.some(p => p !== null && p !== undefined)) {
+        const sp = node("amps");
+        sp.dataset.phases = "smotor";
+        sp.innerHTML = phasesText(sct.phases, sct.imbalance_pct);
+        sumpHost.appendChild(sp);
+      }
+    }
     sidePort(sumpCell, "smotor", DRAW_PORT);
 
     // the terrace has planters
@@ -1530,6 +1571,11 @@ function updatePlant(s) {
   const bvt = document.querySelector('[data-env="bt"]'), bvh = document.querySelector('[data-env="brh"]');
   if (bvt && B.state === "ONLINE") bvt.innerHTML = `${B.t.toFixed(1)}<u>\u00b0C</u>`;
   if (bvh && B.state === "ONLINE") bvh.innerHTML = `${B.rh.toFixed(0)}<u>%</u>`;
+  const U = s.env && s.env.utility_room;
+  const uvt = document.querySelector('[data-env="ut"]'), uvh = document.querySelector('[data-env="urh"]');
+  if (uvt && U && U.state === "ONLINE") uvt.innerHTML = `${U.t.toFixed(1)}<u>°C</u>`;
+  if (uvh && U && U.state === "ONLINE") uvh.innerHTML = `${U.rh.toFixed(0)}<u>%</u>`;
+
   const annex = document.querySelector(".annex");
   if (annex) {
     const fw = annex.querySelector(".unit .unit");
