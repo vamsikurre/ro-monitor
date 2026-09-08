@@ -1137,7 +1137,19 @@ static void gf_apply(hub_state_t *s)
 
     /* ---- sump 0x05 ---- */
     s->sump_configured = cal_gf_ip(CAL_GF_SUMP)[0] != '\0';
-    s->sump_online     = s->sump_configured && gs.link.online;
+    /* Freshness, not just l->online: that flag only falls after three failed
+     * polls, and gf_poll_one() deliberately does not poll at all while the
+     * hub's own station has no IP - so it never counts the misses and the node
+     * stayed ONLINE for the whole Wi-Fi outage, with age_s climbing into the
+     * thousands. Skipping a poll must not mean keeping a reading: a stale
+     * percentage on the page and stale run minutes in the ledger are worse
+     * than an absent one, because they get acted on. Same test link_word()
+     * already applies to the RS485 nodes, and it lives here rather than in the
+     * poll so a poll task stalled for any other reason is covered too.
+     * NODE_OFFLINE_MS is 30 s against a 5 s poll, so a healthy node is never
+     * aged out and three real misses still trip first. */
+    s->sump_online     = s->sump_configured && gs.link.online &&
+                         (esp_timer_get_time() - gs.link.last_ok_us) < (int64_t)NODE_OFFLINE_MS * 1000;
     s->sump_last_us    = gs.link.last_ok_us;
     strncpy(s->sump_fw, gs.link.fw, sizeof(s->sump_fw) - 1);
     if (s->sump_configured && gs.link.valid) {
@@ -1169,7 +1181,12 @@ static void gf_apply(hub_state_t *s)
 
     /* ---- utility 0x06 ---- */
     s->utility_configured = cal_gf_ip(CAL_GF_UTIL)[0] != '\0';
-    s->utility_online     = s->utility_configured && gu.link.online;
+    /* Freshness too - see the sump above. This one also gates run_account():
+     * gf_seen is utility_configured && utility_online, so without the age test
+     * a borewell that was running when the router rebooted booked run minutes
+     * for the entire outage. */
+    s->utility_online     = s->utility_configured && gu.link.online &&
+                            (esp_timer_get_time() - gu.link.last_ok_us) < (int64_t)NODE_OFFLINE_MS * 1000;
     s->utility_last_us    = gu.link.last_ok_us;
     strncpy(s->utility_fw, gu.link.fw, sizeof(s->utility_fw) - 1);
 

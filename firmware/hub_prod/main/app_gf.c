@@ -192,14 +192,22 @@ static int gf_fetch(const char *ip_port, char *buf, size_t len)
  * start order in another file is not a guarantee anybody will preserve, so the
  * check lives here, where the network is actually used.
  *
- * The interface-count test comes FIRST and is not decoration.
- * esp_netif_get_handle_from_ifkey() runs its lookup on the TCP/IP task via
- * tcpip_send_msg_wait_sem() - the very call that asserts - so asking it
- * anything before the stack exists panics in exactly the way this function is
- * meant to prevent. esp_netif_get_nr_of_ifs() is a plain counter read that
- * touches no lwIP at all, and it can only be non-zero once esp_netif_new() has
- * succeeded, which cannot happen before esp_netif_init() has run tcpip_init().
- * So a non-zero count is proof the mailbox is there. */
+ * The interface-count test comes FIRST, and its job is to keep the handle
+ * lookup off a stack that may not exist yet - not to prove the stack is there.
+ * esp_netif_get_nr_of_ifs() is a bare read of a counter
+ * (esp_netif_objects.c:69), in a translation unit whose own header comment
+ * says it has no dependency on lwIP, so asking it is always safe. What a
+ * non-zero answer means here is weaker than it looks: it is non-zero only
+ * because app_wifi_internal_init() (managed_components/espressif__rmaker_app_
+ * network/app_wifi_internal.c) calls esp_netif_init() before
+ * esp_netif_create_default_wifi_sta() - an ordering inside that component, not
+ * anything ESP-IDF guarantees. Nor does reaching
+ * esp_netif_get_handle_from_ifkey() with no stack necessarily assert: with
+ * CONFIG_LWIP_TCPIP_CORE_LOCKING unset (sdkconfig:1817) the core-lock query
+ * returns true while lwip_task is still NULL, so esp_netif_lwip_ipc_call_msg()
+ * takes its local branch and never reaches the asserting call at all. The
+ * guard is cheap and it is the right shape; it is not a guarantee, and this
+ * comment used to claim one. */
 static bool gf_lan_up(void)
 {
     if (esp_netif_get_nr_of_ifs() == 0) return false;

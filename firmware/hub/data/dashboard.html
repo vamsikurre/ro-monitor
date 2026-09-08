@@ -512,7 +512,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
     <div class="trend" id="trend"><div class="empty">Collecting history…</div><div class="tip" id="trendTip"></div></div>
   </div>
   <div class="card span2">
-    <span class="legend">Pumps · today</span>
+    <span class="legend">Motor run · today, week, month</span>
     <div class="run" id="cRun"></div>
   </div>
   <div class="card span2">
@@ -2193,18 +2193,27 @@ function drawRun(s) {
   if (!R) { host.innerHTML = `<div class="empty">No run data</div>`; return; }
   const P = periodTotals(R), days = dosingDays();
   const L = sec => Math.round(sec / 3600 * R.plant_lph).toLocaleString();
+  /* The ground-floor motors are only observable through node 0x06, and the
+     firmware refuses to account a motor it cannot see (gf_seen). Printing that
+     absence as "0h 00m" and "0BORE 0SUMP", in the same typeface as the roof
+     pumps' real figures, states that two motors stood still - which is a
+     reading, and a wrong one. Dash instead, on the same signal the elevation
+     hatches on. */
+  const un = (s.nodes || []).find(n => n.id === "0x06");
+  const gfLive = !!un && un.state === "ONLINE" && !!un.ip;
+  const g = v => gfLive ? v : "–";
   const row = (name, p) => `<span class="p">${name}</span><span class="v">${hm(p.hpp)}</span><span class="v">${hm(p.rwp)}</span>` +
-    `<span class="v">${hm(p.bore)}</span><span class="v">${hm(p.smot)}</span><span class="v">${L(p.hpp)}<u>L</u></span>`;
+    `<span class="v">${g(hm(p.bore))}</span><span class="v">${g(hm(p.smot))}</span><span class="v">${L(p.hpp)}<u>L</u></span>`;
   const lifeH = sec => Math.floor(sec / 3600).toLocaleString();
   host.innerHTML =
     `<span class="h"></span><span class="h">HPP run</span><span class="h">RWP run</span>` +
     `<span class="h">Bore run</span><span class="h">Sump run</span><span class="h">produced</span>` +
     row("Today", P.today) + row("This week", P.week) + row("This month", P.month) +
     `<div class="sum">
-       <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${R.borewell.starts}<u>BORE</u> ${R.sump_motor.starts}<u>SUMP</u></span></div>
+       <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${g(R.borewell.starts)}<u>BORE</u> ${g(R.sump_motor.starts)}<u>SUMP</u></span></div>
        <div class="metric"><span class="legend">Dosing drum</span><span class="big">${days === null ? "--" : days.toFixed(0)}<u>days</u></span></div>
        <div class="metric"><span class="legend">Lifetime · roof</span><span class="big">${lifeH(R.hpp.total_s)}<u>h HPP</u> ${lifeH(R.rwp.total_s)}<u>h RWP</u></span></div>
-       <div class="metric"><span class="legend">Lifetime · ground</span><span class="big">${lifeH(R.borewell.total_s)}<u>h BORE</u> ${lifeH(R.sump_motor.total_s)}<u>h SUMP</u></span></div>
+       <div class="metric"><span class="legend">Lifetime · ground</span><span class="big">${gfLive ? `${lifeH(R.borewell.total_s)}<u>h BORE</u> ${lifeH(R.sump_motor.total_s)}<u>h SUMP</u>` : "–"}</span></div>
      </div>`;
 }
 

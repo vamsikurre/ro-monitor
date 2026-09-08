@@ -168,6 +168,22 @@ esp_err_t cal_init(void)
 
     nvs_close(h);
 
+    /* Retire the pre-"days2" blob: nothing will ever read it again, and it is
+     * 280 bytes of a small partition. Its own handle because ours above is
+     * read-only, and not found is the ordinary case on a hub that never wrote
+     * one. */
+    nvs_handle_t wh;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &wh) == ESP_OK) {
+        esp_err_t derr = nvs_erase_key(wh, "days");
+        if (derr == ESP_OK) {
+            nvs_commit(wh);
+            ESP_LOGI(TAG, "erased orphaned \"days\" ledger blob");
+        } else if (derr != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "could not erase \"days\": %s", esp_err_to_name(derr));
+        }
+        nvs_close(wh);
+    }
+
     ESP_LOGI(TAG, "loaded: rwt %u/%u  twt %u/%u  dos %u/%u  fan %u.%u/%u.%u C",
              s_tanks[0].full_mm, s_tanks[0].empty_mm,
              s_tanks[1].full_mm, s_tanks[1].empty_mm,
