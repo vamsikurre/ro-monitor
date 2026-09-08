@@ -26,7 +26,7 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
 * **mDNS URL:** `http://ro-hub.local`
 * **Direct IP URL:** `http://<ESP32_HUB_IP>` (e.g. `http://192.168.1.150`)
 * **REST API Polling Endpoint:** `GET /api/telemetry` (Returns complete JSON state every 1000ms)
-* **History:** `GET /api/history` — `rows`: 24 h of one-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC, sump%, bore_dA, smot_dA, util_dC]` — thirteen columns since the ground-floor nodes were added, `-1`/`null` = no reading, RAM only (34 KB) so a reboot empties it; `days`: up to 35 `[local_midnight, hpp_min, rwp_min]` from NVS — see §2.3
+* **History:** `GET /api/history` — `rows`: 24 h of two-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC, sump%, bore_dA, smot_dA, util_dC]` — thirteen columns since the ground-floor nodes were added, `-1`/`null` = no reading, RAM only (17 KB) so a reboot empties it; `days`: up to 35 `[local_midnight, hpp_min, rwp_min]` from NVS — see §2.3
 * **Control Endpoints:**
   * `POST /api/fan/toggle` (Overrides Battery Room Exhaust Fan `ON` / `OFF` / `AUTO`)
   * `POST /api/interlock/override` (Manual override for Aster float emulation relays)
@@ -266,18 +266,50 @@ Verified 2026-09-07 against fw `65c3f34`:
 
 Procedure: commit → **`idf.py reconfigure build`** (CMake caches the version at configure time; a plain `build` after a commit still stamps the previous hash — seen 2026-09-07) → `dashboard.rainmaker.espressif.com` → *Firmware Images* → upload `build/ro_hub.bin` → *Start OTA Job* on node `agc63S2ihft9zDvhaFqxXf`. The hub logs `OTA state`; the dashboard footer's `fw` changes on the reboot after. If the new image never connects to the cloud, the old one is back within ~2 minutes with nothing lost but the ledger's last five minutes.
 
-Heap is the resource to watch, not flash: `heap_min` in the footer should stay
-well above ~40 KB, which is what the TLS download wants. The 24 h history ring is
-the biggest static consumer: `hist_rec_t` grew from 16 to **24 bytes** when the
-ground-floor sump level, the two ground-floor motor currents and the utility-room
-temperature were added, so 1440 rows is now **34,560 bytes (34 KB)**, not the 23 KB
-it was. `HIST_N` is the knob if it ever gets tight.
+Heap is the resource to watch, not flash, and **the tightest moment in this
+hub's life is its first provisioning** — not an OTA, and not steady running.
 
-The ground-floor branch added roughly **23 KB of static RAM** in total, and the
-ring is only half of it: the history ring +11.5 KB, the `/cal` page buffer
-10240 → 14336 (+4 KB), the telemetry buffer 3100 → 4200 (+1.1 KB), and the new
-`gf` poll task's 6 KB stack. If `heap_min` is uncomfortable, those four are the
-list — in that order.
+Measured on a bench hub, 2026-09-08, all on firmware `122f81e`:
+
+| Moment | `heap_min` |
+| :--- | ---: |
+| First provisioning: BLE pairing + Wi-Fi + everything resident | **11,148** |
+| Steady running once BLE has released | 91,756 free, `heap_min` ~19,600 |
+| Before the ground-floor branch, steady running | ~16,500 |
+
+At 11 KB the RainMaker MQTT client could not allocate its task:
+
+```
+E (57504) mqtt_client: Error create mqtt task
+E (57514) esp_mqtt_glue: esp_mqtt_client_start() failed with err = -1
+E (57514) esp_rmaker_core: esp_rmaker_mqtt_connect() returned -1. Aborting
+```
+
+It aborts rather than retrying, so the hub came up serving its own dashboard
+perfectly and never reached the phone. BLE released its memory four seconds
+later, and a reboot — which never starts pairing again — connected first try.
+**That is the failure mode to know about: silent, once per board, and it looks
+like a working hub.** If a newly provisioned hub is missing from the app,
+reboot it before looking anywhere else.
+
+**Do not trust an "above ~40 KB" rule of thumb.** This paragraph used to carry
+one; the hub had never met it. Steady-state `heap_min` was ~16.5 KB before the
+ground-floor work and is ~19.6 KB after, and both are fine. The number that
+matters is the provisioning trough, and the only way to see it is to provision.
+
+The ring was halved to buy that trough back: `hist_rec_t` grew from 16 to
+**24 bytes** when the sump level, the two ground-floor motor currents and the
+utility-room temperature were added, which took 1440 one-minute rows to 34,560
+bytes. It is now **720 two-minute rows, 17,280 bytes** — same 24 h span, half
+the resolution, 17 KB freed, roughly twice what the client was short of.
+`HIST_N` × `HIST_PERIOD_S` is the span; keep their product at 86,400 s.
+
+The ground-floor branch's remaining static cost, if `heap_min` is ever
+uncomfortable again, in the order worth attacking: the `/cal` page buffer
+10240 → 14336 (+4 KB), the telemetry buffer 3100 → 4400 (+1.3 KB), and the
+`gf` poll task's 6 KB stack — which could be created only when a node address
+is actually configured, since a hub with no ground floor fitted has nothing
+for it to poll.
 
 ## 5. Provisioning & Pairing Procedure
 

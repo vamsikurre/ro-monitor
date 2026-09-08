@@ -381,12 +381,27 @@ typedef enum {
 #define PLANT_LPH_MIN           100
 #define PLANT_LPH_MAX           5000
 
-/* 24 h of one-minute history in RAM, for the dashboard's trend strip. 24 bytes
- * a row since the ground-floor columns were added, 34,560 bytes total. Gone on reboot on purpose: RainMaker time series holds
- * the long record, this only has to answer "what happened since last night".
+/* 24 h of history in RAM, for the dashboard's trend strip. Gone on reboot on
+ * purpose: RainMaker time series holds the long record, this only has to answer
+ * "what happened since last night".
+ *
+ * Two-minute rows, not one-minute. The row grew to 24 bytes when the four
+ * ground-floor columns were added, which took 1440 one-minute rows to 34,560
+ * bytes - and that pushed the FIRST-PROVISIONING peak past what RainMaker's
+ * MQTT client needs to start. Observed on a bench hub 2026-09-08: BLE pairing,
+ * Wi-Fi and this ring resident together left heap_min at 11,148 bytes and
+ * "mqtt_client: Error create mqtt task", then "esp_rmaker_mqtt_connect()
+ * returned -1. Aborting" - a hub that serves its own dashboard perfectly and
+ * never reaches the phone, silently, once per board at commissioning.
+ *
+ * Halving the rows and doubling the period keeps the full 24 h span and frees
+ * 17,280 bytes, roughly twice what the client was short of. What is lost is
+ * resolution, one sample per two minutes instead of per minute, which nothing
+ * reading a tank-level strip will ever notice. HIST_N x HIST_PERIOD_S is the
+ * span; keep their product at 86,400 s if either is ever changed.
  * ponytail: RAM ring, no flash partition. Add one if reboots lose too much. */
-#define HIST_PERIOD_S           60
-#define HIST_N                  1440
+#define HIST_PERIOD_S           120
+#define HIST_N                  720
 
 /* "No production": HPP has run continuously for this many minutes and TWT has
  * not risen by at least NOPROD_RISE_PCT. 20 min at 900 L/h is 300 L, several
