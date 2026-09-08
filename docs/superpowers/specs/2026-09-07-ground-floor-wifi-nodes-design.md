@@ -111,6 +111,20 @@ in NVS and is set from `/cal`, so reflashing a node never loses a number.
   noise; the hub treats anything under `CT_NOISE_FLOOR_MV` as "no clamp" and
   reports that phase as `null`, never as 0 A — the same rule the hub applies
   to its own two channels.
+
+  > **Correction, 2026-09-07 (annotation — the paragraph above is left as
+  > written).** "sits at the bias pedestal" is wrong, and `WIRING.md` §11.3
+  > copied it. The bias rail reaches an ADC pin only *through the plugged
+  > clamp's winding* (bias → socket ring → coil → tip → 1 k → pin), so an
+  > **empty socket reads ~0 V at the pin**, not the pedestal. Measured on the
+  > hub's identical topology and recorded in `WIRING.md` §14.2 step 2, where
+  > it cost an hour on 2026-09-06. The conclusion the paragraph draws is
+  > unaffected — below `CT_NOISE_FLOOR_MV` still means "no clamp" and still
+  > reports `null`, never 0 A — only the reason given for it. The pedestal
+  > check that *does* matter is on a channel that is plugged in: a floating
+  > pin swings on mains coupling and RMSes like a running motor, which is why
+  > `sensors_util.c`'s `rms_mv()` reports 0 mV rather than a number.
+
 - `sump_on`: the `PUMP ON` contact.
 - `rwt_floty`: `true` closed, `false` open, `null` not wired.
 - SHT30 at I²C `0x44`, the part the hub and battery node already use.

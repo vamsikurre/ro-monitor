@@ -381,8 +381,8 @@ typedef enum {
 #define PLANT_LPH_MIN           100
 #define PLANT_LPH_MAX           5000
 
-/* 24 h of one-minute history in RAM, for the dashboard's trend strip. 16 bytes
- * a row, 23 KB total. Gone on reboot on purpose: RainMaker time series holds
+/* 24 h of one-minute history in RAM, for the dashboard's trend strip. 24 bytes
+ * a row since the ground-floor columns were added, 34,560 bytes total. Gone on reboot on purpose: RainMaker time series holds
  * the long record, this only has to answer "what happened since last night".
  * ponytail: RAM ring, no flash partition. Add one if reboots lose too much. */
 #define HIST_PERIOD_S           60

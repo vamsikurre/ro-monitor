@@ -87,8 +87,16 @@ class H(BaseHTTPRequestHandler):
             body = dict(STATE[self.role])
             body['uptime_s'] = int(time.time() - T0)
             body['rssi'] = -60
-            if self.role == 'sump' and body['source'] == 'pressure':
-                body['distance_mm'] = None; body['quality'] = None
+            # Mutually exclusive, both ways (spec 4.1, sensors_sump.c
+            # sensors_json). Nulling only one side let /set leave loop_ua set
+            # while source went back to ultrasonic, emitting a combination the
+            # real node cannot produce - and a bench that can lie is worse than
+            # no bench.
+            if self.role == 'sump':
+                if body['source'] == 'pressure':
+                    body['distance_mm'] = None; body['quality'] = None
+                else:
+                    body['loop_ua'] = None
             return self._send(200, json.dumps(body))
         self._send(404, '{}')
 

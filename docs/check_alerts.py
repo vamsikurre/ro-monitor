@@ -6,9 +6,12 @@ console for, so a message that is one word too long is a fault the plant never
 tells you about. This lifts the cap from the SDK header and every alert literal
 out of evaluate_alerts(), and fails if any of them will not fit.
 
-Format specifiers are expanded to a worst case before measuring -- a tank at
-100%% is one character longer than one at 9%%, and that is exactly the margin a
-message written against the short case eats.
+Format specifiers are expanded to an ASSUMED worst case before measuring -- a
+tank at 100%% is one character longer than one at 9%%, and that is exactly the
+margin a message written against the short case eats. The widths in WIDTHS are
+an estimate, not a proof: this script does not read the argument list, so a
+message whose %%s is fed something wider than WIDTHS['s'] will still measure
+short here. Widen WIDTHS when you add a longer substitution.
 
     python docs/check_alerts.py          # from the repo root
 """
@@ -23,7 +26,15 @@ SDK = ('firmware/hub_prod/managed_components/espressif__esp_rainmaker/'
 # Worst case each specifier can print, for the values this firmware passes:
 # percentages and deci-amps are small, but a negative or a 3-digit one is not
 # impossible and the margin is what we are measuring.
-WIDTHS = {'d': 4, 'u': 4, 'lu': 10, 's': 8}
+#
+# 's' was 8, which under-measured the message that needs it most. The
+# node-offline alert substitutes FIVE fragments into one string - "0x02 RWT ",
+# "0x03 TWT ", "0x04 Battery ", "0x05 Sump ", "0x06 Utility " - 54 bytes when
+# every node is missing at once, which is exactly the outage that raises it.
+# 8 each reported 73 bytes for a message that really reaches 87 of 100. 13 is
+# the widest fragment any alert actually passes, so the estimate now bounds the
+# real strings from above instead of guessing under them.
+WIDTHS = {'d': 4, 'u': 4, 'lu': 10, 's': 13}
 
 
 def literals(text):
@@ -75,7 +86,7 @@ def main():
         print('\n%d alert message(s) will be rejected or truncated by RainMaker.' % failures)
         return 1
     print('OK: every alert message fits ESP_RMAKER_MAX_ALERT_LEN (%d bytes), '
-          'format specifiers at their widest.' % cap)
+          'assuming %d bytes per %%s and %d per %%d.' % (cap, WIDTHS['s'], WIDTHS['d']))
     return 0
 
 

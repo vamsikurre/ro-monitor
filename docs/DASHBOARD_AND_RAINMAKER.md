@@ -26,7 +26,7 @@ The ESP32 Central Hub hosts a zero-dependency, ultra-responsive HTML5/CSS/JavaSc
 * **mDNS URL:** `http://ro-hub.local`
 * **Direct IP URL:** `http://<ESP32_HUB_IP>` (e.g. `http://192.168.1.150`)
 * **REST API Polling Endpoint:** `GET /api/telemetry` (Returns complete JSON state every 1000ms)
-* **History:** `GET /api/history` — `rows`: 24 h of one-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC]`, `-1`/`null` = no reading, RAM only (23 KB) so a reboot empties it; `days`: up to 35 `[local_midnight, hpp_min, rwp_min]` from NVS — see §2.3
+* **History:** `GET /api/history` — `rows`: 24 h of one-minute rows, oldest first, `[t, rwt%, twt%, dos%, flags(1=HPP,2=RWP), hpp_dA, rwp_dA, ro_dC, bat_dC, sump%, bore_dA, smot_dA, util_dC]` — thirteen columns since the ground-floor nodes were added, `-1`/`null` = no reading, RAM only (34 KB) so a reboot empties it; `days`: up to 35 `[local_midnight, hpp_min, rwp_min]` from NVS — see §2.3
 * **Control Endpoints:**
   * `POST /api/fan/toggle` (Overrides Battery Room Exhaust Fan `ON` / `OFF` / `AUTO`)
   * `POST /api/interlock/override` (Manual override for Aster float emulation relays)
@@ -173,7 +173,7 @@ row in this pass.
 | Alert Trigger | Severity | Mobile Push Notification Message | Automated Interlock Action |
 | :--- | :---: | :--- | :--- |
 | **Sump Level low / high** `(PLANNED)` | — | No alert fires for either threshold today — the hub raises no sump-level alert at all. Sump-low, borewell dry-run and imbalance alarms are design spec §7 future work, once the ground-floor numbers have been watched. | None — nothing performs an action for this today. |
-| **TWT Level > 95%** | `INFO` | ✅ **Treated Water Tank Full!** RO Plant entering standby flush cycle. | `(PLANNED)` The relay hardware is real (`WIRING.md` §14, Phase C) but nothing wires this alert to it — the four relays are de-energised at boot and left alone. |
+| **TWT Level > 95%** | `INFO` | ✅ **Treated Water Tank Full!** RO Plant entering standby flush cycle. | `(PLANNED)` The relay hardware is real (`WIRING.md` §7, Phase C — §14 is the hub's own motor clamps, not these relays) but nothing wires this alert to it — the four relays are de-energised at boot and left alone. |
 | **Dosing Level < 20%** | `WARNING` | ⚠️ **Dosing Chemical Low!** Replenish anti-scalant / dosing reagent tank. | Astero Dosing Relay opened; Alarm flag set. |
 | **Battery Room Temp > 38°C**| `ALERT` | 🌡️ **High Battery Room Temperature!** Room temp is {X}°C. Exhaust fan turned ON. | Node `0x04` Exhaust Fan Relay automatically energized. |
 | **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check feed pressure (LPS), dosing level and pump overload. | System status set to FAULT; Alarm flagged in UI. |
@@ -266,7 +266,18 @@ Verified 2026-09-07 against fw `65c3f34`:
 
 Procedure: commit → **`idf.py reconfigure build`** (CMake caches the version at configure time; a plain `build` after a commit still stamps the previous hash — seen 2026-09-07) → `dashboard.rainmaker.espressif.com` → *Firmware Images* → upload `build/ro_hub.bin` → *Start OTA Job* on node `agc63S2ihft9zDvhaFqxXf`. The hub logs `OTA state`; the dashboard footer's `fw` changes on the reboot after. If the new image never connects to the cloud, the old one is back within ~2 minutes with nothing lost but the ledger's last five minutes.
 
-Heap is the resource to watch, not flash: `heap_min` in the footer should stay well above ~40 KB, which is what the TLS download wants. The 24 h history ring is the biggest static consumer at 23 KB; `HIST_N` is the knob if it ever gets tight.
+Heap is the resource to watch, not flash: `heap_min` in the footer should stay
+well above ~40 KB, which is what the TLS download wants. The 24 h history ring is
+the biggest static consumer: `hist_rec_t` grew from 16 to **24 bytes** when the
+ground-floor sump level, the two ground-floor motor currents and the utility-room
+temperature were added, so 1440 rows is now **34,560 bytes (34 KB)**, not the 23 KB
+it was. `HIST_N` is the knob if it ever gets tight.
+
+The ground-floor branch added roughly **23 KB of static RAM** in total, and the
+ring is only half of it: the history ring +11.5 KB, the `/cal` page buffer
+10240 → 14336 (+4 KB), the telemetry buffer 3100 → 4200 (+1.1 KB), and the new
+`gf` poll task's 6 KB stack. If `heap_min` is uncomfortable, those four are the
+list — in that order.
 
 ## 5. Provisioning & Pairing Procedure
 

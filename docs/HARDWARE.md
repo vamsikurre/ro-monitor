@@ -154,7 +154,6 @@ Built on a **Pro Mini (5V / 16 MHz)**, not a Nano. Pin functions are identical �
 | **GPIO 18** | `US_ECHO` | AJ-SR04M Sensor `ECHO` | Input | 5V $\to$ 3.3V resistor voltage divider (1kΩ/2kΩ) |
 | **GPIO 34** | `LOOP_SENSE` | `J-LOOP` pin 2, 4-20 mA loop sense | Input | Analog, ADC1_CH6. 0 when no transducer is fitted — `WIRING.md` §11.1, §9.4.2 |
 | **GPIO 25** | `PRESS_FIT` | `J-PRESS` shunt to GND | Input, pull-up | Shunt fitted = pressure transducer is the source; off = ultrasonic — `WIRING.md` §11.1 |
-| **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
 
 ---
 
@@ -181,5 +180,10 @@ what is actually a sensor input.
 | **GPIO 26** | `RWT_FLOTY` | Astero `TWT FLOTY` terminal, via opto | Input, pull-up | Only after metering the loop — mains potential is never tapped — `WIRING.md` §11.2, §11.4 |
 | **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` | Bidirectional | Utility room temperature/humidity |
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` | Output | I2C SCL |
-| **GPIO 2** | `LED_STATUS` | Wi-Fi Heartbeat LED | Output | Solid when Wi-Fi connected |
 
+**No status LED on either ground-floor node.** Both tables listed `GPIO 2` as a
+Wi-Fi heartbeat LED; `firmware/gf_node/main/gf.h` defines no such pin and no
+node source drives one, so the row was documentation of a feature that does not
+exist — exactly the documented-but-unread shape `docs/check_pinmap.py` now fails
+on for these two tables. Liveness is read from the hub's node list, or directly
+from `GET /` on the node, which prints its role, id and firmware.

@@ -1422,11 +1422,23 @@ earlier two-per-motor decision.
 
 **All six ADC1 channels on this node are taken** — six bias networks and six
 clamp sockets are built; five clamps are fitted on day one and the sixth
-(sump L3) waits for a clamp to be bought. A channel with nothing plugged in
-reads its bias pedestal, and the hub reports that phase as `null` rather
-than `0 A` (`RS485_PROTOCOL.md` §5.2) — the built-but-empty sixth socket
-relies on exactly that rule to stay silent instead of looking like a real
-reading of zero.
+(sump L3) waits for a clamp to be bought.
+
+> **A channel with nothing plugged in reads ~0 V at the pin, NOT the bias
+> pedestal, and that is not a fault.** Look at the schematic below: the bias
+> rail reaches an ADC pin only *through the plugged clamp's own winding*
+> (bias → socket ring → coil → tip → 1 k → pin). Pull the clamp and the pin
+> is left on its 100 nF and nothing else. This is the same divider topology
+> as the hub's channels, and believing the opposite cost an hour on
+> 2026-09-06 — **§14.2 step 2** records the measurement and the two-step
+> check that separates a dead divider from an empty socket. The spec (§4.2)
+> still carries the original wrong wording; `sensors_util.c`'s header comment
+> and `rms_mv()` have it right.
+>
+> The built-but-empty sump-L3 socket is therefore the first channel a
+> commissioner meters, and it will read 0 V. The firmware reports that phase
+> as `null` rather than `0 A` (`RS485_PROTOCOL.md` §5.2), so it stays silent
+> instead of looking like a real reading of zero.
 
 **ADC1 on this node is now full.** `GPIO 37`/`38` are the only other ADC1
 channels on an ESP32 and are not broken out on a WROOM; everything else free
