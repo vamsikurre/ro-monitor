@@ -499,8 +499,16 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"twt\":{\"ppm\":%s,\"t\":%s,\"fitted\":%s,\"live\":%s,\"age_s\":%d},"
           "\"rejection\":%s"
         "},"
-        "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":%s,\"sump_floty\":false,"
-                   "\"dos_lvl\":false,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s,\"lps\":%s},"
+        /* sump_floty and dos_lvl are null, not false. Neither contact is landed
+         * on anything yet - the sump float is still on the NEC-49 and the
+         * dosing level comes from the ultrasonic, not a float - and false
+         * rendered as "Open" on the dashboard for both. That is the thing
+         * WIRING.md 11.2 warns about in as many words: "Open" for a contact
+         * nothing reads is a claim about the plant. null renders "No data".
+         * When sump_floty is wired to node 0x06 (metered first, 11.4), this
+         * becomes the %s the other two floats already use. */
+        "\"aster\":{\"twt_floty\":%s,\"rwt_floty\":%s,\"sump_floty\":null,"
+                   "\"dos_lvl\":null,\"rl1\":%s,\"rl2\":%s,\"alarm\":%s,\"lps\":%s},"
         "\"env\":{"
           "\"ro_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"state\":\"%s\",\"src\":\"SHT30 . I2C 0x44\",\"age_s\":%d},"
           "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d},"

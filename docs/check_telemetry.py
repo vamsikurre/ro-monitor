@@ -103,6 +103,16 @@ def format_string(text):
     start = text.index('int n = snprintf(json, sizeof(json),')
     out = []
     for line in text[start:].splitlines()[1:]:
+        # A comment line inside the format is not the end of the format. Without
+        # this, the first /* ... */ sitting between two literals truncated the
+        # run here, and the failure surfaced as a JSON parse error pointing at
+        # whichever field happened to end up last - blaming a field that was
+        # fine for a comment several lines further down. Skipped rather than
+        # treated as a terminator; the argument list is still found by the
+        # literal-less line below.
+        bare = line.strip()
+        if bare.startswith('/*') or bare.startswith('*') or bare.startswith('//'):
+            continue
         lits = re.findall(r'"((?:[^"\\]|\\.)*)"', line)
         if not lits:
             # the format is one unbroken run of string literals; the first line
