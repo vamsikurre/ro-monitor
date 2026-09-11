@@ -38,6 +38,23 @@
      in the tank, these say how clean it is. Orange on the feed, green on the
      permeate, so a glance down the plant reads dirty -> clean. */
   --tds-feed:#C4703A; --tds-clean:#3E8F5F;
+  /* Trend series. Deliberately NOT the fluid colours, for the same reason the
+     TDS pair above is not: on the elevation a colour says what is IN the pipe,
+     on a chart it says WHICH LINE this is, and those two jobs collide the
+     moment two different vessels hold the same fluid. They did: RWT and SUMP
+     were both --raw, and RO/BAT/UTIL were all three --ink-2, so four of the
+     seven series on the strip were drawn in a colour another series already
+     owned. Dash patterns were the only thing telling them apart, and a 2px
+     dash at this scale tells you nothing.
+
+     Measured, not chosen by eye (dataviz validate_palette.js, dark, surface
+     #18202C). Tanks, on the adjacent pairlist lines are checked against:
+     worst pair DE 8.4 protan / 19.8 normal, every gate PASS. Rooms, all-pairs:
+     DE 15.4 normal, PASS, with one CVD warn at 7.8 between violet and teal -
+     legal because the dash patterns and the colour-matched labels below are
+     the secondary encoding that warn band requires. Keep the dashes. */
+  --tr-rwt:#199e70; --tr-twt:#3987e5; --tr-dos:#c98500; --tr-sump:#d95926;
+  --tr-ro:#d55181;  --tr-bat:#9085e9; --tr-util:#2FA3B8;
   /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
   /* fault was #D93E68, 4.18:1 on panel - close, but it is the colour on the
      OFFLINE chip, which is the one word on this page that has to be readable
@@ -443,10 +460,26 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .trend .band{fill:var(--ink-2); opacity:.55}
 .trend .laneoff{fill:var(--line); opacity:.5}
 .trend .ln{fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round}
-.trend .ln.rwt{stroke:var(--raw)} .trend .ln.twt{stroke:var(--treated)} .trend .ln.dos{stroke:var(--additive)}
-.trend .ln.ro{stroke:var(--ink-2)} .trend .ln.bat{stroke:var(--ink-2); stroke-dasharray:4 3}
-.trend .ln.sump{stroke:var(--raw); stroke-dasharray:2 3} .trend .ln.util{stroke:var(--ink-2); stroke-dasharray:1 3}
+.trend .ln.rwt{stroke:var(--tr-rwt)} .trend .ln.twt{stroke:var(--tr-twt)} .trend .ln.dos{stroke:var(--tr-dos)}
+.trend .ln.ro{stroke:var(--tr-ro)} .trend .ln.bat{stroke:var(--tr-bat); stroke-dasharray:4 3}
+.trend .ln.sump{stroke:var(--tr-sump); stroke-dasharray:2 3} .trend .ln.util{stroke:var(--tr-util); stroke-dasharray:1 3}
+/* The label wears its line's colour. That is the whole identification story:
+   seven lines, seven hues, and the number in the gutter painted the same as the
+   line it came off. */
 .trend .lbl{font:11px var(--mono); font-weight:600; fill:var(--ink-2)}
+.trend .lbl.rwt{fill:var(--tr-rwt)} .trend .lbl.twt{fill:var(--tr-twt)}
+.trend .lbl.dos{fill:var(--tr-dos)} .trend .lbl.sump{fill:var(--tr-sump)}
+.trend .lbl.ro{fill:var(--tr-ro)}   .trend .lbl.bat{fill:var(--tr-bat)}
+.trend .lbl.util{fill:var(--tr-util)}
+/* Drawn only when the de-collision below has pushed a label off its line's
+   height, which is exactly when colour alone stops being enough - two lines
+   ending a pixel apart get two labels 12px apart, and without this neither
+   says which of the two it came from. Thin and faint: a connector, not data. */
+.trend .leader{fill:none; stroke-width:1; opacity:.45}
+.trend .leader.rwt{stroke:var(--tr-rwt)} .trend .leader.twt{stroke:var(--tr-twt)}
+.trend .leader.dos{stroke:var(--tr-dos)} .trend .leader.sump{stroke:var(--tr-sump)}
+.trend .leader.ro{stroke:var(--tr-ro)}   .trend .leader.bat{stroke:var(--tr-bat)}
+.trend .leader.util{stroke:var(--tr-util)}
 .trend .xh{stroke:var(--line-2); stroke-width:1; pointer-events:none}
 .trend .tip{position:absolute; top:0; pointer-events:none; background:var(--ground-c); border:1px solid var(--line-2);
   border-radius:var(--r); padding:6px 8px; font:11px var(--mono); color:var(--ink-2); white-space:nowrap; display:none; z-index:5}
@@ -1287,6 +1320,12 @@ const LOC = {
   rwt: "Roof of RO room", twt: "Roof of RO room",
   rwp: "Terrace \u00b7 RO room", dos: "Terrace \u00b7 RO room", hpp: "Terrace \u00b7 RO room",
   filter: "Terrace \u00b7 RO room", mf: "Terrace \u00b7 RO room", memb: "Terrace \u00b7 RO room",
+  /* No entry for the two drain valves on purpose, and the guard in cell() is
+     what makes "no entry" mean "no caption". Each sits in the same row as the
+     unit it hangs off, which already carries the location - and the RSV's
+     would land on the room-air readout pinned to the room box's bottom-right
+     corner, burying the temperature. An empty string would not do: .loc is a
+     pill, so it would paint a bar there instead. */
 };
 
 function buildPlant(s) {
@@ -1299,7 +1338,6 @@ function buildPlant(s) {
   /* Older firmware, or a page served before the quality block existed, would
      otherwise throw here and drop the whole plant view. */
   const Q = s.quality || { rwt: { fitted: false }, twt: { fitted: false } };
-  const live = k => P[k].on && P[k].state === "ONLINE";
   const add = (e, col, row) => { e.style.gridColumn = col; e.style.gridRow = row; host.appendChild(e); return e; };
 
   const build = {
@@ -1318,10 +1356,23 @@ function buildPlant(s) {
     mf:     () => equipUnit(equipMF, "MF", "mf", 26, 50),
     memb:   () => equipUnit(equipMembrane, "RO Membrane", "memb", 116, 42),
     rsv:    () => equipUnit(equipValve, "RSV \u00b7 to drain", "rsv", 34, 46),
+    /* The filter's multiport valve, drawn on its drain leg rather than on the
+       filter head, because the leg is the part that either carries water or
+       does not, and that is the only thing this drawing can show. The position
+       is inferred from the pumps, not read: RL1/RL2 report the MPV contacts,
+       but which contact means which valve position is not established
+       (WIRING.md section 6), so the flow rule below is the observable one. */
+    fdrain: () => equipUnit(equipValve, "MPV \u00b7 to drain", "fdrain", 34, 46),
   };
   const cell = (k, col, row) => {
     const u = build[k]();
-    if (narrow) u.appendChild(txt("loc", LOC[k]));
+    /* Only when there IS one. .loc is a pill - a background plus 7px of side
+       padding - so an empty one is not invisible, it is a 14x2 filled bar
+       painted wherever that unit sits. The RSV had no LOC entry and its bar
+       landed across the room-air readout on a phone, reading as a line struck
+       through "31.5". Guarded here as well as filled in above, because the next
+       unit added without a LOC entry would do the same thing somewhere else. */
+    if (narrow && LOC[k]) u.appendChild(txt("loc", LOC[k]));
     const c = node("cell");
     c.appendChild(u);
     return add(c, col, row);
@@ -1386,6 +1437,7 @@ function buildPlant(s) {
     add(roomBox(), "1 / -1", "5 / span 6");
     cell("rwp", "main", 5);
     cell("filter", "main", 6);
+    cell("fdrain", "branch", 6);
     cell("dos", "branch", 7);
     cell("mf", "main", 8);
     cell("hpp", "main", 9);
@@ -1401,10 +1453,11 @@ function buildPlant(s) {
       { from: "smotor", fs: "b", to: "rwt",    ts: "t", fluid: "raw",     pump: "sump_motor" },
       { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     pump: "rwp" },
       { from: "rwp",    fs: "b", to: "filter", ts: "t", fluid: "raw",     pump: "rwp" },
-      { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     pump: "rwp" },
-      { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     pump: "rwp" },
+      { from: "filter", fs: "b", to: "mf",     ts: "t", fluid: "raw",     pump: "rwp", and: "hpp" },
+      { from: "mf",     fs: "b", to: "hpp",    ts: "t", fluid: "raw",     pump: "rwp", and: "hpp" },
+      { from: "filter", fs: "r", to: "fdrain", ts: "l", fluid: "raw",     pump: "rwp", not: "hpp", thin: true },
 
-      { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", pump: "rwp", thin: true },
+      { from: "dos",    fs: "l", toTee: true, teeSide: "r", fluid: "additive", pump: "rwp", and: "hpp", thin: true },
       { from: "hpp",    fs: "b", to: "memb",   ts: "t", fluid: "raw",     pump: "hpp" },
       { from: "memb",   fs: "b", to: "twt",    ts: "t", fluid: "treated", pump: "hpp" },
       { from: "memb",   fs: "r", to: "rsv",    ts: "l", fluid: "raw",     pump: "hpp", thin: true },
@@ -1485,6 +1538,15 @@ function buildPlant(s) {
        top of the temperature. c6 puts it between the dosing barrel and the
        right-hand wall, clear of both. */
     cell("rsv", "c6", 2).classList.add("bottom");
+    /* c3's bottom half is the only floor left inside the room - c4/c5 is the
+       dosing barrel and c6 the RSV. Dropping the leg from the filter's centre
+       ran it straight down through the barrel's caption, so the filter ports
+       its drain at 0.12 across instead, hard against the left of the shell.
+       Nothing else in this layout uses the filter's top or bottom anchor, so
+       moving it costs no other pipe. */
+    cell("fdrain", "c3", 2).classList.add("bottom");
+    const fg = document.querySelector('[data-g="filter"]');
+    if (fg) fg.dataset.portx = "0.12";
     add(annexBox(), "c8", 2);
     /* The sump is BELOW GROUND with its top at grade - it is a pit, not a tank
        standing in the car park - so it lives in the earth row, lifted so its rim
@@ -1554,9 +1616,10 @@ function buildPlant(s) {
       { from: "smotor", fs: "r", to: "rwt",    ts: "l", fluid: "raw",     pump: "sump_motor" },
       { from: "rwt",    fs: "b", to: "rwp",    ts: "t", fluid: "raw",     pump: "rwp" },
       { from: "rwp",    fs: "r", to: "filter", ts: "l", fluid: "raw",     pump: "rwp" },
-      { from: "filter", fs: "r", to: "mf",     ts: "l", fluid: "raw",     pump: "rwp" },
-      { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     pump: "rwp" },
-      { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", pump: "rwp", thin: true },
+      { from: "filter", fs: "r", to: "mf",     ts: "l", fluid: "raw",     pump: "rwp", and: "hpp" },
+      { from: "mf",     fs: "r", to: "hpp",    ts: "l", fluid: "raw",     pump: "rwp", and: "hpp" },
+      { from: "filter", fs: "b", to: "fdrain", ts: "t", fluid: "raw",     pump: "rwp", not: "hpp", thin: true },
+      { from: "dos",    fs: "t", toTee: true, teeSide: "b", fluid: "additive", pump: "rwp", and: "hpp", thin: true },
       { from: "hpp",    fs: "r", to: "memb",   ts: "l", fluid: "raw",     pump: "hpp" },
       /* The one fill that is NOT ported near the rim, and it is a geometry
          problem rather than an oversight. The membrane sits INSIDE the tank's
@@ -1729,7 +1792,16 @@ function drawPlant(s) {
   const rebuilt = sig !== PLANT_SIG;
   if (rebuilt) { PLANT_SIG = sig; buildPlant(s); }
   const live = k => s.pumps[k].on && s.pumps[k].state === "ONLINE";
-  ROUTES.forEach(r => { r.flow = live(r.pump); });
+  /* "and" and "not" exist for one junction: the filter's multiport valve. The
+     RWP running with the HPP stopped means the valve is off service and
+     everything the RWP pushes goes to drain - so the drain leg animates and the
+     train downstream of the filter does not. With the HPP running it is the
+     other way round. Both legs must never animate at once, which is why the
+     forward legs gained an "and" instead of the drain leg simply being added
+     alongside them. */
+  ROUTES.forEach(r => {
+    r.flow = live(r.pump) && (!r.and || live(r.and)) && (!r.not || !live(r.not));
+  });
   updatePlant(s);
   if (rebuilt) requestAnimationFrame(() => { relayout(); syncPipes(true); });
   else syncPipes(false);
@@ -2201,7 +2273,11 @@ function stepDemo() {
 
   d.pumps.sump_motor.on = T.rwt.pct < 72;              // driven by the RWT float, as wired today
   d.pumps.rwp.on = T.rwt.pct > 8 && T.twt.pct < 94;
-  d.pumps.hpp.on = d.pumps.rwp.on;
+  /* A backwash, on the same pattern as the alarm above: the RWP keeps pushing
+     and the HPP drops out, which is the one state that lights the filter's
+     drain leg. Without it the demo never draws that pipe, and the demo is how
+     this drawing gets reviewed. ?backwash=1 holds it there. */
+  d.pumps.hpp.on = d.pumps.rwp.on && !(DEMO_FORCE.has("backwash") || (tick >= 30 && tick < 38));
   d.env.battery_room.t = 36.6 + Math.sin(tick / 9) * 2.4;
   d.env.battery_room.fan = d.env.battery_room.t > 38;
   d.env.ro_room.t = 31.4 + Math.sin(tick / 14) * 0.8;
@@ -2320,7 +2396,9 @@ function drawTrend() {
      has to, and the reading order down the gutter still matches the lines. */
   const LBL_MIN = 12;
   const placeLabels = (items, top, bottom) => {
-    const ls = items.filter(o => o.pt).map(o => ({ y: o.pt[1] + 3.5, s: o.name + " " + o.fmt(o.pt[2]) }));
+    const ls = items.filter(o => o.pt).map(o => ({
+      y: o.pt[1] + 3.5, s: o.name + " " + o.fmt(o.pt[2]), cls: o.cls, pt: o.pt,
+    }));
     if (!ls.length) return;
     ls.sort((a, b) => a.y - b.y);
     for (let i = 1; i < ls.length; i++) {
@@ -2330,14 +2408,25 @@ function drawTrend() {
     if (over > 0) ls.forEach(l => { l.y -= over; });
     let floor = top;
     ls.forEach(l => { if (l.y < floor) l.y = floor; floor = l.y + LBL_MIN; });
-    ls.forEach(l => svg.appendChild(txt(TREND_W - PAD_R + 6, l.y, l.s, "lbl")));
+    /* Leaders under the labels, so a label never sits on top of its own
+       connector. A line whose data ran out early - a tank in SENSOR_ERROR
+       stops mid-strip - ends far from the gutter, and the leader is then what
+       carries the eye across; that is a case worth drawing, not hiding. */
+    ls.forEach(l => {
+      if (Math.abs((l.y - 3.5) - l.pt[1]) <= 2) return;
+      svg.appendChild(el("path", {
+        d: `M ${l.pt[0].toFixed(1)} ${l.pt[1].toFixed(1)} L ${TREND_W - PAD_R + 3} ${(l.y - 3.5).toFixed(1)}`,
+        class: "leader " + l.cls,
+      }));
+    });
+    ls.forEach(l => svg.appendChild(txt(TREND_W - PAD_R + 6, l.y, l.s, "lbl " + l.cls)));
   };
   const pct = v => v + "%";
   placeLabels([
-    { pt: line(1, "rwt", Yt),  name: "RWT",  fmt: pct },
-    { pt: line(2, "twt", Yt),  name: "TWT",  fmt: pct },
-    { pt: line(3, "dos", Yt),  name: "DOS",  fmt: pct },
-    { pt: line(9, "sump", Yt), name: "SUMP", fmt: pct },
+    { pt: line(1, "rwt", Yt),  name: "RWT",  fmt: pct, cls: "rwt" },
+    { pt: line(2, "twt", Yt),  name: "TWT",  fmt: pct, cls: "twt" },
+    { pt: line(3, "dos", Yt),  name: "DOS",  fmt: pct, cls: "dos" },
+    { pt: line(9, "sump", Yt), name: "SUMP", fmt: pct, cls: "sump" },
   ], tankY + 4, tankY + TANK_H + 4);
 
   /* room temperatures, autoscaled to the data with 1 °C headroom */
@@ -2353,9 +2442,9 @@ function drawTrend() {
   svg.appendChild(txt(0, tempY - 6, "ROOM °C", "lane"));
   const deg = v => (v / 10).toFixed(1);
   placeLabels([
-    { pt: line(7, "ro", Yc),   name: "RO",   fmt: deg },
-    { pt: line(8, "bat", Yc),  name: "BAT",  fmt: deg },
-    { pt: line(12, "util", Yc), name: "UTIL", fmt: deg },
+    { pt: line(7, "ro", Yc),    name: "RO",   fmt: deg, cls: "ro" },
+    { pt: line(8, "bat", Yc),   name: "BAT",  fmt: deg, cls: "bat" },
+    { pt: line(12, "util", Yc), name: "UTIL", fmt: deg, cls: "util" },
   ], tempY + 4, tempY + TEMP_H + 4);
 
   /* x axis. This was hard-coded to a tick every 4 h, which is right for a full

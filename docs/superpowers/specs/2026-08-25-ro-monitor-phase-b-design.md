@@ -235,8 +235,8 @@ GPIO 34 and 35 are input-only pins with **no internal pull-up**. ~~The current s
 ```c
 static const uint8_t ADDR_MAP[4] = {  // raw = (A1 << 1) | A0, open = 1, GND = 0
   0x00,   // 0b00  both GND   -> unassigned, must not transmit
-  0x03,   // 0b01  A1 to GND  -> TWT        (Nano #2, as built)
-  0x02,   // 0b10  A0 to GND  -> RWT        (Nano #1, as built)
+  0x02,   // 0b01  A1 to GND  -> RWT        (Nano #2, as built)
+  0x03,   // 0b10  A0 to GND  -> TWT        (Nano #1, as built)
   0x04,   // 0b11  both open  -> Battery Rm (Pro Mini, as built)
 };
 ```

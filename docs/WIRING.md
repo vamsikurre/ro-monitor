@@ -771,8 +771,8 @@ return ADDR_MAP[raw];                       // the table below is the lookup;
 
 | `A1` | `A0` | raw | Node ID | Role |
 | :---: | :---: | :---: | :---: | :--- |
-| open | **GND** | `0b10` | **`0x02`** | RWT (end of bus, 120 Ω) |
-| **GND** | open | `0b01` | **`0x03`** | TWT |
+| **GND** | open | `0b01` | **`0x02`** | RWT (end of bus, 120 Ω) |
+| open | **GND** | `0b10` | **`0x03`** | TWT (the board with the pressure-transducer header) |
 | open | open | `0b11` | **`0x04`** | Battery Room climate + fan (Pro Mini, §10). Also the unjumpered default |
 | **GND** | **GND** | `0b00` | **unassigned** | Refuse to join the bus — see below |
 
@@ -782,8 +782,8 @@ The mapping is a **lookup table written from the observed hardware**, not an ari
 // common/protocol.h  --  raw = (A1 << 1) | A0, INPUT_PULLUP: open = 1, GND = 0
 static const uint8_t ADDR_MAP[4] = {
   0x00,   // 0b00  both GND    -> unassigned, do not join the bus
-  0x03,   // 0b01  A1 to GND   -> TWT
-  0x02,   // 0b10  A0 to GND   -> RWT (end of bus)
+  0x02,   // 0b01  A1 to GND   -> RWT
+  0x03,   // 0b10  A0 to GND   -> TWT (pressure-header board)
   0x04,   // 0b11  both open   -> Battery Room, climate + fan relay
 };
 
@@ -800,15 +800,38 @@ A node decoding `0x00` must **not** transmit — hold in a fault state and blink
 
 **The address also selects the node's personality** (spec §4): `0x02`/`0x03` run the ultrasonic build, `0x04` runs climate + fan relay. A misjumpered node therefore doesn't just answer to the wrong ID — it runs the wrong hardware profile and publishes plausible-looking wrong data.
 
-### 9.2. As-Built Jumper Audit (2026-08-25)
+### 9.2. As-Built Jumper Audit (2026-08-25, tank roles corrected 2026-09-11)
 
 The jumpers are staying as they are. `ADDR_MAP` (§9.1) was written to fit them, so **no board needs rewiring**:
 
 | Board | `A0` | `A1` | raw | Resolves to | Action |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| Nano #1 | **GND** | open | `0b10` | `0x02` RWT | Label RWT, fit its 120 Ω (§12). No change. |
-| Nano #2 | open | **GND** | `0b01` | `0x03` TWT | Label TWT. **No change** — this code used to mean the retired `0x01`. |
+| Nano #1 | **GND** | open | `0b10` | `0x03` TWT | Label TWT. This is the board with the pressure-transducer header soldered. **No 120 Ω** — it is mid-chain (§12). |
+| Nano #2 | open | **GND** | `0b01` | `0x02` RWT | Label RWT, fit its 120 Ω (§12) — this board is the end of the bus. |
 | Pro Mini (Battery Room) | open | open | `0b11` | `0x04` Climate | Label Battery Room. **No change** — leave both pads unconnected. |
+
+> **Corrected 2026-09-11, before either tank node was fitted.** The two tank rows
+> were the wrong way round. Nano #1 is the only one of the two with the
+> pressure-transducer header soldered, and that header is what fixes it as the TWT
+> board — but its `A0`-to-GND code resolved to `0x02` RWT. Caught on the bench by
+> unplugging it and watching `0x02` go offline rather than `0x03`.
+>
+> Fixed by swapping the two tank entries in `ADDR_MAP` (§9.1) and reflashing both
+> Nanos, not by moving a jumper: the jumper is the soldered thing and the identity
+> is the free one. That is the same trade §9.1 made when the table was first
+> written around the boards, applied a second time in the same direction.
+>
+> **The 120 Ω terminator was never fitted** — confirmed 2026-09-11, both boards
+> still on the bench. So nothing has to come off: it goes onto **Nano #2**, the
+> RWT board, at deployment, per the checklist at the top of this document. The
+> only reason to mention it here is that the old table put it on Nano #1, and
+> that instruction is now wrong — a terminator there would sit mid-chain, leaving
+> the end of the bus unterminated (§10).
+>
+> **Both tank Nanos must be reflashed together.** A board still running the old
+> table answers to the other one's address, and two nodes answering one poll is
+> the collision this section exists to prevent. Confirm each by its boot print
+> before bussing.
 
 Why software rather than the soldering iron: the three codes were already distinct, so there was nothing to disambiguate — only a table to write. It avoids lifting a pad on the Pro Mini's inner pads, avoids touching a node that may already be sealed in its enclosure, and puts the assignment in the one place spec §3.1 says addressing belongs.
 

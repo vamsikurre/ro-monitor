@@ -260,6 +260,59 @@ static void wq_json(char *ppm, size_t ppm_len, char *temp, size_t temp_len,
     snprintf(temp, temp_len, "%d.%d", wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
 }
 
+/* The same pair as one line of English, for /cal.
+ *
+ * The dashboard gets ppm or nothing, which is right for a page you read at a
+ * glance. Calibrating is the opposite job: every way this can fail lands as the
+ * same "no reading", and telling them apart needs the RAW millivolts - the one
+ * number the conversion refuses on and nothing had ever shown. Two probes in two
+ * glasses of water read null for four different reasons here, and separating
+ * them cost a bench session, a glass swap and a guess.
+ *
+ * So the mV and the water temperature print whenever the node has given them,
+ * INCLUDING when the ppm was refused. That is the whole point of the line. */
+static void wq_reading(char *out, size_t len, const wq_state_t *wq, bool online)
+{
+    char when[32] = "";
+    if (wq->last_ok_us != 0) {
+        snprintf(when, sizeof when, ", %ds ago", age_s(wq->last_ok_us));
+    }
+
+    if (wq->last_ok_us == 0 && !wq->fitted) {
+        snprintf(out, len, online
+            ? "no reading yet. Either the level is below the threshold below - the hub "
+              "does not ask at all until it is - or no DS18B20 answered its presence "
+              "pulse, which needs the 4k7 pullup on the node's D4"
+            : "node offline");
+        return;
+    }
+    if (!wq->fitted) {
+        snprintf(out, len, "the node reports no usable pair%s: no DS18B20 presence pulse, "
+                           "a failed scratchpad CRC, or exactly 85.0 C. TDS is refused with "
+                           "it on purpose - it cannot be temperature compensated", when);
+        return;
+    }
+
+    char t[16];
+    snprintf(t, sizeof t, "%d.%d", wq->temp_deci_c / 10, abs(wq->temp_deci_c % 10));
+
+    const char *why = "";
+    if (wq->tds_mv == 0) {
+        why = " - 0 mV is an absent probe or a power pin that is not driving, not pure water";
+    } else if (wq->tds_mv > TDS_MV_MAX) {
+        why = " - over the mV ceiling, too conductive to convert";
+    } else if (wq->ppm == TDS_INVALID) {
+        why = " - past the ppm ceiling, so the cubic would be arithmetic rather than a measurement";
+    }
+
+    char ppm[24];
+    if (wq->ppm == TDS_INVALID) snprintf(ppm, sizeof ppm, "no ppm");
+    else                        snprintf(ppm, sizeof ppm, "%u ppm", wq->ppm);
+
+    snprintf(out, len, "%u mV at %s C &rarr; %s%s%s%s", wq->tds_mv, t, ppm, why, when,
+             online ? (wq->live ? ", polling" : ", HELD - not being polled now") : ", node offline");
+}
+
 /* Deci-amps as JSON. Same rule as the pump amps: a channel with no clamp is -1
  * and must reach the page as null, not as 0.0. */
 static void da_json(char *out, size_t n, int16_t da)
@@ -684,6 +737,10 @@ static esp_err_t cal_get(httpd_req_t *req)
     memcpy(ct_ph[CAL_CT_BORE], s->borewell.phase_da, sizeof(ct_ph[0]));
     memcpy(ct_ph[CAL_CT_SUMP], s->sump_motor.phase_da, sizeof(ct_ph[0]));
     bool sump_pressure = s->sump_pressure, sump_online = s->sump_online, util_online = s->utility_online;
+    /* By value, for the same reason as the firmware strings below: the lock goes
+     * away before the water-quality fieldset is built. */
+    wq_state_t wq[2]    = { s->rwt_wq, s->twt_wq };
+    bool       wq_up[2] = { s->rwt_online, s->twt_online };
     /* Copied, not pointed at: the lock is released two lines down and the poll
      * task rewrites these strings on every cycle. */
     char s_sump_fw[16], s_util_fw[16];
@@ -830,12 +887,15 @@ static esp_err_t cal_get(httpd_req_t *req)
     n += snprintf(page + n, sizeof(page) - n, "<fieldset id=wq><legend>Water quality probes</legend>");
     for (int i = 0; i < 2; i++) {          /* RWT, TWT - dosing and sump have no TDS probe */
         const cal_tank_cfg_t *c = cal_tank(i);
+        char reading[360];
+        wq_reading(reading, sizeof reading, &wq[i], wq_up[i]);
         n += snprintf(page + n, sizeof(page) - n,
+            "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/wq'><input type=hidden name=tank value=%d>"
-            "<b>%s</b> &nbsp; k <input name=k size=5 value='%u.%02u'> &nbsp; "
+            "k <input name=k size=5 value='%u.%02u'> &nbsp; "
             "probe under water at or above <input name=min size=3 value='%u'> %% "
             "<button>Save</button></form>",
-            i, i == CAL_TANK_RWT ? "RWT" : "TWT",
+            i == CAL_TANK_RWT ? "RWT" : "TWT", reading, i,
             c->tds_k_x100 / 100, c->tds_k_x100 % 100, c->tds_min_pct);
     }
     n += snprintf(page + n, sizeof(page) - n,

@@ -191,10 +191,22 @@
 // ADDR_MAP is written to fit the boards as they are already jumpered.
 // WIRING.md section 9.1 is the authority; if a board is ever re-jumpered,
 // that table and this one change in the same commit. docs/check_addrmap.py enforces it.
+//
+// 2026-09-11: the two tank entries swapped. The board carrying the pressure
+// transducer header - the one that therefore HAS to be the treated tank, since
+// that header is soldered and the other board does not have it - was measured
+// with A0 grounded, which this table used to resolve to 0x02 RWT. Confirmed on
+// the bench before either board was fitted: unplugging that node took 0x02
+// offline, not 0x03.
+//
+// Swapped here rather than re-jumpered because the jumper is the thing that is
+// soldered and the identity is the thing that is free. That is the same
+// reasoning section 9.2 used to write this table around the boards in the first
+// place; it applies again, in the same direction.
 static const uint8_t ADDR_MAP[4] = {
   0x00,   // 0b00  both GND    -> unassigned, do not join the bus
-  0x03,   // 0b01  A1 to GND   -> TWT
-  0x02,   // 0b10  A0 to GND   -> RWT (end of bus)
+  0x02,   // 0b01  A1 to GND   -> RWT
+  0x03,   // 0b10  A0 to GND   -> TWT (pressure-header board)
   0x04,   // 0b11  both open   -> Battery Room (climate + fan relay)
 };
 
