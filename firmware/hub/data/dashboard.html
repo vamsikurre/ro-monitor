@@ -1539,14 +1539,16 @@ function buildPlant(s) {
        right-hand wall, clear of both. */
     cell("rsv", "c6", 2).classList.add("bottom");
     /* c3's bottom half is the only floor left inside the room - c4/c5 is the
-       dosing barrel and c6 the RSV. Dropping the leg from the filter's centre
-       ran it straight down through the barrel's caption, so the filter ports
-       its drain at 0.12 across instead, hard against the left of the shell.
-       Nothing else in this layout uses the filter's top or bottom anchor, so
-       moving it costs no other pipe. */
+       dosing barrel and c6 the RSV.
+       The drain drops from the SHELL'S CENTRE, which is the only place a pipe
+       leaving the bottom of a vessel can come from without looking like a
+       mistake. It was briefly ported at 0.12 across, hard against the left of
+       the shell, to dodge the dosing barrel - measured afterwards, that dodge
+       was never needed: the filter's centre is 36px clear of the barrel at
+       1556px of plant and still ~20px clear at the 1240px floor, and below that
+       the whole elevation is uniformly scaled so the gap can never close. What
+       the offset did buy was a pipe that visibly missed its own vessel. */
     cell("fdrain", "c3", 2).classList.add("bottom");
-    const fg = document.querySelector('[data-g="filter"]');
-    if (fg) fg.dataset.portx = "0.12";
     add(annexBox(), "c8", 2);
     /* The sump is BELOW GROUND with its top at grade - it is a pit, not a tank
        standing in the car park - so it lives in the earth row, lifted so its rim
