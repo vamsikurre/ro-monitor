@@ -257,6 +257,15 @@ extern "C" {
 /* ------------------------------------------------------------------- cadence */
 #define POLL_CYCLE_MS           2000
 
+/* How much of a run may be lost to a reboot before it reaches NVS. The lifetime
+ * total was written only when a motor STOPPED, so a hub that rebooted during a
+ * run threw that run away entirely - and a motor that never stops contributed
+ * nothing, ever. Ten minutes bounds the loss without turning this into a flash
+ * writer: a motor running twelve hours a day adds ~72 writes a day, against the
+ * handful of start/stop writes already being made, and NVS wear-levels those
+ * across the partition. */
+#define RUNTIME_COMMIT_MS       (10 * 60 * 1000)
+
 /* Ground-floor Wi-Fi nodes, polled by app_gf.c. Online: every 5 s. After
  * GF_OFFLINE_MISSES consecutive misses the node is OFFLINE and probed every
  * 30 s instead, so a dead node costs nothing; the first reply restores 5 s. */

@@ -250,6 +250,16 @@ typedef struct {
      * while total_s climbed 10 s. today's figure was always right because
      * run_ms already accumulated ms and divided once; this now does the same. */
     uint32_t run_since_start_ms;
+    /* How much of run_since_start_ms is already in NVS. The lifetime total used
+     * to be written ONLY on the stop transition, which has two consequences that
+     * were both visible live on 2026-09-11: a motor that has not stopped yet has
+     * contributed nothing to its lifetime figure, and a reboot part-way through
+     * a run discards that whole run from the lifetime figure for good. The
+     * borewell was reading today_s 40012 against total_s 658 - eleven hours
+     * today against eleven minutes ever, which is impossible on its face.
+     * "today" survives a reboot because it is restored from the day ledger;
+     * lifetime did not, because nothing had written it. */
+    uint32_t committed_ms;
     uint32_t da_sum;                /* deci-amps summed over this run, for the log */
     uint16_t da_n;
     bool     was_running;
@@ -281,6 +291,9 @@ static const uint8_t s_run_evt[CAL_CT_COUNT][2] = {
  * still true and books no second start; one that comes back stopped books the
  * stop then, with the run length measured to the last moment it was visible.
  */
+/* RUN_ACCT_BEGIN - lifted and compiled by docs/check_run_hours.py, so what is
+ * tested is what ships. Keep it self-contained: cal_runtime_get/set and
+ * event_push are stubbed there, nothing else may creep in. */
 static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_amps, int64_t now_us,
                         uint32_t *today_s, uint16_t *starts, uint32_t *total_s)
 {
@@ -290,12 +303,17 @@ static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_am
     uint8_t on_evt  = s_run_evt[a->which][0];
     uint8_t off_evt = s_run_evt[a->which][1];
 
+    /* Whatever of this run NVS has not been told about yet. Used both to report
+     * the total and to decide when to flush, so the two can never disagree. */
+    #define RUN_UNCOMMITTED_MS(acct) ((acct)->run_since_start_ms - (acct)->committed_ms)
+
     if (!known) {
         /* last_us is already advanced above, which is the entire point: the
          * blind gap is discarded rather than counted. The reported figures keep
          * whatever they last honestly were. */
         *today_s = a->run_ms / 1000;
-        *total_s = cal_runtime_get(a->which) + (a->was_running ? a->run_since_start_ms / 1000 : 0);
+        *total_s = cal_runtime_get(a->which) +
+                   (a->was_running ? RUN_UNCOMMITTED_MS(a) / 1000 : 0);
         return;
     }
 
@@ -304,21 +322,37 @@ static void run_account(run_acct_t *a, bool known, bool running, int16_t deci_am
         if (!a->was_running) {
             (*starts)++;
             a->run_since_start_ms = 0;
+            a->committed_ms = 0;
             a->da_sum = 0; a->da_n = 0;
             event_push(on_evt, 0, 0, 0);
         }
         a->run_since_start_ms += dt_ms;
+        /* Flush mid-run so a reboot costs at most RUNTIME_COMMIT_MS of lifetime
+         * hours instead of the entire run. Only whole seconds move, and
+         * committed_ms follows exactly what was written, so the remainder is
+         * never counted twice and never dropped. */
+        if (RUN_UNCOMMITTED_MS(a) >= RUNTIME_COMMIT_MS) {
+            uint32_t whole_s = RUN_UNCOMMITTED_MS(a) / 1000;
+            cal_runtime_set(a->which, cal_runtime_get(a->which) + whole_s);
+            a->committed_ms += whole_s * 1000;
+        }
         if (deci_amps >= 0 && a->da_n < 0xFFFF) { a->da_sum += deci_amps; a->da_n++; }
     } else if (a->was_running) {
-        cal_runtime_set(a->which, cal_runtime_get(a->which) + a->run_since_start_ms / 1000);
+        cal_runtime_set(a->which, cal_runtime_get(a->which) + RUN_UNCOMMITTED_MS(a) / 1000);
+        a->committed_ms = a->run_since_start_ms;
         event_push(off_evt, 0, (uint16_t)(a->run_since_start_ms / 60000),
                    a->da_n ? (uint16_t)(a->da_sum / a->da_n) : 0xFFFF);
     }
     a->was_running = running;
     *today_s = a->run_ms / 1000;
-    /* Lifetime = stored total + the run in progress, so it moves while running */
-    *total_s = cal_runtime_get(a->which) + (running ? a->run_since_start_ms / 1000 : 0);
+    /* Lifetime = stored total + the part of the run in progress NVS has not been
+     * told about, so it moves while running. It must be the UNCOMMITTED part,
+     * not the whole run: once a flush has happened those seconds are already
+     * inside cal_runtime_get() and adding them again counts them twice. */
+    *total_s = cal_runtime_get(a->which) + (running ? RUN_UNCOMMITTED_MS(a) / 1000 : 0);
+    #undef RUN_UNCOMMITTED_MS
 }
+/* RUN_ACCT_END */
 
 /* Local midnight of today as epoch seconds, or 0 without a synced clock. The
  * day ledger is keyed on this: it changes exactly when the calendar does, and
@@ -1484,9 +1518,9 @@ static void poll_task(void *arg)
          * develops. Start and stop are caught by the contactor optos, which are
          * instant, so nothing is lost by sampling current slowly (spec §7.3). */
         if (ct_turn == 0) {
-            local.hpp.deci_amps = ct_read_deci_amps(GPIO_IN_HPP_CT, CAL_CT_HPP);
+            local.hpp.deci_amps = ct_read_deci_amps(GPIO_IN_HPP_CT, CAL_CT_HPP, &local.hpp.ct_mid_mv);
         } else {
-            local.rwp.deci_amps = ct_read_deci_amps(GPIO_IN_RWP_CT, CAL_CT_RWP);
+            local.rwp.deci_amps = ct_read_deci_amps(GPIO_IN_RWP_CT, CAL_CT_RWP, &local.rwp.ct_mid_mv);
         }
         ct_turn ^= 1;
 
