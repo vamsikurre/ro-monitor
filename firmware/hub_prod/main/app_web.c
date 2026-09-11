@@ -809,7 +809,12 @@ static esp_err_t cal_get(httpd_req_t *req)
          * useful feedback there is the bias pedestal. The remote pair has three
          * channels on another board: the per-phase amps are what tells you a
          * clamp is on backwards or not on at all. */
-        char reading[64];
+        /* 160, not 64: the pedestal line now names the band it failed against
+         * instead of just saying "none", and that sentence does not fit in 64.
+         * -Werror=format-truncation catches this at build time - it is why the
+         * figure is sized against the longest branch rather than the typical
+         * one, since %lu alone can be 10 digits. */
+        char reading[160];
         if (i >= CAL_CT_BORE) {
             char p[40], a[3][8];
             for (int k = 0; k < 3; k++) {
@@ -821,12 +826,12 @@ static esp_err_t cal_get(httpd_req_t *req)
         } else {
             if (ct_mid[i] == 0) {
                 snprintf(reading, sizeof reading,
-                         "pedestal not sampled yet — one clamp is read per poll cycle");
+                         "pedestal not sampled yet &mdash; one clamp is read per poll cycle");
             } else {
                 snprintf(reading, sizeof reading, "pedestal %lu mV, reading %s",
                          (unsigned long)ct_mid[i],
-                         ct_a[i] < 0 ? "none — that pedestal is outside 1250-2050 mV, "
-                                       "so no current can be trusted" : "live");
+                         ct_a[i] < 0 ? "none &mdash; that pedestal is outside "
+                                       "1250-2050 mV, so no current can be trusted" : "live");
             }
         }
 
