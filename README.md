@@ -223,4 +223,5 @@ For in-depth technical documentation, refer to the guides in the `docs/` folder:
 - **[Power Budget & Voltage Drop Calculations](docs/POWER_BUDGET.md)**
 - **[Local Web Dashboard & ESP RainMaker Integration Guide](docs/DASHBOARD_AND_RAINMAKER.md)**
 - **[Skid Hardware Reverse Engineering Analysis](docs/RO_HARDWARE_ANALYSIS.md)**
+- **[Credentials: every hardcoded password and default](docs/CREDENTIALS.md)**
 
