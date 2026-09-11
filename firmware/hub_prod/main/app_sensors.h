@@ -92,7 +92,11 @@ void ac_probe(int gpio, bool *running, bool *floating, uint32_t *mv_lo, uint32_t
  * (no breakout fitted, or the divider is wrong), which would otherwise produce a
  * large and entirely fictional current. Blocks for ~200 ms.
  */
-int16_t ct_read_deci_amps(int gpio, cal_ct_t which);
+/* pedestal_mv (optional) returns the bias midpoint this read measured, set
+ * even when the guard rejects it and the function returns -1: a pedestal
+ * that is out of band is the one number that says WHY there is no current.
+ * /cal shows it; nothing else needs it. */
+int16_t ct_read_deci_amps(int gpio, cal_ct_t which, uint32_t *pedestal_mv);
 
 /*
  * Drive one of the four hub float-emulation relays, 0-3 in the order they are
@@ -105,7 +109,6 @@ const char *relay_name(int idx);
 
 /* Raw pedestal figures for the calibration page, so the breakout can be proven
  * before any clamp is fitted — ~1650 mV steady is correct. */
-void ct_probe(int gpio, uint32_t *mv_lo, uint32_t *mv_hi);
 
 #ifdef __cplusplus
 }

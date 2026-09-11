@@ -730,8 +730,13 @@ static esp_err_t cal_get(httpd_req_t *req)
     const hub_state_t *s = hub_state();
     uint16_t live[CAL_TANK_COUNT]     = { s->rwt.distance_mm, s->twt.distance_mm, s->dosing.distance_mm, s->sump.distance_mm };
     int16_t  live_pct[CAL_TANK_COUNT] = { s->rwt.pct, s->twt.pct, s->dosing.pct, s->sump.pct };
-    uint32_t ct_lo[CAL_CT_COUNT] = { s->hpp.mv_lo, s->rwp.mv_lo, 0, 0 };
-    uint32_t ct_hi[CAL_CT_COUNT] = { s->hpp.mv_hi, s->rwp.mv_hi, 0, 0 };
+    /* The CLAMP's bias midpoint, from the guard inside ct_read_deci_amps(). This
+     * used to be s->hpp.mv_lo/mv_hi, which is the 240 V opto window off a
+     * different pin - so an idle pump made this page print "pedestal 3129 mV"
+     * beside help text saying anything but ~1650 mV means the breakout is wrong.
+     * It accused a healthy board every time nothing was running, and said
+     * "reading live" on the same line while doing it. */
+    uint32_t ct_mid[CAL_CT_COUNT] = { s->hpp.ct_mid_mv, s->rwp.ct_mid_mv, 0, 0 };
     int16_t  ct_a[CAL_CT_COUNT]  = { s->hpp.deci_amps, s->rwp.deci_amps, s->borewell.deci_amps, s->sump_motor.deci_amps };
     int16_t  ct_ph[CAL_CT_COUNT][3] = {{0}};
     memcpy(ct_ph[CAL_CT_BORE], s->borewell.phase_da, sizeof(ct_ph[0]));
@@ -814,9 +819,15 @@ static esp_err_t cal_get(httpd_req_t *req)
             snprintf(p, sizeof p, "%s / %s / %s A", a[0], a[1], a[2]);
             snprintf(reading, sizeof reading, "%s%s", util_online ? "phases " : "node offline; last ", p);
         } else {
-            snprintf(reading, sizeof reading, "pedestal %lu-%lu mV, reading %s",
-                     (unsigned long)ct_lo[i], (unsigned long)ct_hi[i],
-                     ct_a[i] < 0 ? "none (no clamp or no pedestal)" : "live");
+            if (ct_mid[i] == 0) {
+                snprintf(reading, sizeof reading,
+                         "pedestal not sampled yet — one clamp is read per poll cycle");
+            } else {
+                snprintf(reading, sizeof reading, "pedestal %lu mV, reading %s",
+                         (unsigned long)ct_mid[i],
+                         ct_a[i] < 0 ? "none — that pedestal is outside 1250-2050 mV, "
+                                       "so no current can be trusted" : "live");
+            }
         }
 
         n += snprintf(page + n, sizeof(page) - n,

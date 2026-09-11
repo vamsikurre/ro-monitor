@@ -588,8 +588,20 @@ typedef struct {
                                     * this build once, a broken wire at the
                                     * module (WIRING.md 1) */
     int16_t  deci_amps;            /* -1 while no clamp is fitted */
-    uint32_t mv_lo;                /* raw probe figures, surfaced for commissioning */
+    uint32_t mv_lo;                /* 240 V opto window - NOT the clamp. Idle is
+                                    * both ends high on the module's 47k pull-up
+                                    * (~3100 mV); active is the opto pulling the
+                                    * pin down. ac_probe() fills these. */
     uint32_t mv_hi;
+    /* The CURRENT CLAMP's bias pedestal, which is a different pin and a
+     * different number, and which /cal spent its life mislabelling: it printed
+     * mv_lo/mv_hi under the heading "pedestal" beside help text saying anything
+     * that is not ~1650 mV means the breakout is wrong. On an idle pump that
+     * read ~3129 mV, so the page accused a perfectly good board every time
+     * nothing was running - while printing "reading live" on the same line,
+     * because the real pedestal was in band all along.
+     * 0 = not sampled yet; this channel is only read every other cycle. */
+    uint32_t ct_mid_mv;
 } motor_state_t;
 
 /* A remote motor read by clamps on the utility node: per-phase, so the

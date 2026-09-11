@@ -391,12 +391,8 @@ void ac_probe(int gpio, bool *running, bool *floating, uint32_t *mv_lo, uint32_t
 
 /* ---------------------------------------------------------- current clamps */
 
-void ct_probe(int gpio, uint32_t *mv_lo, uint32_t *mv_hi)
-{
-    sample_min_max_mv(gpio, mv_lo, mv_hi);
-}
 
-int16_t ct_read_deci_amps(int gpio, cal_ct_t which)
+int16_t ct_read_deci_amps(int gpio, cal_ct_t which, uint32_t *pedestal_mv)
 {
     /* Refuse to report a current when the pedestal is not there. A floating pin
      * produces a large RMS figure that looks exactly like a running motor, and
@@ -404,6 +400,10 @@ int16_t ct_read_deci_amps(int gpio, cal_ct_t which)
     uint32_t lo, hi;
     sample_min_max_mv(gpio, &lo, &hi);
     uint32_t mid = (lo + hi) / 2;
+    /* Reported whether or not the guard passes - a pedestal that FAILED is
+     * precisely the number someone standing at /cal with a multimeter needs,
+     * and returning only -1 tells them nothing about which way it is wrong. */
+    if (pedestal_mv) *pedestal_mv = mid;
     if (mid < CT_PEDESTAL_MIN_MV - 300 || mid > CT_PEDESTAL_MAX_MV + 300) {
         return -1;
     }
