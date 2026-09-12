@@ -1757,6 +1757,20 @@ static void poll_task(void *arg)
         }
         report_str(s_dev_ro_room, PARAM_STATUS, status, last_status, sizeof(last_status));
 
+        /* Re-read every cycle rather than latching it at boot: DHCP can move the
+         * hub on a lease renewal or a router reboot, and a stale address in the
+         * app is worse than none. report_str() only sends on change. */
+        {
+            static char last_ip[16];
+            char ip_s[16] = "-";
+            esp_netif_ip_info_t ip;
+            esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr != 0) {
+                snprintf(ip_s, sizeof(ip_s), IPSTR, IP2STR(&ip.ip));
+            }
+            report_str(s_dev_ro_room, PARAM_HUB_IP, ip_s, last_ip, sizeof(last_ip));
+        }
+
         evaluate_alerts(&local);
 
         /* Periodic console summary. Deliberately AFTER the state is committed and
@@ -1890,6 +1904,13 @@ static void build_node(esp_rmaker_node_t *node)
                                       esp_rmaker_str("Starting"), ESP_RMAKER_UI_TEXT);
     esp_rmaker_device_add_param(s_dev_ro_room, st);
     esp_rmaker_device_assign_primary_param(s_dev_ro_room, st);
+
+    /* The hub's LAN address, so /cal and the dashboard can be found from the app
+     * instead of from the router's DHCP table. It is the only place the address
+     * is published: the hub sets an mDNS name but never a DHCP hostname, so in a
+     * client list it is an anonymous ESP_xxxxxx among the nodes. */
+    esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_HUB_IP, "esp.param.status",
+                                                        esp_rmaker_str("-"), ESP_RMAKER_UI_TEXT));
 
     esp_rmaker_device_add_param(s_dev_ro_room, ro_param(PARAM_ALARM, "esp.param.alert",
                                                         esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE));

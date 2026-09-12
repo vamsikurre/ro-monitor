@@ -513,6 +513,7 @@ typedef enum {
 #define PARAM_RL1               "RL1 Multiport"
 #define PARAM_RL2               "RL2 Multiport"
 #define PARAM_STATUS            "Status"
+#define PARAM_HUB_IP            "IP Address"
 /* Wall-clock strings, not numbers: RainMaker has no timestamp type, and "02 Sep
  * 14:32" is what someone actually wants to read. Em-dash until the event has
  * been observed at least once with a synchronised clock. */
