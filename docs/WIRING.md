@@ -2018,3 +2018,36 @@ Photos: `images/hardware/nameplate_rwp_lubi_mdh36a.jpg`, `images/hardware/namepl
 * `OC_RWP_DECI_A_DEFAULT` = 9.0 A sits at 1.45× nameplate max: a genuine "something is wrong" line, not a nuisance trip. Leave it.
 * `OC_HPP_DECI_A_DEFAULT` was 12.0 A, guessed before the motor plate was read — **right at the 12.2 A I(max), a nuisance trip**. Raised to **17.0 A** (1.4×) 2026-09-06.
 * HPP at ~9–12 A gives 0.3–0.4 V from one turn: **1 turn is enough**, 2 if resolution at low load ever matters. The 13 × 13 mm window will not take three turns of the HPP's heavier cable anyway.
+
+### 14.6. As built 2026-09-13 — and the half of it that is not wiring
+
+Hub wired to the RO controller and both clamps fitted as §14.5 prescribes:
+
+| | Turns through the jaws | Why |
+| :--- | :---: | :--- |
+| **RWP** — Lubi MDH 36A, 6.2 A max | **3** | §14.3/§14.5 — a 30 A clamp gives only ~0.2 V at one turn |
+| **HPP** — CRI MVC-2/15, 12.2 A I(max) | **1** | 0.3–0.4 V is plenty, and the window will not take the heavier cable three times |
+
+**Fitting the turns is half the job. The firmware default is `turns = 1`**
+(`app_cal.c:44-45`), and the reading is `volts × (A/V) ÷ turns`
+(`app_sensors.c:432`), so a correctly-wound RWP clamp reads **three times high**
+until `/cal` is told. On first power-up it read **10.0 A** against a real ~3.3 A,
+sailed past the 9.0 A `OC_RWP_DECI_A_DEFAULT` line, and raised **over-current on
+normal flow**. Nothing was wrong with the panel, the clamp or the threshold.
+
+**Fix:** `/cal` → RWP CT → **`turns` = 3**. Validated 1–10 (`app_cal.c:262`),
+stored in NVS, no reflash. The RWP default in `app_cal.c` now ships as 3 to match
+this build, so a wiped hub no longer trips on its first run; `/cal` still wins
+over it.
+
+> **Do not "tidy" the three turns away.** They look like a wiring mistake and they
+> are not — they are what makes a 1 HP pump legible to a 30 A clamp, which is why
+> §14.3 says to write the turn count on the enclosure. Unwinding it drops the
+> reading to a third with nothing to explain why, and `run_deci_amps` = 1.0 A is
+> close enough below a real ~1.1 A one-turn reading that RWP would start flicking
+> between running and stopped rather than failing outright.
+
+Cross-check that says the A/V constant itself is sound: HPP reads **7.0 A** at one
+turn on the same `amps_per_volt_x100 = 3000`, against a 12.2 A plate max and a
+17.0 A OC line. One channel plausible at one turn and the other exactly 3× high is
+a turns error, not a calibration error.

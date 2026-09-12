@@ -42,7 +42,10 @@ static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
 
 static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
     [CAL_CT_HPP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_HPP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
-    [CAL_CT_RWP]  = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_RWP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
+    /* RWP is wound 3 turns through the clamp - a 30 A CT gives only ~0.2 V from a
+     * 6.2 A pump at one turn (WIRING.md 14.3, 14.5, as built 14.6). At the old
+     * default of 1 this read 3x high and tripped over-current on normal flow. */
+    [CAL_CT_RWP]  = { .amps_per_volt_x100 = 3000, .turns = 3, .oc_deci_amps = OC_RWP_DECI_A_DEFAULT,  .run_deci_amps = RUN_DECI_A_DEFAULT },
     [CAL_CT_BORE] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_BORE_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT,
                       .dry_deci_amps = BORE_DRY_DECI_A_DEFAULT },
     [CAL_CT_SUMP] = { .amps_per_volt_x100 = 3000, .turns = 1, .oc_deci_amps = OC_SUMP_DECI_A_DEFAULT, .run_deci_amps = RUN_DECI_A_DEFAULT },
