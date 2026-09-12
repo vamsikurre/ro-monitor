@@ -902,9 +902,11 @@ the tank's nominal capacity, one of the three measurements is wrong.
 > **700 mm apart on RWT and 650 mm apart on TWT**. If it does not, `S` was applied
 > to only one of the two.
 >
-> Until then, do not leave the shipped defaults in place: `empty_mm = 1500`
-> (`app_cal.c:29-30`) is a distance below the floor of a 1 m tank, so the gauge
-> cannot reach 0% and under-reports all the way down.
+> **The shipped defaults now carry these figures** (`app_cal.c:29-30`), so a hub
+> whose NVS is wiped comes up reading plausibly instead of on placeholders. They
+> previously held `empty_mm = 1500` — a distance below the floor of a 1 m tank, so
+> neither gauge could reach 0%. `/cal` still overrides both, and a value typed
+> there wins over anything compiled in.
 >
 > **RWT is the one to check first.** At `S = 1000` its `full` is **250 mm, just
 > 50 mm clear of the 200 mm blind zone**, and `cal_set_tank()` hard-refuses

@@ -24,10 +24,17 @@ static const char *NVS_NS = "ro_cal";
  * does not silently move a calibrated tank. Dosing: the drum is 530 mm deep and
  * the sensor is IN THE LID (WIRING.md §13), so the floor sits ~540 mm from the
  * face. The old 900 mm "empty" assumed a bracket that was never fitted and could
- * never read below ~55 % - the dosing-low alert was unreachable. */
+ * never read below ~55 % - the dosing-low alert was unreachable.
+ *
+ * RWT and TWT come from the measured geometry in WIRING.md 9.2.1 (full = S - W,
+ * empty = S - B). Both are 1 m tanks, so the previous 1500 mm "empty" was a
+ * distance below the floor: neither could reach 0 %, the same failure the dosing
+ * default had. RWT's S is the soft figure of the two - its height was reported as
+ * "around" 1 m and full = S - 750 leaves only 50 mm over the blind zone - so if
+ * that face is ever actually measured, check this line first. */
 static cal_tank_cfg_t s_tanks[CAL_TANK_COUNT] = {
-    [CAL_TANK_RWT]  = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
-    [CAL_TANK_TWT]  = { .full_mm = 300, .empty_mm = 1500, .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_RWT]  = { .full_mm = 250, .empty_mm = 950,  .tds_k_x100 = 100, .tds_min_pct = 90 },
+    [CAL_TANK_TWT]  = { .full_mm = 350, .empty_mm = 1000, .tds_k_x100 = 100, .tds_min_pct = 90 },
     [CAL_TANK_DOS]  = { .full_mm = 250, .empty_mm = 540,  .tds_k_x100 = 100, .tds_min_pct = 0 },
     /* 3.5 m shaft, WIRING.md 9 (Sump). Uncalibrated until someone measures it. */
     [CAL_TANK_SUMP] = { .full_mm = 300, .empty_mm = 3500, .tds_k_x100 = 100, .tds_min_pct = 0, .press_range_mm = 0 },
