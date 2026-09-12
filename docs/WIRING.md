@@ -1045,6 +1045,68 @@ Fit a **stilling well** rather than hoping: a ~100 mm PVC pipe hung vertically, 
 
 **Judging any of these from the data, not by argument:** the node reports `raw` alongside the filtered `median`, plus an echo-quality figure. Clean tracking is a median that moves smoothly with quality at 100. False echoes look like a median stepping between two values with quality stuck below 100. Log a day of it before concluding anything about a sensor.
 
+#### Enclosures, per node
+
+The requirements differ by *location*, and two of them are opposites — the roof
+boxes must breathe and the battery-room box must not. Getting that backwards is
+the expensive mistake, so the reasons are here rather than the rule alone.
+
+| | **`0x02` RWT / `0x03` TWT** (roof) | **`0x04` Battery Room** (indoor) | **Hub** (RO room, indoor) |
+| :--- | :--- | :--- | :--- |
+| Rating | **IP65/66** | IP55 is enough | none — ventilated is better |
+| Material | **UV-stabilised ABS/PC, light colour** | any sealed box | any, but see the mains note |
+| Breather | **M12 membrane vent + desiccant** | **none — keep it sealed** | n/a |
+| Cable entries | `0x02`: 1× Cat5e + sensor. **`0x03`: see below** | 1× Cat5e + **mains** for the fan | mains + sensor + bus |
+
+**Do not use a kitchen food container on the roof.** The gasket is not UV-rated
+and the body crazes and yellows in a season of Guntur sun. Indoors it is fine, and
+that is what the hub is in as built.
+
+**Why the roof boxes breathe and the battery box does not.** On the roof a sealed
+box turns a gauge transducer's vent tube into a fixed volume of air — requirement 1
+above works out the 0.7 m of apparent level that invents, and condensation on a
+transducer face is listed in the mounting rules as the commonest slow failure. A
+membrane vent holds the IP rating *and* equalises, which is the whole point of the
+part. The battery room has no sun, no transducer, and sulphuric acid mist off the
+cells: there the sealed box is the protection.
+
+**`0x03` TWT is the one that does not fit a small box.** It is mid-chain, so both
+Cat5e land on its terminals (§12.1) on top of the Nano, XY-485, Mini560, terminal
+strip, the `J-LOOP`/`J-PRESS` headers §9.4.2 says to fit now, and the desiccant.
+Solid-core Cat5e wants ~25 mm of bend radius; two of them plus glands into a
+~90 mm internal cavity leaves nowhere to route. Two ways out, either acceptable:
+
+* go up a size — **150 × 110 × 70 mm** or larger for TWT, or
+* keep one cable out of the box: join the trunk in a separate junction outside and
+  run a single **stub of ≤ 300 mm** into the node. §12.1 allows that length, and
+  the bus stays one continuous line.
+
+`0x02` RWT takes one cable and one sensor lead and fits 100 × 100 × 70 mm.
+
+**When you test-fit, leave room for the two things that get laid out last:** the
+M12 vent needs a 12 mm hole plus ~20 mm clear inside a wall, and the desiccant
+sachet needs somewhere it is not pressed against a board.
+
+**An opaque lid costs nothing.** Reading the XY-485's TX/RX LEDs is how a bus
+fault gets localised (§12.3), but `rs485_error_report()` publishes per-node,
+per-command failure counts to the dashboard — which is how `0x04/CLIMATE` was
+isolated once already, from the ground. Do not pay for a window on a roof.
+
+**Mains inside a plastic box — hub and `0x04`.** Both switch or carry 240 V: the
+hub has the HLK-20M12, and `0x04` has the exhaust-fan relay. Tape over a mains
+joint is not the termination to leave behind — the adhesive creeps and hardens
+with heat, and general-purpose plastic is not flame-retardant. Terminate mains in
+**enclosed terminal blocks**, and fit a **gland or strain-relief** at the mains
+entry so a pull cannot lift a live conductor off a screw. The hub's box also wants
+ventilation holes: the HLK-20M12 dissipates a few watts and a sealed box cooks it.
+
+> **As built 2026-09-13.** Hub: kitchen storage container, ~220 × 155 × 145 mm,
+> sides drilled for ventilation, each module zip-tied separately through the
+> drillings. Indoor, and acceptable — but it is the box the mains note above is
+> written about. RWT/TWT: Globomotive ABS IP65 junction boxes, 100 × 100 × 70 mm,
+> three bought; TWT is the one expected to need the next size up or the ≤ 300 mm
+> stub. `0x04` is to get a household container, indoors, sealed and unvented.
+
 ---
 
 ### 9.4. Pressure Transducer Provision on a Tank Node (fitted or not)
