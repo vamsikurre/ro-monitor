@@ -21,7 +21,7 @@ The system interfaces with an existing **Aster NXT 11** RO controller, distribut
                                                            |
                                                            | 12V DC Distributed Bus
                                                            v
- [120Ω Term Resistor]
+ [NO TERMINATOR - see docs/WIRING.md 12.3]
 +----------------------------------------------------------------------------------------------------+
 |                                    ESP32-S CENTRAL HUB (RO ROOM)                                   |
 |  - Microcontroller: ESP32-S (38-Pin)                                                               |
@@ -58,7 +58,7 @@ The system interfaces with an existing **Aster NXT 11** RO controller, distribut
 |                                    NODE 0x02: RAW WATER TANK (RWT)                                 |
 |  - Microcontroller: Arduino Nano (ATmega328P) | Location: Roof Top                                 |
 |  - Sensor: AJ-SR04M Waterproof Ultrasonic Sensor                                       |
-|  - Bus Termination: 120Ω End-of-Bus Resistor                                                       |
+|  - Bus Termination: NONE - no bias network, see docs/WIRING.md 12.3                                |
 +----------------------------------------------------------------------------------------------------+
 
                                                    ▲
@@ -118,7 +118,7 @@ The system telemetry directly visualizes the plant's water balance and environme
 | :---: | :--- | :--- | :--- | :--- |
 | `0x00` | **RO Room (Central Hub)** | Core Master | ESP32-S (38-Pin) | SHT30 (RO Room), AJ-SR04M (Dosing, direct), 2x AC Optos, 4x DC Optos, 4-Ch Relay Board |
 | — | **RO Room (Dosing)** | *Direct to hub* | — | AJ-SR04M on hub GPIO 5 / GPIO 4 (address `0x01` retired) |
-| `0x02` | **Roof Top (RWT)** | RS485 Bus | Arduino Nano | AJ-SR04M (Raw Water Tank Level) + 120Ω End-of-Bus Term |
+| `0x02` | **Roof Top (RWT)** | RS485 Bus | Arduino Nano | AJ-SR04M (Raw Water Tank Level). No bus termination — `docs/WIRING.md` §12.3 |
 | `0x03` | **Roof Top (TWT)** | RS485 Bus | Arduino Nano | AJ-SR04M (Treated Water Tank Level) |
 | `0x04` | **Battery Room** | RS485 Bus | Arduino Pro Mini | GY-SHT30-D (Battery Room Temp/RH) + 1-Ch Exhaust Fan Relay (mid-chain, no term) |
 | `0x05` | **Ground Floor (Sump)** | Wi-Fi LAN | ESP32 | AJ-SR04M (3.5m Sump Level Sensor) |

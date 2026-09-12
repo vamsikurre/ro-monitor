@@ -3,7 +3,7 @@
 **Document Version:** 2.1  
 **Date:** 2026-08-25  
 **System Architecture:** ESP32 HUB (Master) + 4x RS485 Arduino Nano Nodes + 2x Ground Floor Wi-Fi ESP32 Nodes  
-**RS485 chain order:** `0x00 HUB -> 0x04 BATTERY ROOM -> 0x03 TWT -> 0x02 RWT` (terminators at 0x00 and 0x02). Address `0x01` retired — the dosing sensor is wired direct to the hub (`WIRING.md` §13)  
+**RS485 chain order:** `0x00 HUB -> 0x04 BATTERY ROOM -> 0x03 TWT -> 0x02 RWT` (**no terminators anywhere** — `WIRING.md` §12.3). Address `0x01` retired — the dosing sensor is wired direct to the hub (`WIRING.md` §13)  
 **Node platforms:** `0x02`/`0x03` Arduino Nano, **`0x04` Arduino Pro Mini 5V/16MHz** (`WIRING.md` 10.1)
 
 > **Pin allocation authority:** Section 3.1 below is kept identical to `WIRING.md` Section 1, which describes the hub as physically built. `WIRING.md` wins on conflict — this table is corrected to match it, never the reverse (phase-B spec §3.5 / §9). Aster terminal contact polarity and the `ALARM` output are specified in `WIRING.md` Section 6; read it before wiring anything to the controller.
@@ -15,7 +15,7 @@
 ## 1. System Topology Overview
 
 ```
- [120Ω Term Resistor]
+ [NO TERMINATOR - WIRING.md 12.3]
 ┌────────────────────┐
 │  ESP32-S HUB (0x00)│ (RO Room Bus Master)
 │   XY-485 Master    │
@@ -40,7 +40,7 @@
 ┌────────────────────┐
 │  RWT NODE (0x02)   │ (Roof Top - Raw Water Tank)
 │    XY-485 Auto     │
-│ [120Ω Term Resistor│  END OF BUS
+│  NO TERMINATOR     │  END OF BUS
 └────────────────────┘
 
 ========================================================================================

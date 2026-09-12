@@ -76,7 +76,7 @@ happens at deployment.
 
 - [ ] Touch the two `IN_ALARM` wires together → alarm latches within one poll, the RO room flashes on the dashboard, a notification arrives
 - [ ] Short PC817 `IN3` to `G` → `LPS` reads *Low pressure*; with the alarm also active the alert should name low feed pressure rather than saying "check the panel". Works on the bench with nothing attached to the Aster
-- [ ] Confirm the RS485 terminators: **120 Ω at the hub and at node `0x02` only**. `0x03` and `0x04` are mid-chain and must have none — three terminators blunt the differential swing (§10, §12)
+- [ ] Confirm there are **no 120 Ω terminators anywhere on the RS485 bus**, and that the `R0` jumper on every XY-485 module is open. This bus has no bias network, so a single terminator takes every node offline — §12.3
 
 ### 0.3. Off-board, in order of what blocks what
 
@@ -650,7 +650,7 @@ spread over a full mains cycle — the only way to tell the three states apart:
 
 ## 9. Remote Arduino Nano Tank Nodes (0x02 RWT, 0x03 TWT)
 
-**Node 0x02 (RWT) is the end of the bus** and carries the second 120 ohm resistor across its `A+` / `B-`, per Section 12. Node 0x03 is mid-chain and carries none.
+**Node 0x02 (RWT) is the end of the bus**, and it still carries **no terminator** — nor does any other node. See §12.3: this bus has no bias network and does not tolerate one.
 
 ```
                                   12V DC CAT5e Power Bus
@@ -771,7 +771,7 @@ return ADDR_MAP[raw];                       // the table below is the lookup;
 
 | `A1` | `A0` | raw | Node ID | Role |
 | :---: | :---: | :---: | :---: | :--- |
-| **GND** | open | `0b01` | **`0x02`** | RWT (end of bus, 120 Ω) |
+| **GND** | open | `0b01` | **`0x02`** | RWT (end of bus — no terminator, §12.3) |
 | open | **GND** | `0b10` | **`0x03`** | TWT (the board with the pressure-transducer header) |
 | open | open | `0b11` | **`0x04`** | Battery Room climate + fan (Pro Mini, §10). Also the unjumpered default |
 | **GND** | **GND** | `0b00` | **unassigned** | Refuse to join the bus — see below |
@@ -806,8 +806,8 @@ The jumpers are staying as they are. `ADDR_MAP` (§9.1) was written to fit them,
 
 | Board | `A0` | `A1` | raw | Resolves to | Action |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| Nano #1 | **GND** | open | `0b10` | `0x03` TWT | Label TWT. This is the board with the pressure-transducer header soldered. **No 120 Ω** — it is mid-chain (§12). |
-| Nano #2 | open | **GND** | `0b01` | `0x02` RWT | Label RWT, fit its 120 Ω (§12) — this board is the end of the bus. |
+| Nano #1 | **GND** | open | `0b10` | `0x03` TWT | Label TWT. This is the board with the pressure-transducer header soldered. **No 120 Ω** (§12.3). |
+| Nano #2 | open | **GND** | `0b01` | `0x02` RWT | Label RWT. End of the bus, but **still no 120 Ω** — §12.3. |
 | Pro Mini (Battery Room) | open | open | `0b11` | `0x04` Climate | Label Battery Room. **No change** — leave both pads unconnected. |
 
 > **Corrected 2026-09-11, before either tank node was fitted.** The two tank rows
@@ -822,11 +822,10 @@ The jumpers are staying as they are. `ADDR_MAP` (§9.1) was written to fit them,
 > written around the boards, applied a second time in the same direction.
 >
 > **The 120 Ω terminator was never fitted** — confirmed 2026-09-11, both boards
-> still on the bench. So nothing has to come off: it goes onto **Nano #2**, the
-> RWT board, at deployment, per the checklist at the top of this document. The
-> only reason to mention it here is that the old table put it on Nano #1, and
-> that instruction is now wrong — a terminator there would sit mid-chain, leaving
-> the end of the bus unterminated (§10).
+> still on the bench. It never will be, either: the one time it was tried, on
+> 2026-09-12, the whole bus went dark. Termination is off the table on this bus
+> until somebody adds bias to go with it, and §12.3 is the section that explains
+> why. Neither Nano gets a resistor.
 >
 > **Both tank Nanos must be reflashed together.** A board still running the old
 > table answers to the other one's address, and two nodes answering one poll is
@@ -1276,7 +1275,7 @@ figure, because both probes foul in the same direction.
 
 > **Who decides the fan:** the hub. Thresholds live in hub NVS and are set from the calibration AP (`RS485_PROTOCOL.md` §4.4), so changing them needs a phone, not a programmer on a ladder. The node keeps a hotter backstop — on 40.0 °C, off 37.0 °C — that takes over only if no command arrives for five minutes, plus a fail-safe that ventilates if the SHT30 goes unreadable. The relay is wired so that both of those, and a de-energised board, leave the room ventilated rather than sealed.
 
-**Mid-chain node — no termination resistor.** 0x04 sits between the Dosing node and the TWT node in the as-installed run (Section 12). If a 120 ohm resistor was fitted here under the earlier end-of-bus assumption, **remove it**: three terminators on one bus over-load the drivers and blunt the differential swing.
+**No termination resistor** — same as every other node on this bus (§12.3). 0x04 sits mid-chain between the hub and the TWT node in the as-installed run (Section 12). If a 120 ohm resistor was ever fitted here, **remove it**.
 
 ```
                                   12V DC CAT5e Power Bus
@@ -1578,7 +1577,7 @@ from the RO-room's own Aster panel, §6). Its terminal strip: `PULSE O/P`,
  +----------------+     +----------------+     +----------------+     +----------------+
  | ESP32 HUB      |     | BATTERY ROOM   |     | TWT NODE       |     | RWT NODE       |
  | Master (0x00)  +-----+ Slave (0x04)   +-----+ Slave (0x03)   +-----+ Slave (0x02)   |
- | [120Ω Enabled] |     | (No Resistor)  |     | (No Resistor)  |     | [120Ω Enabled] |
+ | (No Resistor)  |     | (No Resistor)  |     | (No Resistor)  |     | (No Resistor)  |
  +----------------+     +----------------+     +----------------+     +----------------+
    RO Room               Battery Room           Roof Top               Roof Top
         Cat5e 1 (TBM)          Cat5e 2 (TBM)          Cat5e 3 (TBM)
@@ -1587,9 +1586,7 @@ from the RO-room's own Aster panel, §6). Its terminal strip: `PULSE O/P`,
 ```
 
 * **Bus Topology:** Strict linear daisy chain (no star/branch topologies). Physical order is `0x00 -> 0x04 -> 0x03 -> 0x02`. Node addresses are logical and deliberately do **not** follow the cable order — the hub's poll sequence is by address, not by position on the bus. Address `0x01` is retired and unassigned.
-* **Termination:** Exactly **two 120 ohm resistors** on the entire physical bus:
-  1. One at the **ESP32 Central Hub** (RO Room) across `A+` and `B-`.
-  2. One at the physical end of the bus — **RWT Node 0x02** — across `A+` and `B-`.
+* **Termination: none, deliberately.** There is **not one 120 ohm resistor anywhere on this bus**, and the `R0` jumper on every XY-485 module stays open. That is not an omission to be tidied up later — this bus has no bias network, and a single terminator anywhere on it takes every node offline. **Read §12.3 before you fit, bridge or solder anything across `A+`/`B-`.**
 * **No return loopback, no junction-box splice.** Earlier revisions routed the bus up to a mid-chain RWT and back down through the brown pair to an RO room splice. With RWT last, every hop is a single outbound pair and both spare pairs stay free for the 12V rail.
 * **All cable lengths are TBM** and must be measured on site before re-running the power budget. The old 1.5 m `Cat5e 1` drop belonged to the deleted dosing node; the trunk now starts with the hub-to-battery-room run.
 
@@ -1614,7 +1611,85 @@ from the RO-room's own Aster panel, §6). Its terminal strip: `PULSE O/P`,
 
 ### 12.2. Transceiver Count — Resolved
 
-The bus needs **4** XY-485 modules: one at the hub and one per remaining slave (`0x04`, `0x03`, `0x02`). An earlier revision of this section described deferring the RWT node because the design then called for five. Deleting node `0x01` (Section 13) removed the fifth. **Build the whole bus in one pass — there is no interim state and the 120 Ω lives at RWT `0x02` from the start.**
+The bus needs **4** XY-485 modules: one at the hub and one per remaining slave (`0x04`, `0x03`, `0x02`). An earlier revision of this section described deferring the RWT node because the design then called for five. Deleting node `0x01` (Section 13) removed the fifth. **Build the whole bus in one pass — there is no interim state, and no terminator goes on at any point (§12.3).**
+
+### 12.3. Termination and Bias — why this bus carries no 120 Ω resistors
+
+**Rule: no terminators anywhere. The `R0` jumper on every XY-485 module stays open.**
+
+This reverses what §12 said until 2026-09-12, and it is not a preference — the
+bus does not work with a terminator on it.
+
+#### What happened
+
+`R0` on the XY-485 is not a bare footprint. It is a **jumper that switches the
+module's on-board 120 Ω across `A+`/`B-`**, so bridging it fits a terminator, it
+does not short the bus. Bridged on the hub and TWT modules, the bus metered a
+textbook **60 Ω** end to end — and every node went offline at once.
+
+Everything that is normally suspect metered clean: continuity good, 60 Ω correct,
+the newly-fitted RJ45 jacks correct against §12.1, all nodes powered and running.
+The fault was the termination itself. Wicking the hub bridge off brought the hub,
+`0x04` and `0x02` back; wicking TWT's off brought back all four. Re-tested one
+jumper at a time afterwards — **either one alone is enough to kill the bus.**
+
+#### Why
+
+The XY-485 has no bias network, on the module or on this bus. The idle state of
+`A+`/`B-` is defined only by the transceiver's internal fail-safe bias, and the
+hub's module is fed from the ESP32's **3.3 V** LDO (§3), which makes it the
+weakest such bias on the bus.
+
+Unterminated, that bias works into what is essentially an open circuit and holds
+idle `A–B` comfortably above the 200 mV receive threshold. Terminated, it has to
+hold 200 mV across 120 Ω — or 60 Ω with two — and it cannot. Idle collapses
+towards 0 V, which is **undefined, not idle**: every receiver latches low, no
+node ever sees a start bit, and no node replies. Meanwhile the DC resistance of
+the bus is perfect, which is exactly what makes this read like a cable fault.
+
+#### The diagnostic signature
+
+**The hub's own `RXD` LED stuck solid on** while its `TXD` LED still blinks. The
+hub reads its own screw terminals, upstream of every metre of cable and every
+jack, so a solid hub `RXD` rules out the trunk, the jacks and `A+`/`B-` polarity
+in a single look. Every node shows the same solid receive LED and a dead
+transmit LED.
+
+Compare against the other fault this presents as: a genuine polarity swap
+(§12.1) gives you receive activity that never decodes. Bias collapse gives you
+no activity at all, plus that solid LED on every board including the hub.
+
+#### Termination is not doing anything for this bus anyway
+
+One-way propagation on a 30 m run is roughly 150 ns against a 104 µs bit at
+9600 baud. Reflections have settled some three orders of magnitude before the
+receiver samples. Termination on a run this short and this slow buys nothing
+measurable; it only costs the bias headroom that the bus actually depends on.
+
+**Confirmed on real cable, 2026-09-12:** the unterminated bus was re-tested with
+a **10 m RJ45 patch between nodes** and every node stayed online. Expect that to
+keep holding as the TBM hops in §12 get measured — at 9600 baud, length is not
+what constrains this bus. **The 12 V drop is**, and that is `POWER_BUDGET.md` §5's
+problem, not the bus's. If the baud rate is ever raised, re-open this section
+before re-opening the terminator question.
+
+#### If termination is ever genuinely needed — bias first
+
+Fit bias **at the hub only** (one pull-up `A+ → 3V3`, one pull-down `B- → GND`).
+Bias at every node stacks in parallel and drags the bus down. Idle differential
+is `Vcc × Rt / (2·Rb + Rt)`, and it must clear 200 mV with real margin:
+
+| Bias `Rb` | One terminator (`Rt` = 120 Ω) | Two terminators (`Rt` = 60 Ω) |
+| :--- | :--- | :--- |
+| 560 Ω | 319 mV | **168 mV — fails** |
+| 330 Ω | 508 mV | 275 mV — thin |
+| **220 Ω** | **707 mV** | **396 mV** |
+
+220 Ω draws 6.6 mA from the 3.3 V rail at worst, which the ESP32's LDO carries
+without complaint. Verify afterwards by metering **idle DC across `A–B` ≥ 200 mV
+with `A` positive**, and confirm the solid receive LEDs have gone dark.
+
+---
 
 ---
 

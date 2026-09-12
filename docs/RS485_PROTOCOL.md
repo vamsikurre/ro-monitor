@@ -59,7 +59,7 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | :---: | :--- | :--- | :--- | :--- |
 | `0x00` | **ESP32 HUB (Master)** | RO Room Core | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs, 4-Ch Relays |
 | ~~`0x01`~~ | **Dosing Chemical Tank** | *Retired — sensor wired direct to hub* | — | Waterproof Ultrasonic (AJ-SR04M) on hub `GPIO 5` / `GPIO 4` |
-| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M) + 120Ω end-of-bus termination. Optional TDS + DS18B20 pair (§4.5) |
+| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). End of bus, but **no termination** (`WIRING.md` §12.3). Optional TDS + DS18B20 pair (§4.5) |
 | `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). Optional TDS + DS18B20 pair (§4.5) |
 | `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
 | `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi (polled) | ESP32 | Waterproof Ultrasonic (AJ-SR04M), **or** a 4-20 mA submersible pressure transducer on the `J-LOOP`/`J-PRESS` provision (§5, `WIRING.md` §11.1) |
