@@ -871,15 +871,86 @@ the tank's nominal capacity, one of the three measurements is wrong.
 
 | Tank | S: floor → face | B: floor → bottom outlet | W: floor → overflow | `full` = S−W | `empty` = S−B | Usable depth W−B | Measured |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| RWT `0x02` | | | | | | | |
-| TWT `0x03` | | | | | | | |
-| Dosing (hub) | | | | | | | |
+| RWT `0x02` | 1000 | 50 | 750 | **250** | **950** | 700 | 2026-09-12 — see note on `S` |
+| TWT `0x03` | 1000 | 0 | 650 | **350** | **1000** | 650 | 2026-09-12 |
+| Dosing (hub) | 530 | *lance foot — unmeasured* | *no overflow; fill line 280* | 250 | 540 *(= drum floor; see below)* | — | 2026-09-06, drum |
 | Sump `0x05` | | | | | | | Phase 2 |
+
+> **Where the 2026-09-12 figures came from.** Reported from site: TWT is a 1 m
+> tank with its overflow pipe at 650 mm; RWT is a Sintex-type tank of *about* 1 m
+> with 750 mm to the overflow. `S` was confirmed as measured to the transducer
+> **face** on both, so the table is usable as it stands.
+>
+> **The one soft number is RWT's `S`**, given as "around" 1 m — and RWT is also the
+> tank with no slack. `full = S - 750`, so 1000 yields 250 and the refusal
+> threshold is 200: **RWT tolerates `S` being wrong by 50 mm and no more.** TWT,
+> at `S - 650`, has 150 mm to give. One pass with a tape on the RWT face is worth
+> more than any of the arithmetic above; if it comes back under 950, fit the
+> stand-off rather than shrinking the number.
+>
+> **`B`, reported 2026-09-12:** RWT's bottom outlet is **50 mm** above the floor;
+> TWT's is **at floor level**, so `B = 0` and its `empty` collapses to `S`. Both
+> now need only `S`, and each reduces to one subtraction:
+>
+> ```
+>    RWT 0x02:   full = S - 750      empty = S - 50
+>    TWT 0x03:   full = S - 650      empty = S
+> ```
+>
+> **Cross-check, and it does not depend on `S`:** `empty - full` is `W - B`, the
+> usable depth, so whatever the face measures at, the saved pair *must* come out
+> **700 mm apart on RWT and 650 mm apart on TWT**. If it does not, `S` was applied
+> to only one of the two.
+>
+> Until then, do not leave the shipped defaults in place: `empty_mm = 1500`
+> (`app_cal.c:29-30`) is a distance below the floor of a 1 m tank, so the gauge
+> cannot reach 0% and under-reports all the way down.
+>
+> **RWT is the one to check first.** At `S = 1000` its `full` is **250 mm, just
+> 50 mm clear of the 200 mm blind zone**, and `cal_set_tank()` hard-refuses
+> anything under it (`app_cal.c:212`) — so if the RWT face turns out to sit more
+> than 50 mm below the rim, the calibration will not save and that tank has no
+> level at all. A Sintex lid boss is exactly the fitting that eats those 50 mm.
+> Per the rule below, the fix is a stand-off, not a smaller number. Note also that
+> 250 mm leaves RWT with no usable band above the overflow — everything from 200
+> to 250 mm reads a flat 100%, so "full" and "overflowing" are the same reading.
+> TWT's 350 mm keeps 150 mm of headroom and does not have this problem.
 
 **Check before saving: `full` must be at least 200 mm.** That is the blind zone, so
 the face has to sit at least 200 mm above the overflow outlet. If it does not, the
 top of the scale is unusable and the fix is a stand-off that raises the sensor, not
 a number typed into `/cal`.
+
+> **The dosing drum does not have a `W` or a `B`, and that is not a gap to fill in.**
+> Confirmed on site 2026-09-12: it is a plain drum — **no auto-fill, no overflow
+> drain, no bottom outlet** (`images/hardware/dosing_drum_and_hpp.jpg`). The pump
+> draws through a **suction lance dropped in through the lid**. So for this row
+> only, the two columns re-read as:
+>
+> * **`W` is a decision, not a fitting.** Nothing stops an overfill hydraulically,
+>   so the fill line is set by the *sensor*: `full` must clear the 200 mm blind
+>   zone, and the shipped 250 mm means "fill to 250 mm below the lid" (= 280 mm of
+>   liquid in a 530 mm drum). Fill past it and `levelPercent()` reads 100% down to
+>   250 mm, then returns **255 — no level, shown as a fault** — under 200 mm
+>   (`app_cal.c:429`). The gauge goes blank exactly where an overfill starts, and
+>   as the comment there says, that same band is where a **fouled face** reports.
+>   On this drum the two are indistinguishable. That is the argument for the
+>   bracket in §9.3, not just the lost top third.
+> * **`B` is the foot of the suction lance, not the drum floor** — that is where
+>   the pump loses prime, which is the definition this section already gives for
+>   zero. **It has never been measured.** The shipped `empty_mm = 540`
+>   (`app_cal.c:31`) is effectively the drum floor (`S` = 530), so 0% currently
+>   means "drum empty" rather than "lance sucking air", and the
+>   `Dosing chemical low (0%)` alert still fires a little later than it should.
+>
+> To be clear about the history: **540 is already a correction**, not an oversight.
+> Commit `5053b6d` (2026-09-06) moved it from `900`, a figure that assumed an
+> external bracket which was never fitted and which made a bone-dry drum read
+> ~55% — the alert was unreachable outright. Floor-referenced zero fixed the
+> serious half of that. What is left is the residual gap this section's own rule
+> names: zero should sit at the lance foot, not the floor. Measure it and set
+> `empty = 530 - (floor to lance foot)`. Small, but dosing is the tank where
+> being late costs membranes.
 
 **Why zero is the bottom outlet and not the floor.** `empty = S` would put 0% at a
 bone-dry floor, which reports usable-looking water that the pump cannot actually
