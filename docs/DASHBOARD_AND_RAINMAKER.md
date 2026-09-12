@@ -264,7 +264,23 @@ Verified 2026-09-07 against fw `65c3f34`:
 | Version gate | `CONFIG_ESP_RMAKER_SKIP_VERSION_CHECK` is **off**: an image whose version string equals the running one is refused. Version is `git describe --always --tags --dirty`, so **commit before building an OTA image** — two `-dirty` builds of the same commit are indistinguishable to the cloud and the second is rejected |
 | Project gate | the image's project name must be `ro_hub` (`CMakeLists.txt`); it is |
 
-Procedure: commit → **`idf.py reconfigure build`** (CMake caches the version at configure time; a plain `build` after a commit still stamps the previous hash — seen 2026-09-07) → `dashboard.rainmaker.espressif.com` → *Firmware Images* → upload `build/ro_hub.bin` → *Start OTA Job* on node `agc63S2ihft9zDvhaFqxXf`. The hub logs `OTA state`; the dashboard footer's `fw` changes on the reboot after. If the new image never connects to the cloud, the old one is back within ~2 minutes with nothing lost but the ledger's last five minutes.
+Procedure: commit → **`idf.py reconfigure build`** (CMake caches the version at configure time; a plain `build` after a commit still stamps the previous hash — seen 2026-09-07) → `dashboard.rainmaker.espressif.com` → *Firmware Images* → upload `build/ro_hub.bin` → *Start OTA Job* on node **`WbghCiucNjUHruMS8sVnD4`** — *RO Plant Monitor - DB28*.
+
+> **Two nodes named `RO Plant Monitor` exist on the account, and only one is live.**
+> The name suffix is the last two bytes of the Wi-Fi STA MAC
+> (`app_main.c:2252-2255`), so it identifies the physical board:
+>
+> | Node ID | Name | State |
+> | :--- | :--- | :--- |
+> | `WbghCiucNjUHruMS8sVnD4` | RO Plant Monitor - **DB28** | **online — this is the hub** |
+> | `agc63S2ihft9zDvhaFqxXf` | RO Plant Monitor - 6130 | offline, retired board |
+>
+> A RainMaker node ID is bound to the chip's certificate and survives a factory
+> reset, so a *different* ID means a **different physical ESP32** — `6130` is a
+> board that was replaced, not this one re-provisioned. This document named
+> `agc63S2ihft9zDvhaFqxXf` until 2026-09-13; an OTA job started there uploads
+> fine and then simply never lands, because the node is not connected. Retire
+> the stale node from the account to stop the two being confused. The hub logs `OTA state`; the dashboard footer's `fw` changes on the reboot after. If the new image never connects to the cloud, the old one is back within ~2 minutes with nothing lost but the ledger's last five minutes.
 
 Heap is the resource to watch, not flash, and **the tightest moment in this
 hub's life is its first provisioning** — not an OTA, and not steady running.
