@@ -17,9 +17,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <esp_app_desc.h>
+#include <esp_netif.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 
@@ -701,6 +703,160 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 /* ------------------------------------------------------- calibration page */
 
+/* ------------------------------------------------------------ Wi-Fi scan */
+
+/*
+ * What the radio last heard, strongest first.
+ *
+ * Cached rather than scanned on every /cal load, because a blocking all-channel
+ * scan costs a few seconds and /cal is the page somebody reloads twenty times
+ * while calibrating a tank. It refreshes only when the Scan button is pressed,
+ * so the common path pays nothing and the list carries its own age.
+ */
+#define SCAN_MAX 12
+
+typedef struct {
+    char   ssid[33];
+    int8_t rssi;
+    bool   open;
+} scan_ap_t;
+
+static scan_ap_t s_scan[SCAN_MAX];
+static int       s_scan_n;
+static int64_t   s_scan_us;
+
+static void wifi_scan_refresh(void)
+{
+    /* Blocking. This runs on the httpd task and will hold it for a few seconds,
+     * which is why it is behind a button and not the page load. Scanning also
+     * hops the radio off the AP's channel, so anybody reading this over RO-HUB
+     * sees the page stall - said so in the help text rather than left to
+     * surprise somebody on a roof. */
+    wifi_scan_config_t cfg = { .show_hidden = false };
+    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
+        return;                       /* keep the previous list rather than blanking it */
+    }
+
+    uint16_t got = 0;
+    esp_wifi_scan_get_ap_num(&got);
+    s_scan_n = 0;
+    s_scan_us = esp_timer_get_time();
+    if (got == 0) {
+        return;
+    }
+    if (got > 24) got = 24;
+
+    /* Heap for the few milliseconds this takes, not 2 kB of BSS held for the
+     * life of a hub to serve a button pressed about twice a year. */
+    wifi_ap_record_t *recs = calloc(got, sizeof(*recs));
+    if (recs == NULL) {
+        return;
+    }
+    if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) {
+        free(recs);
+        return;
+    }
+
+    for (uint16_t i = 0; i < got && s_scan_n < SCAN_MAX; i++) {
+        if (recs[i].ssid[0] == '\0') {
+            continue;                 /* hidden, and show_hidden is off anyway */
+        }
+        char ssid[33];
+        snprintf(ssid, sizeof(ssid), "%.32s", (const char *)recs[i].ssid);
+
+        /* One name on several APs and both bands is the normal case in this
+         * building - eight access points, most of them sharing an SSID. Keep the
+         * strongest sighting; a list with the same name six times is useless on
+         * a phone. */
+        int dup = -1;
+        for (int j = 0; j < s_scan_n; j++) {
+            if (strcmp(s_scan[j].ssid, ssid) == 0) { dup = j; break; }
+        }
+        if (dup >= 0) {
+            if (recs[i].rssi > s_scan[dup].rssi) s_scan[dup].rssi = recs[i].rssi;
+            continue;
+        }
+
+        snprintf(s_scan[s_scan_n].ssid, sizeof(s_scan[s_scan_n].ssid), "%s", ssid);
+        s_scan[s_scan_n].rssi = recs[i].rssi;
+        s_scan[s_scan_n].open = (recs[i].authmode == WIFI_AUTH_OPEN);
+        s_scan_n++;
+    }
+    free(recs);
+
+    /* Sorted here rather than trusted from the driver. IDF does return records
+     * by descending RSSI, and the ceiling of relying on that is the SCAN_MAX cut
+     * above: if it ever stopped, a strong AP sitting past the first twelve
+     * unique names would be dropped before this sort ever saw it. Twelve slots
+     * against eight access points, so that is a ceiling nothing here reaches.
+     *
+     * Insertion sort because s_scan_n is at most 12 and qsort plus a comparator
+     * costs more to read than it saves. */
+    for (int i = 1; i < s_scan_n; i++) {
+        scan_ap_t k = s_scan[i];
+        int j = i - 1;
+        while (j >= 0 && s_scan[j].rssi < k.rssi) {
+            s_scan[j + 1] = s_scan[j];
+            j--;
+        }
+        s_scan[j + 1] = k;
+    }
+
+    ESP_LOGI(TAG, "Wi-Fi scan: %d network%s", s_scan_n, s_scan_n == 1 ? "" : "s");
+}
+
+/*
+ * Escape into HTML text content.
+ *
+ * Exactly one string on this page is written by somebody who is not already
+ * holding the /cal password: the stored SSID. It has two writers and they are
+ * not equally trusted - cal_wifi_post() is behind gate(), but BLE provisioning
+ * takes the hardcoded PoP in app_main.c instead. So an SSID is attacker-supplied
+ * text as far as this page is concerned, and an SSID of "<script>..." would run
+ * in the origin that can POST to /api/cal/relay. An energised relay is a stopped
+ * plant (WIRING.md 7.2), so this is not a cosmetic escape.
+ *
+ * Everything else interpolated here is firmware-generated - link state, an IP
+ * built with IPSTR, labels from string literals - and none of it can carry a
+ * '<'. The GF addresses go through cal_set_gf_ip(), which accepts only
+ * a.b.c.d[:port] and so cannot contain a quote to break out of an attribute.
+ *
+ * Not fw_word(), which is the other sanitiser in this file and was considered
+ * first: it substitutes '?' for anything outside a narrow ASCII set. Correct for
+ * a version string, wrong here - an SSID legitimately contains spaces, quotes
+ * and UTF-8, and "Vamsi?s WiFi" on the one page you reach when the network is
+ * down defeats the purpose of printing the SSID at all. Lossy there, lossless
+ * here, and both are needed.
+ */
+static void html_escape(char *out, size_t out_len, const char *in)
+{
+    size_t o = 0;
+    for (; *in && o + 1 < out_len; in++) {
+        const char *rep;
+        switch (*in) {
+            case '<':  rep = "&lt;";   break;
+            case '>':  rep = "&gt;";   break;
+            case '&':  rep = "&amp;";  break;
+            case '"':  rep = "&quot;"; break;
+            case '\'': rep = "&#39;";  break;
+            default:   rep = NULL;     break;
+        }
+        if (rep == NULL) {
+            out[o++] = *in;
+            continue;
+        }
+        size_t l = strlen(rep);
+        /* Stop on a whole entity rather than emitting half of one - a trailing
+         * "&lt" would swallow the markup that follows it. */
+        if (o + l + 1 > out_len) {
+            break;
+        }
+        memcpy(out + o, rep, l);
+        o += l;
+    }
+    out[o] = '\0';
+}
+
 static esp_err_t cal_get(httpd_req_t *req)
 {
     /* 8 K, not 4 K. The page was 4027 bytes against a 4096 buffer before the relay
@@ -711,11 +867,12 @@ static esp_err_t cal_get(httpd_req_t *req)
      * underflows to a huge size_t and those writes run past the end of the
      * buffer. So the guard reports corruption rather than preventing it - keep
      * the headroom, do not rely on the check. Static, so BSS rather than stack. */
-    static char page[14336];   /* +1.5 k for the ground-floor rows and their notes */
+    static char page[18432];   /* +1.5 k ground-floor rows, +2 k Wi-Fi, +1 k the scan list */
     int n = 0;
 
     n += snprintf(page + n, sizeof(page) - n,
-        "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
         "<title>RO Hub calibration</title>"
         "<style>body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;padding:16px;max-width:44rem}"
         "h2{margin:0 0 4px}h3{margin:20px 0 6px}input{padding:4px;font:inherit}"
@@ -725,6 +882,126 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<p><small>Distances are transducer face to liquid surface, in millimetres. "
         "Fill or empty the tank, read the live figure, then save it. Every value is "
         "range-checked before it is stored.</small></p>");
+
+    /*
+     * Wi-Fi first on the page, deliberately.
+     *
+     * The one time this fieldset matters you are standing on a roof holding a
+     * phone joined to RO-HUB, because the router is exactly what you cannot
+     * reach. Scrolling past four calibration sections to find the control that
+     * gets the hub back on the LAN is the wrong default, and calibration is the
+     * thing you came up here with time for.
+     */
+    {
+        wifi_ap_record_t ap;
+        bool linked = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+
+        /* sta.ssid is a 32-byte field that need not be NUL-terminated, hence
+         * the precision. */
+        wifi_config_t wc = { 0 };
+        char ssid[40] = "none stored";
+        if (esp_wifi_get_config(WIFI_IF_STA, &wc) == ESP_OK && wc.sta.ssid[0]) {
+            snprintf(ssid, sizeof(ssid), "%.32s", (const char *)wc.sta.ssid);
+        }
+
+        char ip_s[16] = "-";
+        esp_netif_ip_info_t ipi;
+        esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (sta_if && esp_netif_get_ip_info(sta_if, &ipi) == ESP_OK && ipi.ip.addr != 0) {
+            snprintf(ip_s, sizeof(ip_s), IPSTR, IP2STR(&ipi.ip));
+        }
+
+        /* Worst case is every one of 32 characters becoming "&quot;": 6x + NUL. */
+        char ssid_html[200];
+        html_escape(ssid_html, sizeof(ssid_html), ssid);
+
+        /* Said out loud on the page rather than left to be remembered: the
+         * shipped passphrase is in the repository, so "still the default" is a
+         * fact worth reading off the screen. */
+        bool ap_default = (strcmp(cal_ap_password(), AP_PASS) == 0);
+
+        char link_s[48];
+        if (linked) {
+            snprintf(link_s, sizeof(link_s), "connected, %d dBm", ap.rssi);
+        } else {
+            snprintf(link_s, sizeof(link_s), "NOT connected");
+        }
+
+        n += snprintf(page + n, sizeof(page) - n,
+            "<fieldset id=wifi><legend>Wi-Fi</legend>"
+            "<p><b>%s</b> &middot; SSID <code>%s</code> &middot; IP <code>%s</code></p>"
+            "<form method=post action='/api/cal/wifi' style='display:inline'>"
+            "<input type=hidden name=go value=1><button>Reconnect</button></form> "
+            "<form method=post action='/api/cal/scan' style='display:inline'>"
+            "<input type=hidden name=go value=1><button>Scan</button></form>",
+            link_s, ssid_html, ip_s);
+
+        n += snprintf(page + n, sizeof(page) - n,
+            "<form method=post action='/api/cal/wifi'>");
+        if (s_scan_n > 0) {
+            n += snprintf(page + n, sizeof(page) - n,
+                "<select name=ssid><option value=''>&mdash; pick a network &mdash;</option>");
+            for (int i = 0; i < s_scan_n; i++) {
+                /* A scanned SSID is a string a stranger within radio range chose,
+                 * and it goes into an attribute as well as into text. html_escape()
+                 * turns the quote into &#39; so it cannot close value='...'. */
+                char e[200];
+                html_escape(e, sizeof(e), s_scan[i].ssid);
+                n += snprintf(page + n, sizeof(page) - n,
+                    "<option value='%s'>%s &middot; %d dBm%s</option>",
+                    e, e, s_scan[i].rssi, s_scan[i].open ? " &middot; OPEN" : "");
+            }
+            n += snprintf(page + n, sizeof(page) - n, "</select> or type ");
+        } else {
+            n += snprintf(page + n, sizeof(page) - n, "SSID ");
+        }
+        n += snprintf(page + n, sizeof(page) - n,
+            "<input name=ssid_other size=14 maxlength=32> "
+            "password <input name=pass type=password size=16 maxlength=63> "
+            "<button>Join</button></form>");
+
+        if (s_scan_n > 0) {
+            n += snprintf(page + n, sizeof(page) - n,
+                "<p><small>%d network%s, strongest first, scanned %lu s ago. A typed "
+                "name wins over the list, which is how you reach a hidden one."
+                "</small></p>",
+                s_scan_n, s_scan_n == 1 ? "" : "s",
+                (unsigned long)((esp_timer_get_time() - s_scan_us) / 1000000));
+        }
+
+        n += snprintf(page + n, sizeof(page) - n,
+            "<p><small><b>Reconnect</b> retries the credentials already stored and "
+            "changes nothing else. That is the fix for the failure this page exists "
+            "for: the hub boots faster than the access point, finds no network, "
+            "gives up, and never tries again &mdash; so the SSID is fine and "
+            "nothing needs retyping. Try it before you touch anything else."
+            "<br><b>Scan</b> takes a few seconds and the page will sit there while "
+            "it runs; the radio leaves the AP's channel to sweep, so over "
+            "<code>%s</code> expect a stall and possibly one reload."
+            "<br><b>Join</b> replaces the stored credentials and connects. They "
+            "persist across a reboot. Neither button re-provisions over BLE, which "
+            "wipes the credentials and the pairing to fix a hub that had merely "
+            "stopped retrying."
+            "<br>If you are reading this over <code>%s</code>, expect the page to "
+            "drop for a few seconds after a successful join: the hub's own AP "
+            "follows the station onto the router's channel. Rejoin "
+            "<code>%s</code> and reload.</small></p>"
+            "<h3>Hub AP password</h3>"
+            "<form method=post action='/api/cal/ap_pass'>"
+            "new <input name=ap_pass type=password size=18 minlength=8 maxlength=63> "
+            "<button>Change</button></form>"
+            "<p><small>The passphrase for <code>%s</code>, the hub's own network &mdash; "
+            "not the password for this page. <b>%s</b> 8&ndash;63 characters, WPA2. "
+            "It applies immediately, so if you are reading this over <code>%s</code> "
+            "you will be dropped the moment you press Change: rejoin with the new "
+            "one. It is stored in NVS and survives a reflash.</small></p></fieldset>",
+            AP_SSID, AP_SSID, AP_SSID,
+            AP_SSID,
+            ap_default ? "Currently the shipped default, which is published in the "
+                         "firmware source - change it."
+                       : "Changed from the shipped default.",
+            AP_SSID);
+    }
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -1048,6 +1325,14 @@ static bool form_field(const char *body, const char *name, char *out, size_t out
                     (hi | lo) != 0) {   /* %00 would end the string early, silently */
                     out[o++] = (char)(hi * 16 + lo);
                     i += 2;
+                } else if (v[i] == '+') {
+                    /* '+' is a space in application/x-www-form-urlencoded, and
+                     * every browser sends it that way. Nothing here needed it
+                     * while the fields were IP addresses and numbers; SSIDs and
+                     * Wi-Fi passwords have spaces in them all the time. The /cal
+                     * password is unaffected - it is compared over HTTP Basic in
+                     * gate(), which is base64 and never passes through here. */
+                    out[o++] = ' ';
                 } else {
                     out[o++] = v[i];
                 }
@@ -1347,6 +1632,138 @@ static esp_err_t cal_relay_post(httpd_req_t *req)
     return redirect_to(req, "/cal#relays");
 }
 
+/*
+ * Refresh the network list, and nothing else.
+ *
+ * The list is rendered by cal_get() out of the cache this fills, so the handler
+ * is a button and a redirect. Separate from Join on purpose: scanning costs
+ * seconds and interrupts the link, and it should happen when somebody asks for
+ * it rather than as a side effect of saving credentials.
+ */
+static esp_err_t cal_scan_post(httpd_req_t *req)
+{
+    char body[32];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    wifi_scan_refresh();
+    return redirect_to(req, "/cal#wifi");
+}
+
+/*
+ * Get back on the Wi-Fi, from the page the hub serves on its own AP.
+ *
+ * Two actions behind one endpoint, told apart by whether an ssid field arrived:
+ *
+ *   no ssid - Reconnect. Keep the stored credentials and just try again. That is
+ *             the whole fix when the hub booted faster than its access point,
+ *             ran out of retries and stopped - the fault that made this page
+ *             necessary on 2026-09-13.
+ *   ssid    - Join. Replace the credentials, then connect.
+ *
+ * Direct esp_wifi_* calls rather than handing the work to the poll task the way
+ * relay_test_start() does. That indirection exists because the poll task owns
+ * the relays and the RS485 bus; nothing owns the radio and the driver takes its
+ * own lock, so a hop through app_main.c would buy nothing but a queue.
+ *
+ * esp_wifi_set_config() writes the credentials to NVS, so a join survives the
+ * reboot - and it is the same store app_network's BLE provisioning writes, not a
+ * second copy that could later disagree with it.
+ *
+ * Behind the password like every other POST here. That matters more than usual:
+ * the AP this is reachable over carries one shared passphrase, and this endpoint
+ * can move the hub onto any network within earshot.
+ */
+static esp_err_t cal_wifi_post(httpd_req_t *req)
+{
+    /* Percent-encoding costs up to 3 bytes a character, so a 32-character SSID
+     * and a 63-character passphrase of punctuation is about 300 bytes on the
+     * wire. read_body() rejects what does not fit rather than truncating it. */
+    char body[512], ssid[33] = "", other[33] = "", pass[64];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+
+    /* Two fields can carry a name: the scan list and the text box beside it.
+     * The typed one wins - it is the only way to reach a hidden network, and
+     * somebody who typed a name meant it. They cannot collide by accident:
+     * form_field looks for "ssid=", which "ssid_other=" does not match. */
+    form_field(body, "ssid", ssid, sizeof(ssid));
+    form_field(body, "ssid_other", other, sizeof(other));
+    const char *want = other[0] ? other : ssid;
+
+    if (want[0]) {
+        if (!form_field(body, "pass", pass, sizeof(pass))) pass[0] = '\0';   /* open network */
+
+        wifi_config_t wc = { 0 };
+        /* memcpy against a measured length, not a string copy: sta.ssid is 32
+         * bytes and a 32-character SSID is legal, so there is no room for a
+         * terminator and a strncpy-shaped copy would quietly drop the last
+         * character of the longest names. */
+        size_t sl = strnlen(want, sizeof(wc.sta.ssid));
+        memcpy(wc.sta.ssid, want, sl);
+        snprintf((char *)wc.sta.password, sizeof(wc.sta.password), "%s", pass);
+
+        /* Disconnect BEFORE set_config. Setting it on a connected station is
+         * accepted but does not take effect until the next association, which
+         * reads as "Join did nothing" to somebody standing on a roof. */
+        esp_wifi_disconnect();
+        if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK) {
+            return bad(req, "could not store credentials");
+        }
+        ESP_LOGW(TAG, "Wi-Fi credentials replaced from /cal: SSID %.32s",
+                 (const char *)wc.sta.ssid);
+    } else {
+        esp_wifi_disconnect();
+    }
+
+    /* ESP_ERR_WIFI_CONN means a connect is already in flight, which is the
+     * outcome that was asked for rather than a failure to report. */
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+        return bad(req, esp_err_to_name(err));
+    }
+    return redirect_to(req, "/cal#wifi");
+}
+
+/*
+ * Change the fallback AP's passphrase.
+ *
+ * AP_PASS is a default, not a secret - it is in the repository. The AP it
+ * guards reaches /cal, and /cal can pulse the relays, so a site that leaves it
+ * alone is relying on the /cal password by itself.
+ *
+ * Stored by cal_set_ap_password() and applied here to the AP that is already
+ * running, because "it will work after you reboot the hub" is a poor answer to
+ * somebody standing on a roof.
+ */
+static esp_err_t cal_ap_pass_post(httpd_req_t *req)
+{
+    char body[256], pass[64];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    if (!form_field(body, "ap_pass", pass, sizeof(pass))) return bad(req, "need ap_pass");
+
+    if (cal_set_ap_password(pass) != ESP_OK) {
+        return bad(req, "rejected: 8-63 characters");
+    }
+
+    /* get-then-set rather than building a fresh config, so the SSID, channel and
+     * client limit start_softap() chose all survive. Best effort on purpose: with
+     * AP_MODE_ENABLED 0 there is no AP interface to reconfigure, and the stored
+     * value is simply what the next one will come up on. */
+    wifi_config_t ap = { 0 };
+    if (esp_wifi_get_config(WIFI_IF_AP, &ap) == ESP_OK) {
+        snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", pass);
+        ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        esp_wifi_set_config(WIFI_IF_AP, &ap);
+    }
+
+    /* Deliberately not a redirect, same as cal_pass_post(): anybody reading this
+     * over the hub's own AP has just been disconnected by the change, and a 303
+     * they cannot follow reads as a broken page rather than a successful one. */
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req,
+        "<p>Hub AP password changed. If you were connected to the hub's own network "
+        "you have just been dropped &mdash; rejoin it with the new password, then "
+        "reopen <a href='/cal#wifi'>/cal</a>.</p>", HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t cal_pass_post(httpd_req_t *req)
 {
     char body[128], pass[48];
@@ -1389,6 +1806,9 @@ esp_err_t web_start(void)
         { "/api/cal/wq",    HTTP_POST, cal_wq_post,    false },
         { "/api/cal/gf",    HTTP_POST, cal_gf_post,    false },
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
+        { "/api/cal/scan",  HTTP_POST, cal_scan_post,  false },  /* refresh the list */
+        { "/api/cal/wifi",  HTTP_POST, cal_wifi_post,  false },  /* Reconnect / Join */
+        { "/api/cal/ap_pass", HTTP_POST, cal_ap_pass_post, false },
         { "/api/cal/pass",  HTTP_POST, cal_pass_post,  false },
     };
 

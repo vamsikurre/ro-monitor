@@ -2086,7 +2086,9 @@ static void start_softap(void)
 
     wifi_config_t ap = { 0 };
     snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", AP_SSID);
-    snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", AP_PASS);
+    /* Not AP_PASS: that is only the default now, and a hub that has been given
+     * its own passphrase at /cal must come back up on that one. */
+    snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", cal_ap_password());
     ap.ap.ssid_len = strlen(AP_SSID);
     ap.ap.channel = 1;
     ap.ap.max_connection = 4;

@@ -156,6 +156,12 @@ esp_err_t cal_day_set(uint32_t midnight, uint16_t hpp_min, uint16_t rwp_min,
 bool      cal_password_matches(const char *user, const char *pass);
 esp_err_t cal_set_password(const char *pass);
 
+/* The fallback AP's passphrase, same deal: AP_PASS in app_priv.h is the shipped
+ * default and is not a secret. Storing it only changes what the NEXT association
+ * uses; applying it to a running AP is the caller's job. */
+const char *cal_ap_password(void);
+esp_err_t   cal_set_ap_password(const char *pass);
+
 const char *cal_tank_key(cal_tank_t t);
 const char *cal_tank_label(cal_tank_t t);
 const char *cal_ct_key(cal_ct_t c);

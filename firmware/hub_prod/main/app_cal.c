@@ -54,6 +54,10 @@ static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
 static uint16_t s_fan_on_deci_c  = FAN_ON_DECI_C_DEFAULT;
 static uint16_t s_fan_off_deci_c = FAN_OFF_DECI_C_DEFAULT;
 static char     s_cal_pass[33]   = CAL_PASS_DEFAULT;
+/* 64, because a WPA2 passphrase is up to 63 characters. AP_PASS is the
+ * shipped default and is in the repository, which is the whole reason this
+ * is changeable without a reflash. */
+static char     s_ap_pass[64]    = AP_PASS;
 
 static const char *s_evt_keys[CAL_EVT_COUNT]     = { "t_hpp", "t_rwp", "t_twtf", "t_fan" };
 static uint32_t    s_evt[CAL_EVT_COUNT];
@@ -181,6 +185,11 @@ esp_err_t cal_init(void)
 
     size_t plen = sizeof(s_cal_pass);
     nvs_get_str(h, "cal_pass", s_cal_pass, &plen);
+
+    /* Left at the compiled-in AP_PASS when the key is absent, which is every hub
+     * that has never been given one. */
+    size_t aplen = sizeof(s_ap_pass);
+    nvs_get_str(h, "ap_pass", s_ap_pass, &aplen);
 
     nvs_close(h);
 
@@ -421,6 +430,47 @@ esp_err_t cal_set_password(const char *pass)
         strncpy(s_cal_pass, pass, sizeof(s_cal_pass) - 1);
         s_cal_pass[sizeof(s_cal_pass) - 1] = '\0';
         ESP_LOGI(TAG, "calibration password changed");
+    }
+    return err;
+}
+
+const char *cal_ap_password(void)
+{
+    return s_ap_pass;
+}
+
+/*
+ * The fallback AP's passphrase.
+ *
+ * 8 to 63 characters because that is what WPA2-PSK accepts, and the AP is
+ * deliberately not offered as open: it reaches /cal, and /cal can pulse the
+ * relays. The shipped default is published in this repository, so a hub left on
+ * it is protected by the /cal password alone.
+ *
+ * Takes effect on the next association - cal_set_ap_password() only stores it.
+ * The caller applies it to a running AP, because doing that here would mean
+ * app_cal.c reaching into the Wi-Fi driver to satisfy one setting.
+ */
+esp_err_t cal_set_ap_password(const char *pass)
+{
+    if (pass == NULL || strlen(pass) < 8 || strlen(pass) > 63) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(h, "ap_pass", pass);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    if (err == ESP_OK) {
+        /* snprintf, not strncpy plus a terminator: one call that cannot leave
+         * the buffer unterminated. cal_set_password() above predates it. */
+        snprintf(s_ap_pass, sizeof(s_ap_pass), "%s", pass);
+        ESP_LOGI(TAG, "fallback AP password changed");
     }
     return err;
 }

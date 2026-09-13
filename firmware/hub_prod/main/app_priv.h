@@ -527,22 +527,26 @@ typedef enum {
 #define WEB_PORT                80
 #define CAL_USER                "admin"
 #define CAL_PASS_DEFAULT        "ro-calibrate"   /* changeable at /cal, stored in NVS */
-/* The hub's own access point. OFF as deployed 2026-09-01: the dashboard and
- * /cal are reached over the house LAN only.
+/* The hub's own access point. ON since 2026-09-13, having been off since
+ * 2026-09-01.
  *
- * Set to 1 and reflash to bring it back — that is the whole switch, deliberately
- * a compile-time one. A runtime toggle would need an NVS key, a control on /cal
- * and a way to recover when somebody turns the AP off from the AP, and none of
- * that is worth building for a setting that changes about once.
+ * The cost of OFF was written down here in advance and then collected in full.
+ * A building power cut dropped the terrace AP; the hub booted before it came
+ * back, exhausted its retries and sat there. With no local AP there was no way
+ * in at all — no dashboard, no /cal — so the only lever left was a BLE
+ * re-provision, which WIPES the credentials to fix a hub that had merely
+ * stopped retrying. That is a trip to the roof with a phone for a fault a
+ * button could have cleared.
  *
- * What turning it off costs, stated plainly: if the router dies, or the hub
- * falls off the Wi-Fi, there is NO local way in. No dashboard, no /cal, no
- * calibration on a roof without a working network. RS485 polling, the alerts
- * and the fan policy all carry on regardless — the hub keeps running the plant,
- * you just cannot see or configure it until the LAN is back. */
-#define AP_MODE_ENABLED         0
+ * So it is back on, and /cal now carries Reconnect and Join (see cal_wifi_post)
+ * — the AP is what makes that page reachable when the router is the thing that
+ * has failed. Still a compile-time switch: a runtime toggle would need an NVS
+ * key, a control on /cal and a way to recover when somebody turns the AP off
+ * from the AP, and none of that is worth building for a setting that changes
+ * about once a year. */
+#define AP_MODE_ENABLED         1
 #define AP_SSID                 "RO-HUB"
-#define AP_PASS                 "ro-monitor"
+#define AP_PASS                 "ro-monitor"   /* default only: changeable at /cal, stored in NVS */
 #define MDNS_HOSTNAME           "ro-hub"
 
 /* --------------------------------------------------------------------- types */
