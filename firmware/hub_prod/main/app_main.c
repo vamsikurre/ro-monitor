@@ -811,27 +811,6 @@ static int64_t s_fan_test_until_us = 0;
  */
 bool relay_test_start(int n)
 {
-    /*
-     * Relay 1 is refused here rather than merely hidden on the page, because
-     * /api/cal/relay is a POST that anybody holding the /cal password can craft
-     * by hand. The enforcement belongs at the one place every caller reaches.
-     *
-     * As built it is inverted (WIRING.md 7.2, 2026-09-13). Energising it CLOSES
-     * the loop instead of opening it, and the contact sits in PARALLEL with the
-     * treated water float across the same two Aster terminals - so a closed
-     * contact shorts the float out and the panel reads "tank not full" wherever
-     * the water actually is. Five seconds was long enough for the Aster to
-     * sample that and begin producing, and with the wetting-loop fault of 5.3
-     * also present, nothing stopped it. The tank overflowed.
-     *
-     * Re-enable when the landed pair (COM/NC or COM/NO) and the module's coil
-     * polarity have both been metered and corrected.
-     */
-    if (n == 1) {
-        ESP_LOGW(TAG, "Relay 1 test refused: wiring inverted as built, see WIRING.md 7.2");
-        return false;
-    }
-
     int64_t until = esp_timer_get_time() + (int64_t)RELAY_TEST_MS * 1000;
     if (n >= 1 && n <= RELAY_HUB_COUNT) {
         relay_set(n - 1, true);

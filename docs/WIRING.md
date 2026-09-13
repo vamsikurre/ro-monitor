@@ -597,7 +597,9 @@ Polarity follows Section 6.1 and is **not** interchangeable between terminals. E
 >
 > **Why the inversion is dangerous rather than merely wrong.** The contact sits in **parallel** with the float across the same two terminals, and a parallel loop is closed if *either* path is closed. So a closed relay contact shorts the float out completely and the Aster reads "not full" wherever the water is. A five-second test press is long enough for the panel to sample "not full" and begin producing — and with §5.3's fault also present, nothing then stopped it. Neither defect overflows a tank on its own.
 >
-> The Relay 1 test button is disabled in firmware until the pair and the coil polarity have been metered. Relay 1's wires are lifted from the Aster in the meantime.
+> **The Relay 1 test button stays enabled, deliberately.** It was disabled in firmware on 2026-09-13 and re-enabled on 2026-09-14 at the operator's instruction: the fault is intermittent (§5.3), and an intermittent fault cannot be characterised with the only tool for exercising it switched off. This is a single-operator private installation - one household, one person with the `/cal` password, physically present whenever the button is used - so the guard was protecting against a risk this site does not carry, at the cost of the diagnosis it needs. The page now labels the inversion instead of preventing it.
+>
+> Anyone deploying this firmware somewhere with more than one operator, or where nobody is standing next to the tank, should put that guard back.
 >
 > **This also corrects §0.2**, which records that none of the relay output wires exist yet. At least Relay 1 is landed on `TWT FLOTY`. Re-survey the other three before trusting any row in this table.
 
