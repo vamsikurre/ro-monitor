@@ -21,6 +21,7 @@
  */
 
 #include <inttypes.h>
+#include <stdarg.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2203,8 +2204,98 @@ static void button_task(void *arg)
 
 /* ------------------------------------------------------------------ app_main */
 
+/* --------------------------------------------------------------- console tap */
+
+/*
+ * A copy of everything that goes to the console, kept in RAM so /logs can show it.
+ *
+ * The hub is on a terrace. Reading its console today means carrying a laptop and
+ * a USB lead up there and resetting the board to catch the boot messages, by
+ * which time whatever you were chasing has usually happened again unobserved.
+ * Four kilobytes of RAM turns that into opening a page.
+ *
+ * A byte ring rather than a ring of lines: a line ring needs a maximum line
+ * length decided in advance, and rs485_failures alone runs past any number that
+ * looks reasonable.
+ */
+#define LOG_TAP_BYTES 4096
+
+static char           s_log_buf[LOG_TAP_BYTES];
+static size_t         s_log_head;
+static bool           s_log_wrapped;
+static portMUX_TYPE   s_log_mux = portMUX_INITIALIZER_UNLOCKED;
+static vprintf_like_t s_log_next;
+
+static int log_tap(const char *fmt, va_list ap)
+{
+    /* Formatted twice - once for the ring, once for whoever was printing before
+     * us. Hence the copy: the first pass consumes the va_list, and reusing it is
+     * undefined behaviour that shows up as garbage on the serial line. */
+    char line[192];
+    va_list copy;
+    va_copy(copy, ap);
+    int n = vsnprintf(line, sizeof(line), fmt, copy);
+    va_end(copy);
+
+    if (n > 0) {
+        size_t len = ((size_t)n < sizeof(line)) ? (size_t)n : sizeof(line) - 1;
+        /* A spinlock, not a mutex. This runs inside the logging path, which is
+         * reached from tasks that may already hold something, and blocking here
+         * would deadlock the firmware rather than lose one log line. Interrupts
+         * are off for a copy of at most 192 bytes. */
+        portENTER_CRITICAL(&s_log_mux);
+        for (size_t i = 0; i < len; i++) {
+            char c = line[i];
+            /* Drop the ANSI colour runs IDF wraps each line in; they are noise
+             * in a browser. Everything else unprintable goes too, except the
+             * newline that makes the page readable at all. */
+            if (c == '\033') {
+                while (i < len && line[i] != 'm') i++;
+                continue;
+            }
+            if (c != '\n' && (c < 0x20 || c > 0x7e)) {
+                continue;
+            }
+            s_log_buf[s_log_head] = c;
+            if (++s_log_head == LOG_TAP_BYTES) {
+                s_log_head = 0;
+                s_log_wrapped = true;
+            }
+        }
+        portEXIT_CRITICAL(&s_log_mux);
+    }
+
+    return s_log_next ? s_log_next(fmt, ap) : 0;
+}
+
+/*
+ * Oldest to newest into `out`, returning how much was written.
+ *
+ * Snapshotted under the lock and handed back flat, because the caller writes it
+ * to a socket and holding a spinlock across that would be far worse than one
+ * copy of at most 4 kB.
+ */
+size_t log_tap_snapshot(char *out, size_t out_len)
+{
+    size_t n = 0;
+    portENTER_CRITICAL(&s_log_mux);
+    if (s_log_wrapped) {
+        for (size_t i = s_log_head; i < LOG_TAP_BYTES && n < out_len; i++) {
+            out[n++] = s_log_buf[i];
+        }
+    }
+    for (size_t i = 0; i < s_log_head && n < out_len; i++) {
+        out[n++] = s_log_buf[i];
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+    return n;
+}
+
 void app_main(void)
 {
+    /* Before the banner, so the banner is in it. */
+    s_log_next = esp_log_set_vprintf(log_tap);
+
     ESP_LOGI(TAG, "==========================================");
     ESP_LOGI(TAG, "  RO Monitor — Central Hub  fw %s", esp_app_get_description()->version);
     ESP_LOGI(TAG, "==========================================");

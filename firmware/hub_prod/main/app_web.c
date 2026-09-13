@@ -40,6 +40,10 @@
  * so a web handler asks rather than drives. */
 bool relay_test_start(int n);
 
+/* Also app_main.c: the console ring is filled from the logging path, which runs
+ * long before this file has a server to serve it from. */
+size_t log_tap_snapshot(char *out, size_t out_len);
+
 static const char *TAG = "web";
 
 /* dashboard.html is gzipped and embedded at build time - see main/CMakeLists.txt.
@@ -703,6 +707,83 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 /* ------------------------------------------------------- calibration page */
 
+/* ----------------------------------------------------------------- console */
+
+/* Matches LOG_TAP_BYTES in app_main.c; the ring cannot hand back more. */
+#define LOG_SNAP_BYTES 4096
+
+/*
+ * The console, in a browser, refreshing itself.
+ *
+ * Its own page rather than a panel on /cal: making it live means a meta refresh,
+ * and a page that reloads every three seconds is a page you cannot type a
+ * password into. /cal links here instead, which costs one tap and keeps both
+ * pages doing one thing.
+ *
+ * Behind the password. A console prints SSIDs, addresses and the node's own
+ * diagnostics, which is exactly the reconnaissance the AP passphrase is there to
+ * withhold.
+ */
+static esp_err_t logs_get(httpd_req_t *req)
+{
+    /* Static, not on the stack: httpd gets 6 kB and this is 4. Safe as a single
+     * buffer because esp_http_server runs one handler at a time - if that config
+     * ever gains a second worker task, this needs a lock. */
+    static char snap[LOG_SNAP_BYTES];
+    size_t n = log_tap_snapshot(snap, sizeof(snap));
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr_chunk(req,
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv=refresh content=3>"
+        "<title>RO Hub console</title>"
+        "<style>body{font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;margin:0;"
+        "padding:10px;background:#101418;color:#dde}a{color:#7cf}"
+        "pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}"
+        "</style>"
+        "<a href='/cal'>&larr; back to /cal</a> &middot; reloading every 3 s "
+        "&middot; newest at the bottom<pre>");
+
+    /* Escaped on the way out rather than into a second buffer: 4 kB of log is
+     * 20 kB once every character becomes an entity, and none of that needs to
+     * exist at once. Inside <pre> only these three matter. */
+    char chunk[257];
+    size_t c = 0;
+    for (size_t i = 0; i < n; i++) {
+        const char *e;
+        switch (snap[i]) {
+            case '<': e = "&lt;";  break;
+            case '>': e = "&gt;";  break;
+            case '&': e = "&amp;"; break;
+            default:  e = NULL;    break;
+        }
+        size_t need = e ? strlen(e) : 1;
+        if (c + need >= sizeof(chunk)) {
+            chunk[c] = '\0';
+            httpd_resp_sendstr_chunk(req, chunk);
+            c = 0;
+        }
+        if (e) {
+            memcpy(chunk + c, e, need);
+            c += need;
+        } else {
+            chunk[c++] = snap[i];
+        }
+    }
+    if (c > 0) {
+        chunk[c] = '\0';
+        httpd_resp_sendstr_chunk(req, chunk);
+    }
+
+    if (n == 0) {
+        httpd_resp_sendstr_chunk(req, "(nothing logged yet)");
+    }
+    httpd_resp_sendstr_chunk(req, "</pre>");
+    return httpd_resp_sendstr_chunk(req, NULL);   /* NULL ends a chunked response */
+}
+
 /* ------------------------------------------------------------ Wi-Fi scan */
 
 /*
@@ -881,7 +962,9 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<h2>RO Hub calibration</h2>"
         "<p><small>Distances are transducer face to liquid surface, in millimetres. "
         "Fill or empty the tank, read the live figure, then save it. Every value is "
-        "range-checked before it is stored.</small></p>");
+        "range-checked before it is stored. "
+        "<a href='/logs'>Console log</a> &mdash; live, for when something is wrong "
+        "and the answer is not on this page.</small></p>");
 
     /*
      * Wi-Fi first on the page, deliberately.
@@ -1797,6 +1880,7 @@ esp_err_t web_start(void)
         { "/api/history",   HTTP_GET,  history_get,    true  },  /* 24 h trend strip */
         { "/api/events",    HTTP_GET,  events_get,     true  },  /* what happened, when */
         { "/favicon.ico",   HTTP_GET,  favicon_get,    true  },  /* asked for unprompted, by everyone */
+        { "/logs",          HTTP_GET,  logs_get,       false },  /* the console, live */
         { "/cal",           HTTP_GET,  cal_get,        false },
         { "/api/cal/tank",  HTTP_POST, cal_tank_post,  false },
         { "/api/cal/ct",    HTTP_POST, cal_ct_post,    false },
