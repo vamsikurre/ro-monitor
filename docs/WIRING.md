@@ -21,7 +21,7 @@ RO room needs. **Last updated 2026-08-30.**
 >
 > **It draws the plant DEPLOYED, not the plant as it stands.** Every field
 > connection to the Aster is on it: `LPS` to PC817 `IN3`, `ALARM` to `G13`, and all
-> four relay outputs to the float terminals. **None of those wires exist yet** —
+> four relay outputs to the float terminals. **That was true when written and is no longer** — Relay 1 is landed on `TWT FLOTY` (§7.2, as-built 2026-09-13) and the other three are unsurveyed —
 > §0.2 and §6.6 are the authority on what is actually connected, and §0.3.2 lists
 > what the log looks like while they are not. A picture beats a checklist for
 > anyone in a hurry, so read the two together or you will diagnose a fault in a
@@ -307,7 +307,7 @@ Drawn form of this same table, with the modules and wire colours:
 
 ## 5. 4-Channel PC817 Optoisolator Module (Sensor Inputs)
 
-Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part and all four are in use: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. **`LPS` took channel 3 from `IN_ALARM` on 2026-08-27** — that signal needed no optocoupler and moved to a direct input (§6.6), which is what made room for `LPS` without an 8-channel board. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
+Provides galvanic isolation for reading dry contacts and low-voltage status lines from the Asterro controller and Multiport Valve. The board fitted to the built hub is the **4-channel** part. It was wired `RL1`, `RL2`, `LPS`, `TWT FLOTY` — **and its input side is now disconnected from the Aster following the 2026-09-13 overflow (§5.3).** `TWT FLOTY` is never to be re-tapped; `RL1` and `RL2` are volt-free multiport-valve status outputs and may go back after §6.4 Step 2; `LPS` is an Aster input like `TWT FLOTY` and must be metered before any decision, because a shunt there masks the HPP dry-run protection. **`LPS` took channel 3 from `IN_ALARM` on 2026-08-27** — that signal needed no optocoupler and moved to a direct input (§6.6), which is what made room for `LPS` without an 8-channel board. Tapping `RWT FLOTY` or `DOS LVL` directly would require swapping in an 8-channel board — neither is needed for Phase B, since those tanks are measured by the RS485 ultrasonic nodes instead.
 
 ### 5.1. Module Architecture & Jumpers
 * **Input Side (Left):** `IN1`..`IN4` (+) and `G` (Return) with onboard 3k ohm current-limiting resistors (compatible with 3.3V to 24V DC).
@@ -351,6 +351,32 @@ Every Aster contact tapped here is volt-free, so the loop must be wetted from ou
 
 **Never apply this 12V wetting loop to a terminal the Aster panel energizes itself.** Confirm each tapped pair reads 0V AC and 0V DC across it, in both healthy and faulted states, before wiring. Procedure in Section 6.4.
 
+### 5.3. Incident 2026-09-13 — this rule was broken on `TWT FLOTY`, and what it cost
+
+**The treated water tank overflowed while the plant ran, and no interlock stopped it.** The plant had stopped correctly on tank-full for as long as it has existed. It stopped doing so after the hub's opto channels were landed on the Aster.
+
+The rule that would have prevented it is the paragraph directly above, and it predates the fault. `TWT FLOTY` is exactly such a terminal: §6.1 is headed "**Input** Terminal Polarity" — the Aster wets and senses that loop itself and the float is only a switch inside it. The §6.4 Step 2 characterisation was run on the `ALARM` pair, where it belonged, and never on the float terminals.
+
+**What was established, in order, and what each step ruled out:**
+
+| Observation | Rules out |
+| :--- | :--- |
+| Plant stopped on tank-full for years before the hub was introduced | a controller setting, a configuration change, `MANUAL` mode |
+| Display never showed `TW TANK FULL!!` while the tank overflowed | `MANUAL`, which would still show the state on the display |
+| Float lifted by hand mid-run produced no stop; the same float state after a stop/start read full correctly | a stuck, fouled or mis-mounted float, and every mechanical cause |
+| Identical behaviour with the hub powered **off** | the 12V drive by itself — see below |
+| `RWT FLOTY`, `DOS LVL` and `HPS` also failed to stop a running plant | a fault confined to one channel |
+
+**Powering the hub down does not take it out of the circuit.** With the hub unpowered, `[C]` is still tied to the 12V rail and `[NC]` still reaches the 12V return through the 3k resistor and the PC817 input LED. The two Aster terminals stay joined, through a diode and a dead supply. Only lifting the wires removes the hub, so "I switched the hub off and it still did it" is not the exoneration it looks like — it was read that way for most of an afternoon.
+
+A diode is also a threshold device, which accounts for the one observation that seemed to contradict everything else. At Aster power-up that input is not yet driven hard, the LED stays below its forward voltage, the loop reads genuinely open, and the panel correctly reports `TW TANK FULL!!` and refuses to start. Once running and driving the input, the LED conducts and the same open float reads closed. One piece of wiring, two behaviours, decided by what the controller is doing at that instant.
+
+**All four channels share one return, and that is why the blast radius is not one channel.** §5.1: `IN1`..`IN4` against a single `G`, and §5.2 wets every channel from the same +12V rail back to that same `G`. Terminal pairs the Aster treats as separate inputs end up commoned together through the hub. That is the most plausible reason `RWT FLOTY` and `DOS LVL` stopped acting as well, and it is why the remedy below is all four channels rather than the one that was found first.
+
+**Standing instruction until every interlock has been re-verified on the plant:** the opto board input side is disconnected from the Aster entirely — `IN1`..`IN4`, the `G` return, and every +12V leg landed on a `[C]`. Nothing goes back onto any Aster terminal until §6.4 Step 2 has been run on that pair and it has read 0V AC and 0V DC in both states.
+
+**`TWT FLOTY` is not to be re-tapped at all.** The treated water tank is measured by the ultrasonic on node `0x03`, and that is already what the dashboard and every alert use — `DASHBOARD_AND_RAINMAKER.md` records the deliberate decision that TWT-full comes from the level and not from the Aster float. The float bit was a nice-to-have. It cost a working safety stop.
+
 ---
 
 ## 6. Aster NXT Terminal Contact Polarity & Alarm Output
@@ -391,6 +417,8 @@ Manual p.12 confirms both directions: `LOW PRESSURE!!` lists *"LPS not connected
 | :--- | :--- | :--- |
 | `HPS` terminal has **no field wiring** and the plant runs normally | 2026-08-25 | Consistent with 6.1 (open = healthy). Means there is **no controller-level over-pressure protection**, and **no `HPS` signal exists for the hub to monitor** — do not publish an `hps` state. Confirm on site whether `HI PRESS SW` is `ON` (enabled, watching a switch that can never close) or `OFF` (bypassed) and record the answer here. |
 | `LPS` silkscreen is `C` / `NO` | 2026-08-25 | `RO_HARDWARE_ANALYSIS.md` previously recorded `C` / `NC`; corrected there. |
+| **No interlock stopped a running plant** — `TWT FLOTY` by float, `RWT FLOTY`, `DOS LVL`, `HPS` | 2026-09-13 | Treated water tank overflowed. Root cause is the hub's opto wetting loops on the Aster's own input terminals, §5.3. `HPS` is a null result either way: it has no field wiring (row above). Every interlock must be re-verified physically, one at a time, before the plant runs unattended again. |
+| The Aster **does** act on `TWT FLOTY` mid-run | 2026-09-13 | Established by the years of correct operation before the hub. An intermediate diagnosis that the input was "start-permissive only" was drawn from the broken system and is wrong — recorded here because it is the plausible-sounding conclusion somebody will reach again. |
 
 ### 6.3. The `ALARM` Terminal Is the Configurable AUX OP
 
@@ -555,6 +583,16 @@ Polarity follows Section 6.1 and is **not** interchangeable between terminals. E
 | **Relay 2** | **GPIO 23** | `RWT FLOTY [ C ]` & `[ NC ]` | `COM` & `NC` | **Closed** = raw water available | **Open** = `RW TANK EMPTY!!` |
 | **Relay 3** | **GPIO 18** | `DOS LVL [ C ]` & `[ NC ]`   | `COM` & `NC` | **Closed** = chemical OK | **Open** = dosing low |
 | **Relay 4** | **GPIO 19** | Spare — see note below | `COM` & `NC` for `LPS`, `COM` & `NO` for `HPS` | `LPS` form: **closed** = pressure OK. `HPS` form: **open** = pressure OK | trip |
+
+> **As-built 2026-09-13 — Relay 1 behaves the OPPOSITE way to this table, and the table is the specification, not the plant.** Pressing the Relay 1 test **started** the RO. Per the row above, energising it should open the loop and read `TW TANK FULL!!`. Two wiring faults produce exactly that inversion and a meter distinguishes them: the pair landed is `COM`/`NO` rather than the `COM`/`NC` specified, or the relay module is active-HIGH while the firmware defines `RELAY_ON 0`, so what the code calls energising actually drops the coil.
+>
+> **Why the inversion is dangerous rather than merely wrong.** The contact sits in **parallel** with the float across the same two terminals, and a parallel loop is closed if *either* path is closed. So a closed relay contact shorts the float out completely and the Aster reads "not full" wherever the water is. A five-second test press is long enough for the panel to sample "not full" and begin producing — and with §5.3's fault also present, nothing then stopped it. Neither defect overflows a tank on its own.
+>
+> The Relay 1 test button is disabled in firmware until the pair and the coil polarity have been metered. Relay 1's wires are lifted from the Aster in the meantime.
+>
+> **This also corrects §0.2**, which records that none of the relay output wires exist yet. At least Relay 1 is landed on `TWT FLOTY`. Re-survey the other three before trusting any row in this table.
+
+> **The 5 s test pulse cannot exercise an interlock slower than itself.** `RELAY_TEST_MS` is 5 s. §6.5 records `LO PRESS. DBNCE` at a factory 015 s, then `LPS TRIP` at a factory 03 min — so the relay releases ten seconds before the debounce would even register, and a "nothing happened" result on `LPS` proves nothing either way. To test `LPS` genuinely, open the loop at the terminal and **hold** it: 15 s to register, up to 3 min to trip, and watch the display rather than the alarm contact (§6.5 — they are two separate observations).
 
 **Testing them in the field: `/cal` has a Relay test panel.** Five buttons — the
 four hub relays and the battery-room fan — each of which energises its relay for

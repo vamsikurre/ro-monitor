@@ -1319,6 +1319,15 @@ static esp_err_t cal_get(httpd_req_t *req)
     n += snprintf(page + n, sizeof(page) - n,
         "<fieldset id=relays><legend>Relay test</legend>");
     for (int i = 0; i < RELAY_HUB_COUNT; i++) {
+        /* Relay 1 is greyed out, not omitted: a button that vanished would read
+         * as a firmware bug to somebody who used it last week. relay_test_start()
+         * refuses it regardless of what this page renders. */
+        if (i == 0) {
+            n += snprintf(page + n, sizeof(page) - n,
+                "<button disabled title='disabled: wiring inverted, WIRING.md 7.2'>"
+                "%d &middot; %s</button> ", i + 1, relay_name(i));
+            continue;
+        }
         n += snprintf(page + n, sizeof(page) - n,
             "<form method=post action='/api/cal/relay' style='display:inline'>"
             "<input type=hidden name=n value='%d'>"
@@ -1328,7 +1337,12 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<form method=post action='/api/cal/relay' style='display:inline'>"
         "<input type=hidden name=n value='%d'>"
         "<button>%d &middot; Battery fan</button></form>"
-        "<p><small>Each button energises that relay for <b>about %d s</b> and the hub "
+        "<p><small><b>Relay 1 is disabled.</b> As built it is wired inverted, and because "
+        "its contact is parallel with the treated water float, energising it shorts that "
+        "float out and tells the Aster the tank is not full &mdash; which starts the plant "
+        "rather than stopping it. That overflowed the tank on 2026-09-13. Meter the pair "
+        "and the coil polarity, then re-enable (WIRING.md &sect;7.2). "
+        "Each of the others energises that relay for <b>about %d s</b> and the hub "
         "releases it &mdash; the release runs from the poll loop, so it lands on the "
         "next cycle and the pulse is %d&ndash;%d s rather than exact. That is the "
         "right trade: a timer of its own could be missed, whereas the poll loop runs "
