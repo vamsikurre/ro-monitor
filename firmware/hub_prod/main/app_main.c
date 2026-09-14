@@ -34,6 +34,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_attr.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -388,6 +389,61 @@ static esp_rmaker_device_t *s_dev_battery;
 static esp_rmaker_device_t *s_dev_ro_room;
 
 static bool s_cloud_up = false;
+
+/*
+ * Reboot once if the cloud never arrives.
+ *
+ * DASHBOARD_AND_RAINMAKER records the failure this exists for: at first
+ * provisioning, with BLE still resident, heap_min hit 11,148 and the MQTT client
+ * could not allocate its task. It ABORTS rather than retrying, so the hub comes
+ * up serving its own dashboard perfectly and never reaches the phone - "silent,
+ * once per board, and it looks like a working hub". The documented recovery is a
+ * reboot. This performs it without somebody having to know to.
+ *
+ * ONCE, not on a loop, and that is the whole design. This building's internet
+ * does not survive a power cut, so "cloud unreachable" is a routine condition
+ * here rather than a fault. A loop would reboot the hub every half hour through
+ * an ISP outage, and every reboot wipes s_hist[] and re-seeds the idle timer -
+ * see CLOUD_WATCHDOG_MS for why that silences the two alerts that protect the
+ * membranes.
+ *
+ * RTC_DATA_ATTR, so the flag survives the reboot it causes but clears on a real
+ * power cycle. That is the right lifetime: a hub that has genuinely lost power
+ * has not spent its one attempt yet.
+ *
+ * Not gated on the station being up. A hub that has given up on Wi-Fi is also
+ * fixed by a reboot - that is what cost a trip to the terrace on 2026-09-13 -
+ * and "no cloud" already covers "no Wi-Fi" without a second condition.
+ */
+static RTC_DATA_ATTR bool s_cloud_reboot_done;
+
+static void cloud_watchdog(void)
+{
+    static int64_t last_up_us = 0;
+    int64_t now_us = esp_timer_get_time();
+
+    /* Seeded from boot, like hpp_last_seen_running_us and for the same reason:
+     * a hub that has never connected must still be able to time out. */
+    if (last_up_us == 0 || s_cloud_up) {
+        last_up_us = now_us;
+        return;
+    }
+    if (s_cloud_reboot_done) {
+        return;
+    }
+    if (now_us - last_up_us < (int64_t)CLOUD_WATCHDOG_MS * 1000) {
+        return;
+    }
+
+    /* Set BEFORE restarting. If this write were skipped the hub would loop, and
+     * looping is the one outcome this must not have. */
+    s_cloud_reboot_done = true;
+    ESP_LOGW(TAG, "cloud down %d min - rebooting once, which is the documented fix",
+             CLOUD_WATCHDOG_MS / 60000);
+    /* No event_push: the restart lands as EVT_BOOT carrying esp_reset_reason()
+     * ESP_RST_SW, which says the same thing and is already persisted. */
+    esp_restart();
+}
 
 /* Report to the cloud only when a value actually moves. A 2 s poll cycle times
  * fourteen parameters is a lot of MQTT for readings that mostly do not change,
@@ -1773,6 +1829,7 @@ static void poll_task(void *arg)
         }
 
         evaluate_alerts(&local);
+        cloud_watchdog();
 
         /* Periodic console summary. Deliberately AFTER the state is committed and
          * the cloud updated, so a slow console never delays either. */
@@ -2064,6 +2121,9 @@ static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, v
     if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "RainMaker cloud connected");
         s_cloud_up = true;
+        /* Earn the next one back, so a hub that connects, runs for a month and
+         * then wedges still gets its single reboot. */
+        s_cloud_reboot_done = false;
         event_push(EVT_CLOUD_ON, 0, 0, 0);
     } else if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_DISCONNECTED) {
         ESP_LOGW(TAG, "RainMaker cloud disconnected");

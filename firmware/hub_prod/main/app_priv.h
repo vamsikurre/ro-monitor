@@ -369,6 +369,26 @@ typedef enum {
  * fault. Covers the Aster's flush and backwash cycles, which stop the pump. */
 #define ALERT_IDLE_HOLD_MS      900000
 
+/*
+ * Cloud watchdog: reboot ONCE if RainMaker never connects.
+ *
+ * 30 minutes, and the number is not arbitrary - it has to clear both of the
+ * windows a reboot resets, or the watchdog silences the alerts it is meant to be
+ * protecting:
+ *
+ *   ALERT_IDLE_HOLD_MS  15 min  - hpp_last_seen_running_us seeds from boot
+ *   NOPROD_WINDOW_MIN   20 rows - s_hist[] is RAM and is wiped at boot
+ *
+ * At the 10 min first proposed, neither alert could ever fire again: the idle
+ * counter never reaches 15 and the history never reaches 20 rows. That trades
+ * the two alerts protecting the membranes for a cloud connection, invisibly,
+ * because everything would still look healthy.
+ *
+ * Nothing is watching during this window anyway - the failure it heals is silent
+ * by definition - so the extra 20 minutes costs nothing real.
+ */
+#define CLOUD_WATCHDOG_MS       1800000
+
 /* Over-current. Deliberately generous: this is a "something is badly wrong"
  * threshold, not a protection trip, and nothing here touches a motor circuit.
  * Per-channel because the two pumps are not the same size. Amps x10. */
