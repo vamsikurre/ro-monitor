@@ -709,8 +709,21 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 /* ----------------------------------------------------------------- console */
 
-/* Matches LOG_TAP_BYTES in app_main.c; the ring cannot hand back more. */
-#define LOG_SNAP_BYTES 4096
+/*
+ * One scratch buffer, shared by /cal and /logs.
+ *
+ * They had 18 kB and 4 kB of their own, which is 4 kB of DRAM held for the life
+ * of the hub so that two pages which cannot run at the same time could each have
+ * their own. esp_http_server dispatches one handler at a time - logs_get()
+ * already depended on that for its snapshot - so the second buffer bought
+ * nothing. On a board whose measured heap_min at first provisioning was 11,148
+ * bytes, 4 kB is not a rounding error.
+ *
+ * If that config ever gains a second worker task, these two need separating
+ * again, or a lock.
+ */
+#define WEB_SCRATCH_BYTES 18432
+static char s_scratch[WEB_SCRATCH_BYTES];
 
 /*
  * The console, in a browser, refreshing itself.
@@ -729,8 +742,8 @@ static esp_err_t logs_get(httpd_req_t *req)
     /* Static, not on the stack: httpd gets 6 kB and this is 4. Safe as a single
      * buffer because esp_http_server runs one handler at a time - if that config
      * ever gains a second worker task, this needs a lock. */
-    static char snap[LOG_SNAP_BYTES];
-    size_t n = log_tap_snapshot(snap, sizeof(snap));
+    char *const snap = s_scratch;
+    size_t n = log_tap_snapshot(snap, WEB_SCRATCH_BYTES);
 
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -944,14 +957,14 @@ static esp_err_t cal_get(httpd_req_t *req)
      * test was added - 69 bytes of headroom, and one more sentence anywhere would
      * have tipped it. The guard at the end catches only the FIRST truncation and
      * only after the fact: `n` is snprintf's would-have-written length, so once
-     * it passes sizeof(page) the `sizeof(page) - n` argument to every later call
+     * it passes WEB_SCRATCH_BYTES the `WEB_SCRATCH_BYTES - n` argument to every later call
      * underflows to a huge size_t and those writes run past the end of the
      * buffer. So the guard reports corruption rather than preventing it - keep
      * the headroom, do not rely on the check. Static, so BSS rather than stack. */
-    static char page[18432];   /* +1.5 k ground-floor rows, +2 k Wi-Fi, +1 k the scan list */
+    char *const page = s_scratch;   /* shared with /logs - see WEB_SCRATCH_BYTES */
     int n = 0;
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<!doctype html><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         "<title>RO Hub calibration</title>"
@@ -1010,7 +1023,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             snprintf(link_s, sizeof(link_s), "NOT connected");
         }
 
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<fieldset id=wifi><legend>Wi-Fi</legend>"
             "<p><b>%s</b> &middot; SSID <code>%s</code> &middot; IP <code>%s</code></p>"
             "<form method=post action='/api/cal/wifi' style='display:inline'>"
@@ -1019,10 +1032,10 @@ static esp_err_t cal_get(httpd_req_t *req)
             "<input type=hidden name=go value=1><button>Scan</button></form>",
             link_s, ssid_html, ip_s);
 
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<form method=post action='/api/cal/wifi'>");
         if (s_scan_n > 0) {
-            n += snprintf(page + n, sizeof(page) - n,
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
                 "<select name=ssid><option value=''>&mdash; pick a network &mdash;</option>");
             for (int i = 0; i < s_scan_n; i++) {
                 /* A scanned SSID is a string a stranger within radio range chose,
@@ -1030,21 +1043,21 @@ static esp_err_t cal_get(httpd_req_t *req)
                  * turns the quote into &#39; so it cannot close value='...'. */
                 char e[200];
                 html_escape(e, sizeof(e), s_scan[i].ssid);
-                n += snprintf(page + n, sizeof(page) - n,
+                n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
                     "<option value='%s'>%s &middot; %d dBm%s</option>",
                     e, e, s_scan[i].rssi, s_scan[i].open ? " &middot; OPEN" : "");
             }
-            n += snprintf(page + n, sizeof(page) - n, "</select> or type ");
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "</select> or type ");
         } else {
-            n += snprintf(page + n, sizeof(page) - n, "SSID ");
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "SSID ");
         }
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<input name=ssid_other size=14 maxlength=32> "
             "password <input name=pass type=password size=16 maxlength=63> "
             "<button>Join</button></form>");
 
         if (s_scan_n > 0) {
-            n += snprintf(page + n, sizeof(page) - n,
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
                 "<p><small>%d network%s, strongest first, scanned %lu s ago. A typed "
                 "name wins over the list, which is how you reach a hidden one."
                 "</small></p>",
@@ -1052,7 +1065,7 @@ static esp_err_t cal_get(httpd_req_t *req)
                 (unsigned long)((esp_timer_get_time() - s_scan_us) / 1000000));
         }
 
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<p><small><b>Reconnect</b> retries the credentials already stored and "
             "changes nothing else. That is the fix for the failure this page exists "
             "for: the hub boots faster than the access point, finds no network, "
@@ -1113,7 +1126,7 @@ static esp_err_t cal_get(httpd_req_t *req)
     fw_word(s_util_fw, sizeof s_util_fw, s->utility_fw);
     hub_state_unlock();
 
-    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=tanks><legend>Tank levels</legend>");
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=tanks><legend>Tank levels</legend>");
     for (int i = 0; i < CAL_TANK_COUNT; i++) {
         const cal_tank_cfg_t *c = cal_tank(i);
 
@@ -1138,7 +1151,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             src = !sump_online ? " (node offline)" : (sump_pressure ? " (4-20 mA loop)" : " (ultrasonic)");
         }
 
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<h3>%s</h3><p>live <b>%u mm</b> &rarr; <b>%s</b>%s"
             "<br><small>full and empty are both distances from the transducer FACE "
             "to the water. Measure straight down. <b>full</b> must be at least "
@@ -1150,18 +1163,18 @@ static esp_err_t cal_get(httpd_req_t *req)
             cal_tank_label(i), live[i], pctbuf, src, BLIND_ZONE_MM,
             cal_tank_key(i), c->full_mm, c->empty_mm);
         if (i == CAL_TANK_SUMP) {
-            n += snprintf(page + n, sizeof(page) - n,
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
                 "transducer range mm <input name=range size=6 value='%u'> ", c->press_range_mm);
         }
-        n += snprintf(page + n, sizeof(page) - n, "<button>Save</button></form>");
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<button>Save</button></form>");
     }
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<p><small>Empty must be a longer distance than full, and full must be "
         "outside the %d mm blind zone. Sump: transducer range is the 4-20 mA "
         "sensor's full scale in mm, 0 when the ultrasonic is fitted; the node's "
         "J-PRESS shunt decides which one it reads.</small></p></fieldset>", BLIND_ZONE_MM);
 
-    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=clamps><legend>Current clamps</legend>");
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=clamps><legend>Current clamps</legend>");
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         const cal_ct_cfg_t *c = cal_ct(i);
 
@@ -1195,7 +1208,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             }
         }
 
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/ct'>"
             "<input type=hidden name=ct value='%s'>"
@@ -1214,7 +1227,7 @@ static esp_err_t cal_get(httpd_req_t *req)
          * figure comes from a different observation than the other four - you
          * cannot derive it from a nameplate, only from watching the bore fail. */
         if (i == CAL_CT_BORE) {
-            n += snprintf(page + n, sizeof(page) - n,
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
                 "<form method=post action='/api/cal/ct_dry'>"
                 "dry below A <input name=dry size=5 value='%u.%u'> "
                 "<button>Save</button> "
@@ -1234,7 +1247,7 @@ static esp_err_t cal_get(httpd_req_t *req)
                 BORE_DRY_WINDOW_MIN);
         }
     }
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<p><small>An SCT-013-030 is nominally 30 A per volt, but two-point "
         "calibrate against a clamp meter: this is a trend instrument and "
         "consistency matters more than absolute accuracy. <b>Turns</b> is how many "
@@ -1245,7 +1258,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "this. Borewell and sump motor share one calibration across their three "
         "channels.</small></p></fieldset>");
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=fan><legend>Battery room fan</legend>"
         "<form method=post action='/api/cal/fan'>"
         "on above <input name=on size=5 value='%u.%u'> &deg;C, "
@@ -1260,12 +1273,12 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_LIMIT_HIGH_DECI / 10, FAN_LIMIT_HIGH_DECI % 10,
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
 
-    n += snprintf(page + n, sizeof(page) - n, "<fieldset id=wq><legend>Water quality probes</legend>");
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=wq><legend>Water quality probes</legend>");
     for (int i = 0; i < 2; i++) {          /* RWT, TWT - dosing and sump have no TDS probe */
         const cal_tank_cfg_t *c = cal_tank(i);
         char reading[360];
         wq_reading(reading, sizeof reading, &wq[i], wq_up[i]);
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/wq'><input type=hidden name=tank value=%d>"
             "k <input name=k size=5 value='%u.%02u'> &nbsp; "
@@ -1274,14 +1287,14 @@ static esp_err_t cal_get(httpd_req_t *req)
             i == CAL_TANK_RWT ? "RWT" : "TWT", reading, i,
             c->tds_k_x100 / 100, c->tds_k_x100 % 100, c->tds_min_pct);
     }
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<p><small><b>k</b> scales the TDS reading: a 707 ppm sachet reading 640 wants "
         "707/640 = 1.10. Re-do it after extending a probe lead. <b>Under water at</b> is "
         "the level where the probe tip goes dry: below it the hub keeps the last good "
         "reading and the dashboard shows its age, instead of believing a probe in air. "
         "0.50&ndash;2.00 and 0&ndash;100.</small></p></fieldset>");
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=plant><legend>Plant output</legend>"
         "<form method=post action='/api/cal/plant'>"
         "rated permeate <input name=lph size=5 value='%u'> L/h <button>Save</button></form>"
@@ -1290,7 +1303,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "here instead &mdash; it falls as the membranes age. %d&ndash;%d.</small></p></fieldset>",
         cal_plant_lph(), PLANT_LPH_MIN, PLANT_LPH_MAX);
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=gf><legend>Ground floor nodes</legend>"
         "<p><small>Wi-Fi nodes the hub polls every %d s. Give each a fixed address on the "
         "router (or in its firmware) and type it here. Empty = not fitted: nothing is polled "
@@ -1301,7 +1314,7 @@ static esp_err_t cal_get(httpd_req_t *req)
     const char *gf_fw[CAL_GF_COUNT] = { s_sump_fw, s_util_fw };
     for (int i = 0; i < CAL_GF_COUNT; i++) {
         const char *ip = cal_gf_ip(i);
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/gf'>"
             "<input type=hidden name=node value='%s'>"
@@ -1311,20 +1324,20 @@ static esp_err_t cal_get(httpd_req_t *req)
             ip[0] == '\0' ? "not fitted" : (gf_on[i] ? "online" : "configured, not answering"),
             cal_gf_key(i), ip);
         if (ip[0] && gf_on[i] && gf_fw[i][0]) {
-            n += snprintf(page + n, sizeof(page) - n, "<p><small>fw %s</small></p>", gf_fw[i]);
+            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<p><small>fw %s</small></p>", gf_fw[i]);
         }
     }
-    n += snprintf(page + n, sizeof(page) - n, "</fieldset>");
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "</fieldset>");
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=relays><legend>Relay test</legend>");
     for (int i = 0; i < RELAY_HUB_COUNT; i++) {
-        n += snprintf(page + n, sizeof(page) - n,
+        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
             "<form method=post action='/api/cal/relay' style='display:inline'>"
             "<input type=hidden name=n value='%d'>"
             "<button>%d &middot; %s</button></form> ", i + 1, i + 1, relay_name(i));
     }
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<form method=post action='/api/cal/relay' style='display:inline'>"
         "<input type=hidden name=n value='%d'>"
         "<button>%d &middot; Battery fan</button></form>"
@@ -1349,7 +1362,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         RELAY_TEST_MS / 1000, RELAY_TEST_MS / 1000,
         (RELAY_TEST_MS + POLL_CYCLE_MS) / 1000);
 
-    n += snprintf(page + n, sizeof(page) - n,
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset><legend>This page's password</legend>"
         "<form method=post action='/api/cal/pass'>"
         "new password <input name=pass type=password size=20> <button>Change</button></form>"
@@ -1357,7 +1370,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "HTTP on the local network &mdash; adequate for a calibration constant, not "
         "for anything that moves water.</small></p></fieldset>", CAL_USER);
 
-    if (n >= (int)sizeof(page)) {
+    if (n >= (int)WEB_SCRATCH_BYTES) {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
