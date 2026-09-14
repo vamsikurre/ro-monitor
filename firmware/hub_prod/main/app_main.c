@@ -536,6 +536,8 @@ typedef struct {
 
 static alert_t s_al_twt_full, s_al_rwt_full, s_al_dos_low, s_al_bat_hot;
 static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_noprod;
+/* TEMPORARY, see ALERT_RUN_HOLD_MS - goes when WIRING.md 5.3 is resolved. */
+static alert_t s_al_longrun;
 static alert_t s_al_bore_dry;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
@@ -745,6 +747,43 @@ static void evaluate_alerts(const hub_state_t *s)
     snprintf(msg, sizeof(msg), "RO producing nothing: HPP on %d min, TWT stuck at %d%%. "
              "Check membranes, reject valve and feed.", NOPROD_WINDOW_MIN, s->twt.pct);
     alert_eval(&s_al_noprod, s->no_production, msg, ALERT_REPEAT_MS, 3);
+
+    /*
+     * TEMPORARY backstop for the overflow of 2026-09-13 - remove with
+     * ALERT_RUN_HOLD_MS when WIRING.md 5.3 is resolved.
+     *
+     * A stop shorter than ALERT_RUN_GAP_MS does not end the run. The Aster
+     * flushes and backwashes and the HPP drops out for a few minutes doing it,
+     * so a clock reset by every gap would never reach two hours - which is
+     * precisely the run this needs to catch.
+     *
+     * confirm is 1 because the two-hour timer IS the confirmation. A flapping
+     * CT cannot raise this; the only thing it can do is reset the clock, and
+     * the gap tolerance above is what stops that too.
+     */
+    {
+        static int64_t run_start_us = 0, off_since_us = 0;
+        if (s->hpp.running) {
+            off_since_us = 0;
+            if (run_start_us == 0) {
+                run_start_us = now_us;
+            }
+        } else {
+            if (off_since_us == 0) {
+                off_since_us = now_us;
+            }
+            if (now_us - off_since_us >= (int64_t)ALERT_RUN_GAP_MS * 1000) {
+                run_start_us = 0;
+            }
+        }
+        bool run_too_long = run_start_us != 0 &&
+                            (now_us - run_start_us) >= (int64_t)ALERT_RUN_HOLD_MS * 1000;
+        snprintf(msg, sizeof(msg),
+                 "RO running %d h nonstop, TWT %d%%. Tank-full stop is unreliable - go and look.",
+                 (int)((now_us - (run_start_us ? run_start_us : now_us)) / 3600000000LL),
+                 s->twt.pct);
+        alert_eval(&s_al_longrun, run_too_long, msg, ALERT_REPEAT_MS, 1);
+    }
 
     /* Dry borewell. Repeats like the no-production alert, and for the same
      * reason: a submersible lifting nothing is destroying its own seals, and

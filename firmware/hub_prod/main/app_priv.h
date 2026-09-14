@@ -370,6 +370,30 @@ typedef enum {
 #define ALERT_IDLE_HOLD_MS      900000
 
 /*
+ * TEMPORARY - remove when WIRING.md 5.3 is resolved.
+ *
+ * The treated water tank has no trustworthy full-stop: the Aster's TWT FLOTY
+ * interlock is intermittent while our sense wiring is on it, and on 2026-09-13
+ * the plant ran through a full tank and overflowed. Until the wiring is fixed
+ * and every interlock re-verified, this is the backstop - the hub cannot stop
+ * the plant, but it can say something is wrong before the water reaches the
+ * floor.
+ *
+ * Two hours to first alert, then hourly on ALERT_REPEAT_MS. A normal production
+ * run is well under two hours, so this should be silent on a healthy plant; if
+ * it is not, lengthen it rather than muting it, because a muted app is how the
+ * real one gets missed.
+ *
+ * ALERT_RUN_GAP_MS exists because "running continuously" cannot mean what it
+ * says here. The Aster flushes and backwashes and the HPP legitimately drops
+ * out for a few minutes at a time - ALERT_IDLE_HOLD_MS carries the same note
+ * from the other direction. A run clock reset by every backwash would never
+ * reach two hours, so only a stop longer than this gap ends a run.
+ */
+#define ALERT_RUN_HOLD_MS       7200000
+#define ALERT_RUN_GAP_MS        300000
+
+/*
  * Cloud watchdog: reboot ONCE if RainMaker never connects.
  *
  * 30 minutes, and the number is not arbitrary - it has to clear both of the
