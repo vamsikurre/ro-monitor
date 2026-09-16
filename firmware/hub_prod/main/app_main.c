@@ -2479,6 +2479,15 @@ void app_main(void)
     /* OTA from the RainMaker dashboard, into whichever of the two app slots is
      * not running. Same mechanism, same dashboard, same workflow as the gates. */
     esp_rmaker_ota_enable_default();
+    /* A Reboot control in the app, and nothing else from the system service:
+     * a factory or Wi-Fi reset from a phone strands a hub on a roof. Needed
+     * because an OTA into 5368ad3 failed for heap (DASHBOARD_AND_RAINMAKER
+     * 4.10) and the only reboot available was a walk to the RO room. */
+    esp_rmaker_system_serv_config_t sys_cfg = {
+        .flags = SYSTEM_SERV_FLAG_REBOOT,
+        .reboot_seconds = 2,
+    };
+    esp_rmaker_system_service_enable(&sys_cfg);
     esp_rmaker_schedule_enable();
     esp_rmaker_timezone_service_enable();
     esp_rmaker_scenes_enable();

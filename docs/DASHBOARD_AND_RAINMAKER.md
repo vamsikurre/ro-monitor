@@ -301,11 +301,15 @@ never began. Two consequences:
   same amount. See `sdkconfig.defaults` for the reasoning.
 * **The image that has to receive an OTA is the one already running**, so a
   config change cannot rescue the hub that needs it. Procedure for a hub on a
-  pre-dynamic-buffer build: reboot it first (RainMaker app → node → *Reboot*,
-  or power cycle), close every dashboard tab so httpd holds no sockets, and
+  pre-dynamic-buffer build: reboot it first, close every dashboard tab so
+  httpd holds no sockets, and
   start the job within a few minutes of it reconnecting, while the heap is
   unfragmented. Check `/api/telemetry` → `sys.heap_free` before starting; below
-  ~50 KB, do not bother.
+  ~50 KB, do not bother. **Rebooting:** builds up to `8a92252` have no remote
+  reboot at all — the RainMaker system service was never enabled — so it is a
+  power cycle at the RO room. From the commit after, the node's page in the
+  RainMaker app carries a *Reboot* control (reboot only; factory and Wi-Fi
+  reset are deliberately not exposed from a phone).
 
 Measured on a bench hub, 2026-09-08, all on firmware `122f81e`:
 
