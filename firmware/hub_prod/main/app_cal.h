@@ -133,6 +133,13 @@ uint16_t cal_fan_off_deci_c(void);
 uint16_t  cal_plant_lph(void);
 esp_err_t cal_set_plant_lph(uint16_t lph);
 
+/* Rated input watts of the two roof pumps and the flat tariff in paise per
+ * kWh, for the dashboard's energy and cost columns. */
+uint16_t  cal_motor_w(cal_ct_t c);
+esp_err_t cal_set_motor_w(cal_ct_t c, uint16_t w);
+uint16_t  cal_tariff_paise(void);
+esp_err_t cal_set_tariff_paise(uint16_t paise);
+
 /* Cumulative pump run seconds, written on each stop - a handful of NVS writes a
  * day. This is the figure that survives a power cut. */
 uint32_t  cal_runtime_get(cal_ct_t c);

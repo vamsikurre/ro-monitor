@@ -177,6 +177,8 @@ row in this pass.
 | **Dosing Level < 20%** | `WARNING` | ⚠️ **Dosing Chemical Low!** Replenish anti-scalant / dosing reagent tank. | Astero Dosing Relay opened; Alarm flag set. |
 | **Battery Room Temp > 38°C**| `ALERT` | 🌡️ **High Battery Room Temperature!** Room temp is {X}°C. Exhaust fan turned ON. | Node `0x04` Exhaust Fan Relay automatically energized. |
 | **Astero Controller Trip** | `CRITICAL` | ⚠️ **RO Controller Trip!** Aster Alarm contact active. Check feed pressure (LPS), dosing level and pump overload. | System status set to FAULT; Alarm flagged in UI. |
+| **RWP contactor in** (plant on) | `INFO` | RO plant started. RWT {X}%, TWT {Y}%. Three poll cycles of confirmation; the RWP rather than the HPP because the HPP drops out during flushes. | None. |
+| **RWP contactor out** (plant off) | `INFO` | RO plant stopped after {H} h {MM} min. TWT {Y}%. Not raised for a plant already idle when the hub booted. | None. |
 | **Wi-Fi Node Disconnect** | `WARNING` | 📡 **Node offline: 0x05 Sump / 0x06 Utility.** Fifteen seconds of no reply; re-probed every 30 s. | None to revert — nothing here moves water. The node's status is set to OFFLINE, its cards hatch on the dashboard, and this alert names it. |
 
 **Two constraints on the `alarm` field, both from `WIRING.md` Section 6:**

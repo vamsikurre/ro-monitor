@@ -55,6 +55,10 @@
      the secondary encoding that warn band requires. Keep the dashes. */
   --tr-rwt:#199e70; --tr-twt:#3987e5; --tr-dos:#c98500; --tr-sump:#d95926;
   --tr-ro:#d55181;  --tr-bat:#9085e9; --tr-util:#2FA3B8;
+  /* Motor current, its own lane, so this pair is only ever read against each
+     other: yellow and sky are far apart on every axis and unlike anything in
+     the lanes above or below. */
+  --tr-hpp:#f2c14e; --tr-rwp:#5bc0eb;
   /* status — reserved, never a fluid. ΔE 22.4 normal / 10.0 deutan */
   /* fault was #D93E68, 4.18:1 on panel - close, but it is the colour on the
      OFFLINE chip, which is the one word on this page that has to be readable
@@ -463,6 +467,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .trend .ln.rwt{stroke:var(--tr-rwt)} .trend .ln.twt{stroke:var(--tr-twt)} .trend .ln.dos{stroke:var(--tr-dos)}
 .trend .ln.ro{stroke:var(--tr-ro)} .trend .ln.bat{stroke:var(--tr-bat); stroke-dasharray:4 3}
 .trend .ln.sump{stroke:var(--tr-sump); stroke-dasharray:2 3} .trend .ln.util{stroke:var(--tr-util); stroke-dasharray:1 3}
+.trend .ln.hpp{stroke:var(--tr-hpp)} .trend .ln.rwp{stroke:var(--tr-rwp)}
 /* The label wears its line's colour. That is the whole identification story:
    seven lines, seven hues, and the number in the gutter painted the same as the
    line it came off. */
@@ -471,6 +476,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .trend .lbl.dos{fill:var(--tr-dos)} .trend .lbl.sump{fill:var(--tr-sump)}
 .trend .lbl.ro{fill:var(--tr-ro)}   .trend .lbl.bat{fill:var(--tr-bat)}
 .trend .lbl.util{fill:var(--tr-util)}
+.trend .lbl.hpp{fill:var(--tr-hpp)}  .trend .lbl.rwp{fill:var(--tr-rwp)}
 /* Drawn only when the de-collision below has pushed a label off its line's
    height, which is exactly when colour alone stops being enough - two lines
    ending a pixel apart get two labels 12px apart, and without this neither
@@ -480,6 +486,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 .trend .leader.dos{stroke:var(--tr-dos)} .trend .leader.sump{stroke:var(--tr-sump)}
 .trend .leader.ro{stroke:var(--tr-ro)}   .trend .leader.bat{stroke:var(--tr-bat)}
 .trend .leader.util{stroke:var(--tr-util)}
+.trend .leader.hpp{stroke:var(--tr-hpp)}  .trend .leader.rwp{stroke:var(--tr-rwp)}
 .trend .xh{stroke:var(--line-2); stroke-width:1; pointer-events:none}
 .trend .tip{position:absolute; top:0; pointer-events:none; background:var(--ground-c); border:1px solid var(--line-2);
   border-radius:var(--r); padding:6px 8px; font:11px var(--mono); color:var(--ink-2); white-space:nowrap; display:none; z-index:5}
@@ -489,7 +496,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
    wide the four run times and the litres get ~30px each, which truncates. So
    the panel spans two, like the trend strip and the event log already do, and
    the row then packs level with the trend instead of leaving a gap. */
-.run{display:grid; grid-template-columns:auto repeat(5,minmax(0,1fr)); gap:6px 12px; align-items:baseline}
+.run{display:grid; grid-template-columns:auto repeat(7,minmax(0,1fr)); gap:6px 12px; align-items:baseline}
 .run .h:nth-child(n+2),.run .v{text-align:right}
 .run .h{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); font-weight:600}
 .run .p{font-family:var(--mono); font-size:12px; color:var(--ink-2)}
@@ -575,7 +582,7 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
      57px past its cell. The floor is the width of the widest unbreakable
      header now; the table already scrolls, which is the trade this floor was
      chosen for in the first place. */
-  .run{gap:6px 7px; grid-template-columns:auto repeat(5,minmax(58px,1fr)); overflow-x:auto}
+  .run{gap:6px 7px; grid-template-columns:auto repeat(7,minmax(58px,1fr)); overflow-x:auto}
   .run .p,.run .v{font-size:11px} .run .h{letter-spacing:.06em}
   .run .sum{position:sticky; left:0}
 }
@@ -2217,7 +2224,7 @@ const demo = {
   },
   run: { hpp: { today_s: 13380, starts: 4, total_s: 2209000 }, rwp: { today_s: 13920, starts: 4, total_s: 2231000 },
          borewell: { today_s: 7200, starts: 3, total_s: 918000 }, sump_motor: { today_s: 5040, starts: 6, total_s: 604000 },
-         plant_lph: 900 },
+         plant_lph: 900, hpp_w: 2200, rwp_w: 750, tariff_paise: 1015 },
   quality: {
     rwt: { ppm: 612, t: 28.4, fitted: true, live: false, age_s: 14200 },
     twt: { ppm: 31, t: 28.1, fitted: true, live: true, age_s: 4 },
@@ -2311,7 +2318,7 @@ let HIST = [], DAYS = [];
    clips everything longer - "RWT 100%" wants ~53 px, and the names this branch
    added, "SUMP 100%" and "UTIL 31.2", want ~59 px. 74 gives 68 px, which holds
    the longest label at every value it can take. */
-const TREND_W = 720, LANE_H = 12, TANK_H = 96, TEMP_H = 64, GAP = 22, PAD_L = 34, PAD_R = 74;
+const TREND_W = 720, LANE_H = 12, AMP_H = 56, TANK_H = 96, TEMP_H = 64, GAP = 22, PAD_L = 34, PAD_R = 74;
 
 function hhmm(t) { const d = new Date(t * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 
@@ -2339,7 +2346,7 @@ function drawTrend() {
   $("#trendSpan").textContent = "Trends · last " + spanTxt;
   const PLOT_W = TREND_W - PAD_L - PAD_R;
   const X = t => PAD_L + (t - t0) / span * PLOT_W;
-  const laneY = 14, tankY = laneY + 2 * LANE_H + GAP, tempY = tankY + TANK_H + GAP + 12;
+  const laneY = 14, ampY = laneY + 2 * LANE_H + GAP + 12, tankY = ampY + AMP_H + GAP, tempY = tankY + TANK_H + GAP + 12;
   const H = tempY + TEMP_H + 18;
   /* The strip reached the accessibility tree as an unnamed image. The hover
      tooltip is the only way to read a value off it, and that needs a pointer,
@@ -2348,7 +2355,7 @@ function drawTrend() {
     viewBox: `0 0 ${TREND_W} ${H}`, role: "img",
     /* "from 16:06 to 16:06" is what a full 24 h strip gives you, since both
        ends land on the same clock time. Say the span and where it ends. */
-    "aria-label": `Pump lanes, tank levels and room temperature, last ${spanTxt} ending ${hhmm(t1)}`,
+    "aria-label": `Pump lanes, motor current, tank levels and room temperature, last ${spanTxt} ending ${hhmm(t1)}`,
   });
   const txt = (x, y, str, cls, anchor) => { const t = el("text", { x, y, class: cls, "text-anchor": anchor || "start" }); t.textContent = str; return t; };
 
@@ -2430,6 +2437,23 @@ function drawTrend() {
     { pt: line(3, "dos", Yt),  name: "DOS",  fmt: pct, cls: "dos" },
     { pt: line(9, "sump", Yt), name: "SUMP", fmt: pct, cls: "sump" },
   ], tankY + 4, tankY + TANK_H + 4);
+
+  /* motor current, autoscaled to the highest reading so a spike stands out.
+     The lanes above say when a contactor was in; this says what the motor was
+     drawing while it was, which is the reading that goes wrong first. */
+  const amps = rows.flatMap(r => [r[5], r[6]]).filter(v => v !== null && v !== undefined && v >= 0);
+  const hiA = Math.max(1, Math.ceil((amps.length ? Math.max(...amps) : 0) / 10));
+  const Ya = v => ampY + AMP_H - v / 10 / hiA * AMP_H;
+  [0, hiA].forEach(a => {
+    svg.appendChild(el("line", { x1: PAD_L, x2: TREND_W - PAD_R, y1: Ya(a * 10), y2: Ya(a * 10), class: "grid" }));
+    svg.appendChild(txt(PAD_L - 6, Ya(a * 10) + 3.5, a + "A", "ax", "end"));
+  });
+  svg.appendChild(txt(0, ampY - 6, "MOTOR A", "lane"));
+  const amp = v => (v / 10).toFixed(1) + "A";
+  placeLabels([
+    { pt: line(5, "hpp", Ya), name: "HPP", fmt: amp, cls: "hpp" },
+    { pt: line(6, "rwp", Ya), name: "RWP", fmt: amp, cls: "rwp" },
+  ], ampY + 4, ampY + AMP_H + 4);
 
   /* room temperatures, autoscaled to the data with 1 °C headroom */
   const temps = rows.flatMap(r => [r[7], r[8], r[12]]).filter(v => v !== null && v !== undefined);
@@ -2581,7 +2605,9 @@ const hm = sec => { const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 
 
 /* Today from the live counters; week (Mon-today) and month (1st-today) from the
  * hub's day ledger, with today swapped for the live figure so the table never
- * disagrees with itself. Litres = HPP run x rated L/h - a rate, not a meter. */
+ * disagrees with itself. Litres = HPP run x rated L/h, kWh = run x rated W per
+ * roof pump, cost = kWh x the flat tariff from /cal - rates, not meters. The
+ * ground-floor motors are on another supply and are left out on purpose. */
 function periodTotals(R) {
   const now = new Date(), midToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
   const monday = midToday - ((now.getDay() + 6) % 7) * 86400;
@@ -2598,6 +2624,8 @@ function drawRun(s) {
   if (!R) { host.innerHTML = `<div class="empty">No run data</div>`; return; }
   const P = periodTotals(R), days = dosingDays();
   const L = sec => Math.round(sec / 3600 * R.plant_lph).toLocaleString();
+  const kwh = p => (p.hpp * R.hpp_w + p.rwp * R.rwp_w) / 3600 / 1000;
+  const rs = p => Math.round(kwh(p) * R.tariff_paise / 100).toLocaleString("en-IN");
   /* The ground-floor motors are only observable through node 0x06, and the
      firmware refuses to account a motor it cannot see (gf_seen). Printing that
      absence as "0h 00m" and "0BORE 0SUMP", in the same typeface as the roof
@@ -2608,11 +2636,13 @@ function drawRun(s) {
   const gfLive = !!un && un.state === "ONLINE" && !!un.ip;
   const g = v => gfLive ? v : "–";
   const row = (name, p) => `<span class="p">${name}</span><span class="v">${hm(p.hpp)}</span><span class="v">${hm(p.rwp)}</span>` +
-    `<span class="v">${g(hm(p.bore))}</span><span class="v">${g(hm(p.smot))}</span><span class="v">${L(p.hpp)}<u>L</u></span>`;
+    `<span class="v">${g(hm(p.bore))}</span><span class="v">${g(hm(p.smot))}</span><span class="v">${L(p.hpp)}<u>L</u></span>` +
+    `<span class="v">${kwh(p).toFixed(1)}<u>kWh</u></span><span class="v">${rs(p)}</span>`;
   const lifeH = sec => Math.floor(sec / 3600).toLocaleString();
   host.innerHTML =
     `<span class="h"></span><span class="h">HPP run</span><span class="h">RWP run</span>` +
     `<span class="h">Bore run</span><span class="h">Sump run</span><span class="h">Produced</span>` +
+    `<span class="h">Energy</span><span class="h">Cost ₹</span>` +
     row("Today", P.today) + row("This week", P.week) + row("This month", P.month) +
     `<div class="sum">
        <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${g(R.borewell.starts)}<u>BORE</u> ${g(R.sump_motor.starts)}<u>SUMP</u></span></div>

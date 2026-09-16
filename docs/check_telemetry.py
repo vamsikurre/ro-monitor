@@ -64,7 +64,7 @@ REQUIRED = [
     'run.rwp.today_s', 'run.rwp.starts', 'run.rwp.total_s',
     'run.borewell.today_s', 'run.borewell.starts', 'run.borewell.total_s',
     'run.sump_motor.today_s', 'run.sump_motor.starts', 'run.sump_motor.total_s',
-    'run.plant_lph',
+    'run.plant_lph', 'run.hpp_w', 'run.rwp_w', 'run.tariff_paise',
     'nodes',
 ]
 

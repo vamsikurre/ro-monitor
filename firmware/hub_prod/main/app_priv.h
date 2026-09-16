@@ -475,6 +475,20 @@ typedef enum {
 #define PLANT_LPH_MIN           100
 #define PLANT_LPH_MAX           5000
 
+/* Rated motor input, watts, for "kWh" = run hours x this. Same idea as the
+ * L/h above - a rate the hub cannot measure, so /cal owns it. The HPP is the
+ * 3 HP behind the TCDP302 contactor (RO_HARDWARE_ANALYSIS.md 3.1); the RWP
+ * default is a 1 HP guess until its nameplate is read. TARIFF is paise per
+ * kWh, flat, for the cost column beside it: the top LT-II A commercial slab,
+ * Rs 10.15, since the plant's units land on top of whatever else the meter
+ * carries. */
+#define MOTOR_W_DEFAULT_HPP     2200
+#define MOTOR_W_DEFAULT_RWP     750
+#define MOTOR_W_MIN             50
+#define MOTOR_W_MAX             20000
+#define TARIFF_PAISE_DEFAULT    1015
+#define TARIFF_PAISE_MAX        10000
+
 /* 24 h of history in RAM, for the dashboard's trend strip. Gone on reboot on
  * purpose: RainMaker time series holds the long record, this only has to answer
  * "what happened since last night".
@@ -717,6 +731,11 @@ typedef struct {
     uint32_t hpp_run_today_s, rwp_run_today_s;
     uint16_t hpp_starts_today, rwp_starts_today;
     uint32_t hpp_run_total_s, rwp_run_total_s;
+    /* The RWP as run_account() sees it (a floating opto holds the last state),
+     * and how long the current or most recent run has lasted. The plant on/off
+     * alerts read these rather than the raw contactor bit. */
+    bool     rwp_acct_on;
+    uint32_t rwp_run_s;
     /* Same three figures for the ground-floor motors. They are accounted only
      * while node 0x06 is answering: an offline node reports nothing, and
      * neither a stop that may not have happened nor hours of running nobody

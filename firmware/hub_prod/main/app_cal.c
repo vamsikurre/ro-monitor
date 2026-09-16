@@ -66,6 +66,8 @@ static const char *s_tank_keys[CAL_TANK_COUNT]   = { "rwt", "twt", "dos", "sump"
 static const char *s_tank_labels[CAL_TANK_COUNT] = { "Raw Water", "Treated Water", "Dosing", "Sump" };
 static const char *s_ct_keys[CAL_CT_COUNT]       = { "hpp", "rwp", "bore", "smot" };
 static uint16_t s_plant_lph = PLANT_LPH_DEFAULT;
+static uint16_t s_motor_w[CAL_CT_COUNT] = { [CAL_CT_HPP] = MOTOR_W_DEFAULT_HPP, [CAL_CT_RWP] = MOTOR_W_DEFAULT_RWP };
+static uint16_t s_tariff_paise = TARIFF_PAISE_DEFAULT;
 static uint32_t s_runtime_s[CAL_CT_COUNT];
 static cal_day_t s_days[CAL_DAYS];
 static uint16_t  s_day_n;
@@ -166,6 +168,9 @@ esp_err_t cal_init(void)
     load_u16(h, "fan", "on", &s_fan_on_deci_c);
     load_u16(h, "fan", "off", &s_fan_off_deci_c);
     load_u16(h, "plant", "lph", &s_plant_lph);
+    load_u16(h, "hpp", "w", &s_motor_w[CAL_CT_HPP]);
+    load_u16(h, "rwp", "w", &s_motor_w[CAL_CT_RWP]);
+    load_u16(h, "plant", "tariff", &s_tariff_paise);
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         char key[16];
         key_for(key, sizeof(key), s_ct_keys[i], "rt");
@@ -618,6 +623,34 @@ esp_err_t cal_set_plant_lph(uint16_t lph)
     }
     s_plant_lph = lph;
     return store_u16("plant", "lph", lph);
+}
+
+uint16_t cal_motor_w(cal_ct_t c)
+{
+    return (c < CAL_CT_COUNT) ? s_motor_w[c] : 0;
+}
+
+esp_err_t cal_set_motor_w(cal_ct_t c, uint16_t w)
+{
+    if (c > CAL_CT_RWP || w < MOTOR_W_MIN || w > MOTOR_W_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_motor_w[c] = w;
+    return store_u16(c == CAL_CT_HPP ? "hpp" : "rwp", "w", w);
+}
+
+uint16_t cal_tariff_paise(void)
+{
+    return s_tariff_paise;
+}
+
+esp_err_t cal_set_tariff_paise(uint16_t paise)
+{
+    if (paise == 0 || paise > TARIFF_PAISE_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_tariff_paise = paise;
+    return store_u16("plant", "tariff", paise);
 }
 
 uint32_t cal_runtime_get(cal_ct_t c)

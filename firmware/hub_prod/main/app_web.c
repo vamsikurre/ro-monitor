@@ -586,7 +586,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"rwp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
           "\"borewell\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
           "\"sump_motor\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
-          "\"plant_lph\":%u"
+          "\"plant_lph\":%u,\"hpp_w\":%u,\"rwp_w\":%u,\"tariff_paise\":%u"
         "},"
         "\"nodes\":["
           "{\"id\":\"0x02\",\"role\":\"Raw Water\",\"link\":\"RS485\",\"state\":\"%s\",\"age_s\":%d},"
@@ -681,7 +681,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (unsigned long)s->rwp_run_today_s, (unsigned)s->rwp_starts_today, (unsigned long)s->rwp_run_total_s,
         (unsigned long)s->bore_run_today_s, (unsigned)s->bore_starts_today, (unsigned long)s->bore_run_total_s,
         (unsigned long)s->smot_run_today_s, (unsigned)s->smot_starts_today, (unsigned long)s->smot_run_total_s,
-        (unsigned)cal_plant_lph(),
+        (unsigned)cal_plant_lph(), (unsigned)cal_motor_w(CAL_CT_HPP), (unsigned)cal_motor_w(CAL_CT_RWP),
+        (unsigned)cal_tariff_paise(),
 
         link_word(s->rwt.last_ok_us, s->rwt_online), age_s(s->rwt.last_ok_us),
         link_word(s->twt.last_ok_us, s->twt_online), age_s(s->twt.last_ok_us),
@@ -1297,11 +1298,19 @@ static esp_err_t cal_get(httpd_req_t *req)
     n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=plant><legend>Plant output</legend>"
         "<form method=post action='/api/cal/plant'>"
-        "rated permeate <input name=lph size=5 value='%u'> L/h <button>Save</button></form>"
+        "rated permeate <input name=lph size=5 value='%u'> L/h &nbsp; "
+        "HPP <input name=hpp_w size=5 value='%u'> W &nbsp; "
+        "RWP <input name=rwp_w size=5 value='%u'> W &nbsp; "
+        "tariff <input name=tariff size=5 value='%u'> paise/kWh <button>Save</button></form>"
         "<p><small>Multiplies HPP run hours into \"litres today\" on the dashboard. "
         "Nameplate is 1200; read the skid's flow meter while producing and put that "
-        "here instead &mdash; it falls as the membranes age. %d&ndash;%d.</small></p></fieldset>",
-        cal_plant_lph(), PLANT_LPH_MIN, PLANT_LPH_MAX);
+        "here instead &mdash; it falls as the membranes age. %d&ndash;%d. "
+        "The watts multiply run hours into the kWh column: nameplate input power, or "
+        "better, the meter's reading with one pump running. %d&ndash;%d. The tariff "
+        "turns that into rupees, flat: 1015 = Rs 10.15 per unit, the top LT-II A "
+        "slab.</small></p></fieldset>",
+        cal_plant_lph(), cal_motor_w(CAL_CT_HPP), cal_motor_w(CAL_CT_RWP), cal_tariff_paise(),
+        PLANT_LPH_MIN, PLANT_LPH_MAX, MOTOR_W_MIN, MOTOR_W_MAX);
 
     n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=gf><legend>Ground floor nodes</legend>"
@@ -1698,12 +1707,29 @@ static esp_err_t cal_gf_post(httpd_req_t *req)
 
 static esp_err_t cal_plant_post(httpd_req_t *req)
 {
-    char body[64], lph[8];
+    char body[96], val[8];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
-    if (!form_field(body, "lph", lph, sizeof(lph))) return bad(req, "need lph");
-    int v = atoi(lph);
+    if (!form_field(body, "lph", val, sizeof(val))) return bad(req, "need lph");
+    int v = atoi(val);
     if (v <= 0 || cal_set_plant_lph((uint16_t)v) != ESP_OK) {
         return bad(req, "rejected: 100-5000 L/h");
+    }
+    /* The rest are optional so an old bookmark posting lph alone still works. */
+    static const struct { const char *name; cal_ct_t ct; } w[] = {
+        { "hpp_w", CAL_CT_HPP }, { "rwp_w", CAL_CT_RWP },
+    };
+    for (size_t i = 0; i < sizeof(w) / sizeof(w[0]); i++) {
+        if (!form_field(body, w[i].name, val, sizeof(val))) continue;
+        v = atoi(val);
+        if (v <= 0 || cal_set_motor_w(w[i].ct, (uint16_t)v) != ESP_OK) {
+            return bad(req, "rejected: 50-20000 W");
+        }
+    }
+    if (form_field(body, "tariff", val, sizeof(val))) {
+        v = atoi(val);
+        if (v <= 0 || cal_set_tariff_paise((uint16_t)v) != ESP_OK) {
+            return bad(req, "rejected: 1-10000 paise/kWh");
+        }
     }
     return redirect_to(req, "/cal#plant");
 }

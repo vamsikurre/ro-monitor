@@ -539,6 +539,7 @@ static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_nop
 /* TEMPORARY, see ALERT_RUN_HOLD_MS - goes when WIRING.md 5.3 is resolved. */
 static alert_t s_al_longrun;
 static alert_t s_al_bore_dry;
+static alert_t s_al_plant_on, s_al_plant_off;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
  * A non-zero value re-notifies on that interval for as long as the condition
@@ -783,6 +784,22 @@ static void evaluate_alerts(const hub_state_t *s)
                  (int)((now_us - (run_start_us ? run_start_us : now_us)) / 3600000000LL),
                  s->twt.pct);
         alert_eval(&s_al_longrun, run_too_long, msg, ALERT_REPEAT_MS, 1);
+    }
+
+    /* Plant on / off. The RWP is the pump that runs the whole cycle - the HPP
+     * drops out for flushes and backwashes - so its contactor is "plant on"
+     * and "plant off", and the off message carries the run length so a
+     * ninety-second run and a six-hour one read differently in the app.
+     * seen_run stops a hub booting beside an idle plant from announcing a stop
+     * that happened before it was watching. */
+    {
+        static bool seen_run = false;
+        if (s->rwp_acct_on) seen_run = true;
+        snprintf(msg, sizeof(msg), "RO plant started. RWT %d%%, TWT %d%%.", s->rwt.pct, s->twt.pct);
+        alert_eval(&s_al_plant_on, s->rwp_acct_on, msg, 0, 3);
+        snprintf(msg, sizeof(msg), "RO plant stopped after %u h %02u min. TWT %d%%.",
+                 (unsigned)(s->rwp_run_s / 3600), (unsigned)(s->rwp_run_s % 3600 / 60), s->twt.pct);
+        alert_eval(&s_al_plant_off, seen_run && !s->rwp_acct_on, msg, 0, 3);
     }
 
     /* Dry borewell. Repeats like the no-production alert, and for the same
@@ -1681,6 +1698,8 @@ static void poll_task(void *arg)
             run_account(&rwp_acct, true, local.rwp.ac_floating ? rwp_acct.was_running : local.rwp.running,
                         local.rwp.deci_amps, now_us,
                         &local.rwp_run_today_s, &local.rwp_starts_today, &local.rwp_run_total_s);
+            local.rwp_acct_on = rwp_acct.was_running;
+            local.rwp_run_s   = rwp_acct.run_since_start_ms / 1000;
             /* Node 0x06 answering IS "these two are observable". An unfitted
              * node counts as unobservable too - it has no motors to report
              * idle, and a hub that has never had one must not accrue idle days
