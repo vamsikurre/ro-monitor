@@ -287,6 +287,26 @@ Procedure: commit → **`idf.py reconfigure build`** (CMake caches the version a
 Heap is the resource to watch, not flash, and **the tightest moment in this
 hub's life is its first provisioning** — not an OTA, and not steady running.
 
+**An OTA is the second tightest, and on 2026-09-16 it was too tight.** Job on
+fw `5368ad3` after 39 h up: `heap_free` 42 KB steady, three attempts, two
+failing in the connect path with `errno=11` and the last with
+`mbedtls_ssl_setup returned -0x7F00` (`MBEDTLS_ERR_SSL_ALLOC_FAILED`).
+`heap_min` afterwards read **128**. The OTA opens a second TLS session beside
+MQTT's, and at the default mbedTLS settings each costs ~42 KB, so the download
+never began. Two consequences:
+
+* `CONFIG_MBEDTLS_DYNAMIC_BUFFER` (+ `DYNAMIC_FREE_PEER_CERT`,
+  `DYNAMIC_FREE_CONFIG_DATA`) is on from `6ca0a4b`'s successor: Espressif
+  measures the same session at ~22 KB, and MQTT's resident one shrinks by the
+  same amount. See `sdkconfig.defaults` for the reasoning.
+* **The image that has to receive an OTA is the one already running**, so a
+  config change cannot rescue the hub that needs it. Procedure for a hub on a
+  pre-dynamic-buffer build: reboot it first (RainMaker app → node → *Reboot*,
+  or power cycle), close every dashboard tab so httpd holds no sockets, and
+  start the job within a few minutes of it reconnecting, while the heap is
+  unfragmented. Check `/api/telemetry` → `sys.heap_free` before starting; below
+  ~50 KB, do not bother.
+
 Measured on a bench hub, 2026-09-08, all on firmware `122f81e`:
 
 | Moment | `heap_min` |
