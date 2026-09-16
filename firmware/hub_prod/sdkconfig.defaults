@@ -225,9 +225,9 @@ CONFIG_LWIP_MAX_SOCKETS=16
 # the connect path with errno 11 and the last with mbedtls_ssl_setup -0x7F00,
 # which is MBEDTLS_ERR_SSL_ALLOC_FAILED. The image never started downloading.
 #
-# With these three, Espressif measures the same session at about 22 KB: the
+# With these two (FREE_CA_CERT follows), Espressif measures the session at ~22 KB: the
 # 16 KB RX and 4 KB TX record buffers are allocated for the record in flight
-# and freed after it, and the CA/peer certificate and key material are freed
+# and freed after it, and the CA certificate and key material are freed
 # once the handshake is done. MQTT's resident session shrinks by the same
 # amount, so this buys headroom twice. Each connection registers its
 # certificates afresh (esp-tls does this on every esp_tls_conn_new), so the
@@ -235,5 +235,4 @@ CONFIG_LWIP_MAX_SOCKETS=16
 # Incompatible with TLS 1.3, which is off. Rollback covers a bad guess: the
 # image is only marked valid once MQTT connects.
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
-CONFIG_MBEDTLS_DYNAMIC_FREE_PEER_CERT=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y

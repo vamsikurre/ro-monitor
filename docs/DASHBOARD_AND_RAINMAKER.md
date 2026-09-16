@@ -295,8 +295,8 @@ failing in the connect path with `errno=11` and the last with
 MQTT's, and at the default mbedTLS settings each costs ~42 KB, so the download
 never began. Two consequences:
 
-* `CONFIG_MBEDTLS_DYNAMIC_BUFFER` (+ `DYNAMIC_FREE_PEER_CERT`,
-  `DYNAMIC_FREE_CONFIG_DATA`) is on from `6ca0a4b`'s successor: Espressif
+* `CONFIG_MBEDTLS_DYNAMIC_BUFFER` (+ `DYNAMIC_FREE_CONFIG_DATA`, which
+  also frees the CA certificate) is on from `775ae9e`: Espressif
   measures the same session at ~22 KB, and MQTT's resident one shrinks by the
   same amount. See `sdkconfig.defaults` for the reasoning.
 * **The image that has to receive an OTA is the one already running**, so a
