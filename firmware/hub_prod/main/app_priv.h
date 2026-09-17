@@ -139,6 +139,7 @@ extern "C" {
 #define CMD_READ_CLIMATE        0x06
 #define CMD_SET_FAN_RELAY       0x07
 #define CMD_READ_WQ             0x08
+#define CMD_READ_LIGHT          0x09
 
 #define NODE_ADDR_RWT           0x02
 #define NODE_ADDR_TWT           0x03
@@ -173,6 +174,7 @@ extern "C" {
 #define LEN_LEVEL_REPLY         10
 #define LEN_CLIMATE_REPLY       6
 #define LEN_WQ_REPLY            6
+#define LEN_LIGHT_REPLY         3
 #define LEN_PING_REPLY          3
 
 /*
@@ -185,7 +187,7 @@ extern "C" {
  * fires on a healthy node, which is annoying but visible - unlike the silence it
  * replaces.
  */
-#define NODE_FW_EXPECTED        0x0101
+#define NODE_FW_EXPECTED        0x0102
 
 /* ------------------------------------------------------------------- sensing */
 #define BLIND_ZONE_MM           200
@@ -348,6 +350,14 @@ typedef enum {
  * least the node's own 10 s refresh, or the hub re-reads a number the node has
  * not updated. */
 #define WQ_POLL_CYCLES          10
+/* Poll cycles between ambient-light reads of node 0x02. Building lights do not
+ * need a 2 s decision; 10 s keeps the bus for the levels. */
+#define LIGHT_POLL_CYCLES       5
+/* "Dark outside" trips below this many lux and clears at double it. Streetlights
+ * come on around 10-30 lux; the knob is in the app (Dark Below) and in NVS. */
+#define DARK_LUX_DEFAULT        30
+#define DARK_LUX_MIN            1
+#define DARK_LUX_MAX            5000
 
 #define ALERT_TANK_FULL_PCT     95
 #define ALERT_DOSING_LOW_PCT    20
@@ -535,6 +545,7 @@ typedef enum {
 #define DEV_BATTERY_ROOM        "Battery Room"
 #define DEV_TANKS               "Water Tanks"
 #define DEV_GROUND              "Ground Floor"
+#define DEV_OUTDOOR             "Outdoor"
 
 #define PARAM_SUMP_PCT          "Sump Level"
 #define PARAM_RWT_FLOAT         "RWT Float Full"
@@ -580,6 +591,9 @@ typedef enum {
 #define PARAM_TWT_LAST_FULL     "TWT Last Full"
 #define PARAM_FAN_LAST_ON       "Fan Last Run"
 #define PARAM_FAN_MODE          "Fan Mode"
+#define PARAM_DARK              "Dark Outside"
+#define PARAM_LUX               "Roof Light"
+#define PARAM_DARK_BELOW        "Dark Below"
 
 /* ------------------------------------------------------------------ web server */
 #define WEB_PORT                80
@@ -653,6 +667,15 @@ typedef struct {
     int64_t  last_ok_us;
 } climate_state_t;
 
+/* The OPT3004 on the roof (node 0x02). lux is the hub's arithmetic on the raw
+ * result register the node ships; fitted false = no sensor answered, or the
+ * node is offline, and lux then means nothing. */
+typedef struct {
+    uint32_t lux;
+    bool     fitted;
+    int64_t  last_ok_us;
+} light_state_t;
+
 typedef struct {
     bool     running;              /* mains present on the contactor opto */
     bool     ac_floating;          /* opto VCC or OUT lost continuity - `running`
@@ -693,6 +716,8 @@ typedef struct {
     int16_t         rejection_pct;  /* -1 = not computable */
     climate_state_t ro_room, battery_room;
     motor_state_t   hpp, rwp;
+    light_state_t   roof_light;
+    bool            dark_outside;   /* hysteresis on roof_light against cal_dark_lux() */
 
     /* Ground floor, from nodes 0x05 and 0x06 over Wi-Fi (app_gf.c). configured
      * = an IP is set on /cal; online = it answered within the latch. */
@@ -781,6 +806,8 @@ typedef enum {
     /* Borewell energised but not lifting water. arg says which detector fired
      * (BORE_DRY_BY_*), a carries the deci-amps at the moment it tripped. */
     EVT_BORE_DRY_ON, EVT_BORE_DRY_OFF,
+    /* Roof light fell below / rose back above the Dark Below threshold. */
+    EVT_DARK_ON, EVT_DARK_OFF,
 } evt_kind_t;
 
 /* Why bore_dry went true. Carried in the event's arg so the log says which

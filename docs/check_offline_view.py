@@ -39,6 +39,8 @@ ALLOWED = {
     'tanks.sump.sensor', 'tanks.rwt.sensor', 'tanks.twt.sensor', 'tanks.dosing.sensor',
     'motors.borewell.dry_at_deci_a',   # the configured threshold, not a reading
     'motors.sump_motor.dry_at_deci_a',
+    'light.dark_below',       # the configured threshold, not a reading
+    'light.src',              # which sensor, not what it says
 }
 
 

@@ -53,6 +53,8 @@ REQUIRED = [
     'env.battery_room.state', 'env.battery_room.src', 'env.battery_room.age_s',
     'env.utility_room.t', 'env.utility_room.rh', 'env.utility_room.state',
     'env.utility_room.src', 'env.utility_room.age_s',
+    # the header sun: null lux is "no sensor", so the key must exist to be null
+    'light.lux', 'light.dark', 'light.state',
     'motors.hpp.amps', 'motors.rwp.amps', 'motors.overcurrent',
     'motors.borewell.amps', 'motors.borewell.phases',
     'motors.borewell.imbalance_pct', 'motors.borewell.running',

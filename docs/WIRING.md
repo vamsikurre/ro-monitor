@@ -788,7 +788,8 @@ Authoritative for the tank nodes; the `#define`s at the top of
 | `5V` | — | — | Buck output. Feeds XY-485, AJ-SR04M, DS18B20 `VDD`, the 4k7 pullup | 2 |
 | `GND` | — | — | Common: buck, every module, both probes, RS485 `GND` conductor | 12.1 |
 
-Free: `D6`, `D9`–`D12`, `A4`/`A5` (I2C — used only on 0x04, §10), `A7`.
+Free: `D6`, `D9`–`D12`, `A7`. `A4`/`A5` are I2C — the SHT30 on 0x04 (§10) and the
+OPT3004 ambient light sensor on 0x02 (§9.6). Nothing on 0x03 uses them yet.
 `D0`/`D1` are the hardware UART and stay a debug port (115200) on every node.
 
 ### 9.0. AJ-SR04M Sensor Notes (applies to every ultrasonic node and the hub's dosing sensor)
@@ -1454,6 +1455,42 @@ change in the water; the rejection ratio is more robust to that than either raw
 figure, because both probes foul in the same direction.
 
 ---
+
+### 9.6. Ambient Light — 7Semi OPT3004 on the RWT node (0x02)
+
+One sensor, on the one board that can see the sky, so the building's lights can
+come on when it gets dark rather than at a time somebody guessed in June. It
+reports lux (`RS485_PROTOCOL.md` §4.6); the hub turns that into **Dark Outside**,
+a switch in the RainMaker app that an Alexa routine triggers on, and draws the
+sun in the dashboard header.
+
+| Breakout pin | Nano pin | Note |
+| :--- | :---: | :--- |
+| `VIN` / `VCC` | `5V` | The breakout has its own regulator and level shifting; **check the silkscreen says 3.3–5 V before using the 5 V rail**, else feed it `3V3` |
+| `GND` | `GND` | |
+| `SDA` | `A4` | I2C. Same pins the battery-room node uses for its SHT30 (§10) |
+| `SCL` | `A5` | |
+| `INT`, `ADDR` | — | Leave open. `ADDR` open is address **`0x45`**, which is what the firmware probes (`OPT3004_I2C_ADDR`) |
+
+The Qwiic / STEMMA QT socket carries the same four lines if a cable is easier
+than soldering. The breakout's own pull-ups are enough at the Nano's 100 kHz.
+
+**Mounting.** The sensor has to see the sky and nothing else. Face it **up**,
+under the lid's clear window or in its own small IP65 box with a clear lid,
+away from the tank's own shadow and from any lamp on the roof — a floodlight
+over the sensor is a sensor that never sees dark. Rain on a horizontal window
+scatters light and reads *brighter*, which is the safe direction: the lights
+come on late, not early.
+
+**Bring-up.** Reset the node with the sensor fitted and read the debug port:
+`Ambient light: OPT3004 at 0x45, continuous 800 ms`. `no OPT3004` means the
+manufacturer register did not answer — swap SDA/SCL first, that is the usual
+one. The free-running print then carries `NNN lx` each second; cover the
+sensor and it should fall under 10.
+
+**Threshold.** Streetlights come on around 10–30 lux. The hub ships **30**;
+change it from the app's `Dark Below` slider once you have watched one dusk on
+the dashboard, and remember it clears at double the figure.
 
 ## 10. Battery Room Node (0x04: SHT30 & Exhaust Fan)
 

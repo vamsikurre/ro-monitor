@@ -149,6 +149,7 @@ static const char *cmd_word(uint8_t cmd)
     case CMD_READ_LEVEL:    return "LEVEL";
     case CMD_READ_CLIMATE:  return "CLIMATE";
     case CMD_READ_WQ:       return "WQ";
+    case CMD_READ_LIGHT:    return "LIGHT";
     default:                return "CMD?";
     }
 }

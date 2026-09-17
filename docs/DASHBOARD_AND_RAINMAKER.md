@@ -102,7 +102,7 @@ ESP RainMaker provides AWS IoT cloud synchronization, remote out-of-home telemet
 
 ### 3.1. ESP RainMaker Node Hierarchy
 
-**Four devices, one per room** — not one per signal type. `app_main.c`'s
+**Five devices, one per place** — not one per signal type. `app_main.c`'s
 `build_node()` is the source; the tree below is that function's param order,
 not an aspirational layout.
 
@@ -144,14 +144,28 @@ ESP32 Central Hub (RainMaker Node: "RO Plant Monitor - XXXX", MAC-suffixed)
 │   ├── Param: Raw Water Temp (Float, Read-Only, °C)
 │   ├── Param: Treated Water Temp (Float, Read-Only, °C)
 │   └── Param: Salt Rejection (Integer, Read-Only, %)
-└── Device 4: "Ground Floor" [Type: esp.device.other] — Node 0x06, utility/starter panel
+├── Device 4: "Ground Floor" [Type: esp.device.other] — Node 0x06, utility/starter panel
     ├── Param: Borewell Running (Boolean, Read-Only) — primary; no contact of its own, current past the run threshold with hysteresis
     ├── Param: Sump Motor Running (Boolean, Read-Only) — the Astero `PUMP ON` contact
     ├── Param: Borewell Current (Float, Read-Only, A) — highest phase
     ├── Param: Sump Motor Current (Float, Read-Only, A)
     ├── Param: Utility Room Temp (Float, Read-Only, °C) — SHT30 on Node 0x06
-    └── Param: Utility Room Humidity (Float, Read-Only, %)
+│   └── Param: Utility Room Humidity (Float, Read-Only, %)
+└── Device 5: "Outdoor" [Type: esp.device.switch] — the OPT3004 on the roof, Node 0x02
+    ├── Param: Dark Outside (Boolean, Read-Only) — primary; below Dark Below, clears at double it
+    ├── Param: Roof Light (Integer, Read-Only, lux)
+    └── Param: Dark Below (Integer, Read-Write, lux) — the threshold, stored in NVS
 ```
+
+**Why "Outdoor" is a switch.** Alexa cannot read a lux figure through
+RainMaker's skill, but it can see a switch and it can trigger a routine when
+one turns on. So the device type is `esp.device.switch` and its power state is
+`Dark Outside`: in the Alexa app it appears as a switch called *Dark Outside*,
+and the routine is "when Dark Outside turns on, turn on the building lights",
+with the mirror image for off. It is read-only on the hub — asking Alexa to
+turn it on does nothing. If the Alexa app will not offer it as a routine
+trigger, the one-line change is the device type to `esp.device.contact-sensor`,
+which Alexa treats as a sensor rather than a control.
 
 No relays, no float cutoffs, no pump control on either ground-floor node —
 they are monitoring only (`WIRING.md` §11). There is no separate "Ground
@@ -199,6 +213,7 @@ in that room on it.
 | **Battery Room** | `Battery Room Temp` | temp/RH, **the exhaust fan switch**, fan mode, fan-on threshold, fan last run |
 | **Water Tanks** | `Treated Water Level` | RWT/TWT/dosing/**sump** levels, TWT float, **RWT float**, TDS ×2, water temp ×2, salt rejection |
 | **Ground Floor** | `Borewell Running` | borewell/sump-motor running + current, utility room temp/RH — Node `0x06` |
+| **Outdoor** | `Dark Outside` | roof lux and the **Dark Below** threshold — Node `0x02`'s OPT3004, for the building lights via Alexa |
 
 ### 4.9.1. Nothing shows a plausible zero before it has been measured
 

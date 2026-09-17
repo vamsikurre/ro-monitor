@@ -59,7 +59,7 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | :---: | :--- | :--- | :--- | :--- |
 | `0x00` | **ESP32 HUB (Master)** | RO Room Core | ESP32-S | SHT30 Ambient, Opto AC/Dry Inputs, 4-Ch Relays |
 | ~~`0x01`~~ | **Dosing Chemical Tank** | *Retired — sensor wired direct to hub* | — | Waterproof Ultrasonic (AJ-SR04M) on hub `GPIO 5` / `GPIO 4` |
-| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). End of bus, but **no termination** (`WIRING.md` §12.3). Optional TDS + DS18B20 pair (§4.5) |
+| `0x02` | **Raw Water Tank (RWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). End of bus, but **no termination** (`WIRING.md` §12.3). Optional TDS + DS18B20 pair (§4.5). Optional OPT3004 ambient light on I2C (§4.6) — the plant's only view of the sky |
 | `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). Optional TDS + DS18B20 pair (§4.5) |
 | `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
 | `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi (polled) | ESP32 | Waterproof Ultrasonic (AJ-SR04M), **or** a 4-20 mA submersible pressure transducer on the `J-LOOP`/`J-PRESS` provision (§5, `WIRING.md` §11.1) |
@@ -143,6 +143,25 @@ Requests TDS and water temperature from a tank node that has the optional probe 
 **Polling cadence.** The node refreshes this every **10 s** (a 12-bit conversion alone takes 750 ms, so it is started on one cycle and collected on the next — it never blocks the poll loop). The hub asks every **10 poll cycles**, i.e. ~20 s. Asking faster only re-reads a number the node has not updated, at the cost of bus time the tank levels want.
 
 **A failure here does not mark the node offline.** The level does that. A tank node with a working ultrasonic and a dead TDS probe is a node that is very much alive, and conflating the two would raise a bus alert for a water-quality fault.
+
+### 4.6. `CMD_READ_LIGHT` (`0x09`) — RWT Node (`0x02`)
+
+Requests ambient light from the 7Semi OPT3004 breakout on the RWT node (`WIRING.md` §9.6). The roof is the one place the plant can see the sky, and the reading drives **Dark Outside** — the switch in the app that an Alexa routine uses to turn the building's lights on in the evening. Any tank node answers it; one without the sensor answers with the status byte set, so the command is always safe to send. The hub only sends it to `0x02`.
+
+- **Request Payload:** None ($N=0$).
+- **Response Payload (3 Bytes):**
+  - `uint16_t result_raw`: The OPT3004 `RESULT` register (`0x00`) as read. `E` in bits 15..12, `R` in bits 11..0.
+  - `uint8_t status`: `0 = OK`, `1 = not fitted or unreadable`. **`0` is the only value that makes `result_raw` meaningful.**
+
+**Raw register, not lux — §4.2 and §4.5 again.** `lux = 0.01 × 2^E × R`, a shift and a divide the hub does in `read_light_node()`. It keeps the node's payload two bytes wide for a figure that reaches 83 865 lux, and it keeps every conversion in the one firmware that is updated over the air.
+
+**Sensor setup lives on the node**: at boot it reads the manufacturer register (`0x7E`, expects `0x5449` "TI") and, if that answers, writes `0xCE10` to `CONFIG` (`0x01`) — automatic full-scale range, **800 ms** conversions, continuous. 800 ms is deliberate: it averages out a flickering tube light. A sensor plugged in after boot is not seen until the node is reset.
+
+**Polling cadence.** The hub asks every **5 poll cycles** (~10 s). Faster buys nothing the building's lights can use, and the levels want the bus.
+
+**Dark hysteresis is the hub's.** Dark trips below `Dark Below` (default **30 lux**, `DARK_LUX_DEFAULT`, set from the app, stored in NVS) and clears at **double** it, so a cloud at dusk does not toggle the lights. No reading **holds** the last decision — an unreadable sensor is not evidence of daylight.
+
+**A failure here does not mark the node offline** — same rule as §4.5.
 
 ---
 

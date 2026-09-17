@@ -153,6 +153,7 @@ static void diff_events(const hub_state_t *was, const hub_state_t *now)
     EDGE(overcurrent,    EVT_OC_ON,    EVT_OC_OFF,    0);
     EDGE(no_production,  EVT_NOPROD_ON, EVT_NOPROD_OFF, 0);
     EDGE(fan_on,         EVT_FAN_ON,   EVT_FAN_OFF,   0);
+    EDGE(dark_outside,   EVT_DARK_ON,  EVT_DARK_OFF,  0);
     #undef EDGE
     /* Not an EDGE: this one carries the current it tripped at in `a`, which is
      * the figure somebody setting the dry threshold actually needs and cannot
@@ -383,6 +384,7 @@ static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_
 
 static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
 static esp_rmaker_device_t *s_dev_ground;
+static esp_rmaker_device_t *s_dev_outdoor;
 static esp_rmaker_device_t *s_dev_ro_room;
 static esp_rmaker_device_t *s_dev_ro_room;
 static esp_rmaker_device_t *s_dev_battery;
@@ -1340,6 +1342,52 @@ static void read_water_quality(uint8_t addr, wq_state_t *wq, cal_tank_t which)
     }
 }
 
+/*
+ * Ambient light from the OPT3004 on the RWT node. The node ships the raw result
+ * register - E[15:12] R[11:0], lux = 0.01 * 2^E * R - and the arithmetic is done
+ * here, like TDS. A bad or absent reply marks the sensor unfitted, never the
+ * node offline: the level decides that.
+ */
+static void read_light_node(hub_state_t *s)
+{
+    uint8_t p[RS485_MAX_PAYLOAD];
+    int len = rs485_poll(NODE_ADDR_RWT, CMD_READ_LIGHT, NULL, 0, p);
+
+    if (len != LEN_LIGHT_REPLY || p[2] != 0) {
+        if (s->roof_light.fitted) {
+            ESP_LOGW(TAG, "node 0x%02X ambient light went unreadable - check the OPT3004 on A4/A5",
+                     NODE_ADDR_RWT);
+        }
+        s->roof_light.fitted = false;
+        return;
+    }
+    uint16_t raw = ((uint16_t)p[0] << 8) | p[1];
+    bool was = s->roof_light.fitted;
+    s->roof_light.lux        = ((uint32_t)(raw & 0x0FFF) << (raw >> 12)) / 100;
+    s->roof_light.fitted     = true;
+    s->roof_light.last_ok_us = esp_timer_get_time();
+    if (!was) {
+        ESP_LOGI(TAG, "node 0x%02X ambient light online: %lu lux", NODE_ADDR_RWT,
+                 (unsigned long)s->roof_light.lux);
+    }
+}
+
+/* Dark trips below the threshold and clears at double it, so a cloud passing
+ * at dusk does not toggle the building's lights. No reading holds the last
+ * decision: an unreadable sensor is not evidence of daylight. */
+static void dark_update(hub_state_t *s)
+{
+    if (!s->roof_light.fitted) {
+        return;
+    }
+    uint32_t thr = cal_dark_lux();
+    if (!s->dark_outside && s->roof_light.lux < thr) {
+        s->dark_outside = true;
+    } else if (s->dark_outside && s->roof_light.lux >= thr * 2) {
+        s->dark_outside = false;
+    }
+}
+
 static void read_climate_node(hub_state_t *s)
 {
     uint8_t p[RS485_MAX_PAYLOAD];
@@ -1498,6 +1546,7 @@ static void poll_task(void *arg)
     float last_rwt_wt = -9999, last_twt_wt = -9999;
     int   last_sump = INT32_MIN, last_bore_on = -1, last_smot_on = -1, last_rwt_float = -1;
     float last_bore_a = -9999, last_smot_a = -9999, last_util_t = -9999, last_util_h = -9999;
+    int   last_lux = INT32_MIN, last_dark = -1;
 
     /* Survives a power cut: without this the first thing a returning hub reports
      * is that the plant has never run. */
@@ -1524,6 +1573,7 @@ static void poll_task(void *arg)
 
     int  ct_turn = 0;              /* round-robin: one clamp per cycle */
     int  wq_turn = WQ_POLL_CYCLES; /* poll water quality on the first cycle, then every Nth */
+    int  light_turn = LIGHT_POLL_CYCLES;
     int  oc_streak = 0;
 
     while (true) {
@@ -1574,6 +1624,15 @@ static void poll_task(void *arg)
             /* Feed and permeate of the same plant. The ratio is the membrane's
              * health; either number alone mostly tracks the source water. */
             local.rejection_pct = rejectionPercent(local.rwt_wq.ppm, local.twt_wq.ppm);
+        }
+        if (++light_turn >= LIGHT_POLL_CYCLES) {
+            light_turn = 0;
+            if (local.rwt_online) {
+                read_light_node(&local);
+            } else {
+                local.roof_light.fitted = false;
+            }
+            dark_update(&local);
         }
         relay_test_expire();
         command_fan(&local);
@@ -1815,6 +1874,13 @@ static void poll_task(void *arg)
         if (local.rejection_pct >= 0) {
             report_int(s_dev_tanks, PARAM_REJECTION, local.rejection_pct, &last_rejection, 1);
         }
+        /* Lux spans five decades, so the deadband is a tenth of the reading:
+         * 5 lux matters at dusk and is noise at noon. */
+        if (local.roof_light.fitted) {
+            report_int(s_dev_outdoor, PARAM_LUX, (int)local.roof_light.lux, &last_lux,
+                       (int)(local.roof_light.lux / 10) + 5);
+            report_bool(s_dev_outdoor, PARAM_DARK, local.dark_outside, &last_dark);
+        }
         /* --- when things last happened ---
          *
          * Rising edges only, and only once the clock is real. TWT "full" is taken
@@ -1973,6 +2039,15 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
          * is 2 s away. */
         ESP_LOGI(TAG, "fan mode -> %s (expires to Auto in %lu min)",
                  v, (unsigned long)(FAN_FORCE_MS / 60000));
+        esp_rmaker_param_update_and_report(param, val);
+        return ESP_OK;
+    }
+
+    if (strcmp(name, PARAM_DARK_BELOW) == 0) {
+        if (val.val.i < 0 || cal_set_dark_lux((uint16_t)val.val.i) != ESP_OK) {
+            ESP_LOGW(TAG, "rejected dark threshold %d lux", val.val.i);
+            return ESP_ERR_INVALID_ARG;
+        }
         esp_rmaker_param_update_and_report(param, val);
         return ESP_OK;
     }
@@ -2170,13 +2245,45 @@ static void build_node(esp_rmaker_node_t *node)
     esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_UTIL_HUM, "esp.param.humidity",
                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
     esp_rmaker_node_add_device(node, s_dev_ground);
+
+    /* ================================ OUTDOOR ================================
+     * The OPT3004 on the roof, for the building lights. Alexa cannot read a lux
+     * figure through RainMaker, but it can see a switch - so the device IS a
+     * switch, whose power state is "Dark Outside", and an Alexa routine turns
+     * the lights on when it comes on. The lux and the threshold sit beside it
+     * for the person setting the threshold. */
+    s_dev_outdoor = esp_rmaker_device_create(DEV_OUTDOOR, ESP_RMAKER_DEVICE_SWITCH, NULL);
+    esp_rmaker_device_add_cb(s_dev_outdoor, write_cb, NULL);
+    esp_rmaker_param_t *dk = ro_param(PARAM_DARK, ESP_RMAKER_PARAM_POWER,
+                                      esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE);
+    esp_rmaker_device_add_param(s_dev_outdoor, dk);
+    esp_rmaker_device_assign_primary_param(s_dev_outdoor, dk);
+    esp_rmaker_device_add_param(s_dev_outdoor, ro_param(PARAM_LUX, "esp.param.illuminance",
+                                                        esp_rmaker_int(VAL_NO_READING_INT), ESP_RMAKER_UI_TEXT));
+    esp_rmaker_param_t *db = esp_rmaker_param_create(PARAM_DARK_BELOW, "esp.param.illuminance",
+                                                     esp_rmaker_int(cal_dark_lux()),
+                                                     PROP_FLAG_READ | PROP_FLAG_WRITE);
+    esp_rmaker_param_add_ui_type(db, ESP_RMAKER_UI_SLIDER);
+    esp_rmaker_param_add_bounds(db, esp_rmaker_int(DARK_LUX_MIN), esp_rmaker_int(DARK_LUX_MAX),
+                                esp_rmaker_int(1));
+    esp_rmaker_device_add_param(s_dev_outdoor, db);
+    esp_rmaker_node_add_device(node, s_dev_outdoor);
 }
 
 /* ------------------------------------------------------------- connectivity */
 
 static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
+    /* Edges only. The MQTT client raises DISCONNECTED on every failed reconnect
+     * attempt, so a router that is down through a power cut fires it every few
+     * seconds - and the event log filled with "Cloud disconnected" rows, ten
+     * to a screen, with no "connected" between them (seen 2026-09-17). One row
+     * per outage says the same thing; the log is for what happened, not for
+     * how many times the client tried. */
     if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_CONNECTED) {
+        if (s_cloud_up) {
+            return;
+        }
         ESP_LOGI(TAG, "RainMaker cloud connected");
         s_cloud_up = true;
         /* Earn the next one back, so a hub that connects, runs for a month and
@@ -2184,6 +2291,10 @@ static void rmaker_event_handler(void *arg, esp_event_base_t base, int32_t id, v
         s_cloud_reboot_done = false;
         event_push(EVT_CLOUD_ON, 0, 0, 0);
     } else if (base == RMAKER_COMMON_EVENT && id == RMAKER_MQTT_EVENT_DISCONNECTED) {
+        if (!s_cloud_up) {
+            ESP_LOGD(TAG, "RainMaker cloud still disconnected");
+            return;
+        }
         ESP_LOGW(TAG, "RainMaker cloud disconnected");
         s_cloud_up = false;
         event_push(EVT_CLOUD_OFF, 0, 0, 0);

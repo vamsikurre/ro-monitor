@@ -94,6 +94,11 @@ h1 span{color:var(--ink-3); font-weight:400}
 .hstat .readout.mono{font-family:var(--mono); font-size:12px; letter-spacing:-.01em}
 .hstat .readout.warn{color:var(--warn)}
 .hstat .readout.bad{color:var(--fault)}
+/* The roof's OPT3004, in the header because it is the one reading about the
+   world outside the plant. Amber sun by day, a dim disc after dark. */
+.hstat .sun{width:15px; height:15px; flex:none; align-self:center; color:var(--ink-3)}
+.hstat.day .sun{color:var(--warn)}
+.hstat.night .sun .rays{opacity:.25}
 .mode{
   font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   border:1px solid var(--line); border-radius:100px; padding:3px 10px; color:var(--ink-2);
@@ -594,6 +599,13 @@ footer{padding:20px 22px 0; color:var(--ink-3); font-size:11.5px; display:flex; 
 <header>
   <h1>Varenyam <span>/ RO Plant · Elevation</span></h1>
   <span class="mode" id="mode">Connecting</span>
+  <div class="hstat" id="hSun" title="Roof ambient light - OPT3004 on node 0x02">
+    <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.5" fill="currentColor"/>
+      <g class="rays"><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/></g>
+    </svg>
+    <span class="readout" id="hLux">–</span>
+  </div>
   <div class="hstats">
     <div class="hstat"><span class="legend">Firmware</span><span class="readout mono" id="hFw">–</span></div>
     <div class="hstat"><span class="legend">Heap</span><span class="readout mono" id="hHeap">–</span></div>
@@ -1860,7 +1872,7 @@ function drawAlerts(s) {
      room for about five before it reaches the drawing. */
   if (HUB_STALE) {
     const since = LAST_GOOD_AT
-      ? LAST_GOOD_AT.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      ? LAST_GOOD_AT.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })
       : "never";
     add("fault", "Hub offline",
         `No telemetry since ${since}. Every reading on this page has been cleared — ` +
@@ -2016,6 +2028,12 @@ function render(s) {
 
   $("#hBus").textContent = HUB_STALE ? "–" : `${s.rs485.online}/${s.rs485.total}`;
   $("#hRssi").textContent = HUB_STALE ? "–" : `${s.sys.rssi} dBm`;
+  /* null lux is "no sensor" or "node offline", never 0: a moonless roof reads
+     a real 0 and the sun must still be drawn for it. */
+  const L = s.light || {};
+  const lux = (!HUB_STALE && L.state === "ONLINE" && L.lux != null) ? L.lux : null;
+  $("#hLux").textContent = lux == null ? "–" : lux.toLocaleString() + " lx";
+  $("#hSun").className = "hstat" + (lux == null ? "" : L.dark ? " night" : " day");
   /* A git description - "2e3e447", or "2e3e447-dirty" for a build made from
      a tree that was not committed. Mono, because it is an identifier to be
      read character by character and compared, not a number to be skimmed. */
@@ -2044,7 +2062,7 @@ function render(s) {
   $("#hClockLbl").textContent = HUB_STALE ? "Last good" : "Updated";
   if (!HUB_STALE) LAST_GOOD_AT = new Date();
   $("#hClock").textContent = (LAST_GOOD_AT || new Date())
-    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
   $("#fReset").textContent = s.sys.reset_reason;
   $("#fErr").textContent = HUB_STALE ? "–" : s.rs485.errors;
   $("#fPoll").textContent = HUB_STALE ? "–" : s.rs485.last_poll_ms + " ms";
@@ -2095,6 +2113,8 @@ function offlineView(s) {
   Object.values(v.tanks || {}).forEach(t => { t.state = "OFFLINE"; t.pct = 0; t.distance_mm = 0; });
   Object.values(v.pumps || {}).forEach(p => { p.state = "OFFLINE"; p.on = false; });
   Object.values(v.env   || {}).forEach(e => { e.state = "OFFLINE"; e.t = null; e.rh = null; e.age_s = null; if ("fan" in e) e.fan = false; });
+  /* dark null, not false: false is "daylight", and there is no roof to see. */
+  if (v.light) { v.light.state = "OFFLINE"; v.light.lux = null; v.light.dark = null; v.light.age_s = null; }
   ["hpp", "rwp", "borewell", "sump_motor"].forEach(k => {
     const m = v.motors && v.motors[k];
     if (!m) return;
@@ -2244,6 +2264,7 @@ const demo = {
     battery_room: { t: 36.2, rh: 48, fan: false, state: "ONLINE", src: "SHT30 · Node 0x04", age_s: 1 },
     utility_room: { t: 33.8, rh: 55, state: "ONLINE", src: "SHT30 · Node 0x06", age_s: 3 },
   },
+  light: { lux: 412, dark: false, dark_below: 30, state: "ONLINE", src: "OPT3004 · Node 0x02", age_s: 4 },
   nodes: [
     { id: "0x01", role: "Dosing", link: "RS485", state: "ONLINE", age_s: 1 },
     { id: "0x02", role: "Raw Water", link: "RS485", state: "ONLINE", age_s: 1 },
@@ -2546,8 +2567,13 @@ const EV = {
   23: e => ["fault", "Borewell dry", (e[2] === 2 ? "no yield · sump flat" : "on current")
                                     + (e[3] ? " · " + (e[3] / 10).toFixed(1) + " A" : "")],
   24: () => ["dim",  "Borewell dry cleared", ""],
+  25: () => ["dim",  "Dark outside", "roof light below threshold"],
+  26: () => ["dim",  "Daylight", ""],
 };
 const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room", 5: "0x05 Sump", 6: "0x06 Utility" })[a] || ("0x0" + a);
+/* 12-hour, like the header's Updated clock, so an event time reads against it
+   without arithmetic. The trend axis keeps hhmm(): "08:00 PM" does not fit. */
+const hm12 = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
 const hmShort = sec => { const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`; };
 
 function drawEvents() {
@@ -2560,7 +2586,7 @@ function drawEvents() {
     const [cls, what, detail] = f(e);
     const t = new Date((nowS - (up - e[0])) * 1000);
     const day = t < today ? t.toLocaleDateString(undefined, { day: "2-digit", month: "short" }) : "";
-    return `<div class="ev ${cls}"><span class="t">${hhmm(t.getTime() / 1000)}</span><span class="d">${day}</span>` +
+    return `<div class="ev ${cls}"><span class="t">${hm12(t.getTime() / 1000)}</span><span class="d">${day}</span>` +
            /* The gap between label and detail was a CSS margin only, so the
               text content ran together: a screen reader, and anyone copying
               the log out, got "Node online0x06 Utility". */

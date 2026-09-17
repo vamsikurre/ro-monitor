@@ -461,7 +461,7 @@ static esp_err_t events_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[4400];   /* +200 quality, +420 run block, +900 ground floor */
+    static char json[4500];   /* +200 quality, +420 run block, +900 ground floor, +100 light */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -500,6 +500,16 @@ static esp_err_t telemetry_get(httpd_req_t *req)
      * command name ever contains a quote or a backslash, escape it here. */
     char rs485_failures[160];
     rs485_error_report(rs485_failures, sizeof(rs485_failures));
+
+    /* null, not 0: 0 lux is a real reading (a moonless roof), and an absent
+     * sensor must not look like the darkest night of the year. */
+    char lux[12];
+    bool light_live = s->rwt_online && s->roof_light.fitted;
+    if (light_live) {
+        snprintf(lux, sizeof(lux), "%lu", (unsigned long)s->roof_light.lux);
+    } else {
+        snprintf(lux, sizeof(lux), "null");
+    }
 
     /* gf_apply() recomputes both motors' currents from the last good millivolts
      * on every cycle - its branch tests "the node ever answered", not "the node
@@ -573,6 +583,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"battery_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"fan\":%s,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x04\",\"age_s\":%d},"
           "\"utility_room\":{\"t\":%d.%d,\"rh\":%d.%d,\"state\":\"%s\",\"src\":\"SHT30 . Node 0x06\",\"age_s\":%d}"
         "},"
+        "\"light\":{\"lux\":%s,\"dark\":%s,\"dark_below\":%u,\"state\":\"%s\","
+                   "\"src\":\"OPT3004 . Node 0x02\",\"age_s\":%d},"
         "\"motors\":{"
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
@@ -661,6 +673,11 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         !s->utility_online ? "OFFLINE"
                            : (s->utility_room.fault ? "SENSOR_ERROR" : "ONLINE"),
         age_s(s->utility_room.last_ok_us),
+
+        lux, light_live && s->dark_outside ? "true" : "false",
+        (unsigned)cal_dark_lux(),
+        !s->rwt_online ? "OFFLINE" : (s->roof_light.fitted ? "ONLINE" : "SENSOR_ERROR"),
+        age_s(s->roof_light.last_ok_us),
 
         hpp_amps, (unsigned long)s->hpp.mv_lo, (unsigned long)s->hpp.mv_hi,
         rwp_amps, (unsigned long)s->rwp.mv_lo, (unsigned long)s->rwp.mv_hi,

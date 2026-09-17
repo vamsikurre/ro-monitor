@@ -4,8 +4,10 @@
  * ONE binary for all three Arduino nodes. The A0/A1 jumpers select the address
  * AND the personality (phase-B spec 4):
  *
- *   0x02  Raw Water Tank      Nano       AJ-SR04M ultrasonic, end-of-bus 120R
- *                                           (+ optional TDS/DS18B20 pair, 9.5)
+ *   0x02  Raw Water Tank      Nano       AJ-SR04M ultrasonic, end of bus (no
+ *                                           terminator, WIRING.md 12.3)
+ *                                           (+ optional TDS/DS18B20 pair, 9.5,
+ *                                            + optional OPT3004 ambient light, 9.6)
  *   0x03  Treated Water Tank  Nano       AJ-SR04M ultrasonic, or a 4-20 mA
  *                                           submersible transducer if the J-PRESS
  *                                           shunt is on (WIRING.md 9.4)
@@ -32,7 +34,7 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-#define FW_VERSION       0x0101   // 1.01, reported by CMD_PING
+#define FW_VERSION       0x0102   // 1.02, reported by CMD_PING
 
 // Set to 1 only after confirming the board has an Optiboot-class bootloader.
 // The old ATmegaBOOT bootloader on some Nano clones does not clear WDRF, so a
@@ -56,6 +58,9 @@
 #define PIN_ADDR_1       A1  // Address jumper bit 1
 
 #define SHT30_I2C_ADDR   0x44
+#define OPT3004_I2C_ADDR 0x45   // 7Semi breakout default. Not 0x44: the SHT30 lives on the
+                                // battery-room node and this on the RWT node, but they must
+                                // never be able to collide if a board is ever re-purposed.
 
 // ---------------------------------------------------------------- protocol
 #define PREAMBLE_1       0xAA
@@ -67,6 +72,7 @@
 #define CMD_READ_CLIMATE    0x06
 #define CMD_SET_FAN_RELAY   0x07
 #define CMD_READ_WQ         0x08   // TDS + water temperature (tank nodes)
+#define CMD_READ_LIGHT      0x09   // OPT3004 ambient light, raw result register (0x02 only)
 
 #define MAX_PAYLOAD      32
 #define FRAME_TIMEOUT_MS 20   // gap that abandons a half-received frame
@@ -227,6 +233,10 @@ uint8_t  wqStatus    = WQ_FAULT_TDS | WQ_FAULT_TEMP;  // nothing fitted until pr
 bool     wqBusy      = false;
 unsigned long wqLastMs = 0;
 unsigned long wqStartedMs = 0;
+
+uint16_t lightRaw    = 0;       // OPT3004 result register as read: E[15:12] R[11:0]
+uint8_t  lightStatus = 1;       // 0 OK, 1 not fitted / unreadable
+bool     lightFitted = false;   // manufacturer ID answered at boot
 
 SoftwareSerial rs485(PIN_RS485_RX, PIN_RS485_TX);
 
@@ -623,6 +633,51 @@ bool readSHT30() {
   return true;
 }
 
+// ---------------------------------------------------------------- ambient light
+// OPT3004 on the RWT node: the roof is the one place the plant can see the sky,
+// and the building's lights want to come on when it gets dark. Same register
+// map as the OPT3001. The node ships the 16-bit RESULT register untouched and
+// the hub does lux = 0.01 * 2^E * R - the same division of labour as TDS
+// (RS485_PROTOCOL.md 4.5): the node measures, the hub interprets.
+bool opt3004Write(uint8_t reg, uint16_t v) {
+  Wire.beginTransmission(OPT3004_I2C_ADDR);
+  Wire.write(reg);
+  Wire.write((uint8_t)(v >> 8));
+  Wire.write((uint8_t)(v & 0xFF));
+  return Wire.endTransmission() == 0;
+}
+
+bool opt3004Read(uint8_t reg, uint16_t *v) {
+  Wire.beginTransmission(OPT3004_I2C_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission() != 0) return false;
+  if (Wire.requestFrom((uint8_t)OPT3004_I2C_ADDR, (uint8_t)2) != 2) return false;
+  *v = ((uint16_t)Wire.read() << 8) | Wire.read();
+  return true;
+}
+
+// Probed once, at boot. A sensor plugged in later needs the node reset, which
+// is a button on the board and not a trip up a ladder with a laptop.
+void lightBegin() {
+  uint16_t mfg = 0;
+  lightFitted = opt3004Read(0x7E, &mfg) && mfg == 0x5449;    // "TI"
+  if (!lightFitted) return;
+  // 0xCE10: automatic full-scale range, 800 ms conversions, continuous. Slow on
+  // purpose - 800 ms averages out a flickering tube light, and nobody switches
+  // a building's lights on a 100 ms decision.
+  lightFitted = opt3004Write(0x01, 0xCE10);
+}
+
+void sampleLight() {
+  if (!lightFitted) { lightStatus = 1; return; }
+  lightStatus = opt3004Read(0x00, &lightRaw) ? 0 : 1;
+}
+
+// For the debug print only; the hub does this arithmetic for real.
+uint32_t lightLux() {
+  return ((uint32_t)(lightRaw & 0x0FFF) << (lightRaw >> 12)) / 100UL;
+}
+
 void setFan(bool on) {
   fanOn = on;
   digitalWrite(PIN_FAN_RELAY, on ? LOW : HIGH); // relay board is ACTIVE LOW
@@ -674,6 +729,7 @@ void sampleSensors() {
   } else {
     sampleTank();
     sampleWaterQuality();
+    sampleLight();
   }
 }
 
@@ -728,6 +784,14 @@ void handleCommand(uint8_t cmd, const uint8_t *payload, uint8_t len) {
       out[4] = wqStatus;
       out[5] = 0;                            // reserved
       sendFrame(cmd, out, 6);
+      break;
+    }
+
+    case CMD_READ_LIGHT: {
+      if (isClimate) return;                 // tank personality only
+      out[0] = (uint8_t)(lightRaw >> 8);  out[1] = (uint8_t)(lightRaw & 0xFF);
+      out[2] = lightStatus;
+      sendFrame(cmd, out, 3);
       break;
     }
 
@@ -825,11 +889,16 @@ void setup() {
   Serial.println(F("RO MONITOR - RS485 NODE"));
   Serial.print(F("Node ID: 0x0"));
   Serial.print(MY_NODE_ID, HEX);
-  Serial.print(F("  fw 1.01  role: "));
+  Serial.print(F("  fw 1.02  role: "));
 
   switch (MY_NODE_ID) {
     case 0x02:
-      Serial.println(F("RWT tank (end of bus, fit 120R)"));
+      Serial.println(F("RWT tank (end of bus, NO terminator - WIRING.md 12.3)"));
+      Wire.begin();
+      lightBegin();
+      Serial.print(F("Ambient light: "));
+      Serial.println(lightFitted ? F("OPT3004 at 0x45, continuous 800 ms")
+                                 : F("no OPT3004 - lux not reported"));
       break;
     case 0x03:
       Serial.println(F("TWT tank"));
@@ -913,6 +982,11 @@ void loop() {
         Serial.print(F(" mV @ "));
         printDeci(waterTempDeciC);
         Serial.print(F(" C"));
+      }
+      if (lightStatus == 0) {
+        Serial.print(F("  "));
+        Serial.print(lightLux());
+        Serial.print(F(" lx"));
       }
       Serial.println();
     }

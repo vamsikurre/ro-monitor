@@ -127,6 +127,11 @@ esp_err_t cal_event_set(cal_event_t e, uint32_t epoch);
 uint16_t cal_fan_on_deci_c(void);
 uint16_t cal_fan_off_deci_c(void);
 
+/* Lux below which the roof counts as dark (clears at double it). Set from the
+ * app's Dark Below slider; DARK_LUX_MIN..DARK_LUX_MAX or ESP_ERR_INVALID_ARG. */
+uint16_t  cal_dark_lux(void);
+esp_err_t cal_set_dark_lux(uint16_t lux);
+
 /* Rated permeate output, litres per hour, for "litres produced today" = HPP run
  * hours x this. Nameplate is 1200; the skid's analogue meter reads ~900 and that
  * is the honest figure, so it is a knob, not a constant. */

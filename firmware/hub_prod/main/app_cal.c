@@ -53,6 +53,7 @@ static cal_ct_cfg_t s_cts[CAL_CT_COUNT] = {
 
 static uint16_t s_fan_on_deci_c  = FAN_ON_DECI_C_DEFAULT;
 static uint16_t s_fan_off_deci_c = FAN_OFF_DECI_C_DEFAULT;
+static uint16_t s_dark_lux       = DARK_LUX_DEFAULT;
 static char     s_cal_pass[33]   = CAL_PASS_DEFAULT;
 /* 64, because a WPA2 passphrase is up to 63 characters. AP_PASS is the
  * shipped default and is in the repository, which is the whole reason this
@@ -86,6 +87,7 @@ const char *cal_gf_ip(cal_gf_t n)        { return (n < CAL_GF_COUNT) ? s_gf_ip[n
 const cal_tank_cfg_t *cal_tank(cal_tank_t t) { return &s_tanks[t < CAL_TANK_COUNT ? t : 0]; }
 const cal_ct_cfg_t   *cal_ct(cal_ct_t c)     { return &s_cts[c < CAL_CT_COUNT ? c : 0]; }
 uint16_t cal_fan_on_deci_c(void)             { return s_fan_on_deci_c; }
+uint16_t cal_dark_lux(void)                  { return s_dark_lux; }
 uint16_t cal_fan_off_deci_c(void)            { return s_fan_off_deci_c; }
 
 /* NVS keys are capped at 15 characters, which is why these are abbreviated
@@ -167,6 +169,7 @@ esp_err_t cal_init(void)
     }
     load_u16(h, "fan", "on", &s_fan_on_deci_c);
     load_u16(h, "fan", "off", &s_fan_off_deci_c);
+    load_u16(h, "light", "dark", &s_dark_lux);
     load_u16(h, "plant", "lph", &s_plant_lph);
     load_u16(h, "hpp", "w", &s_motor_w[CAL_CT_HPP]);
     load_u16(h, "rwp", "w", &s_motor_w[CAL_CT_RWP]);
@@ -354,6 +357,15 @@ esp_err_t cal_set_fan(uint16_t on_deci_c, uint16_t off_deci_c)
         err = store_u16("fan", "off", off_deci_c);
     }
     return err;
+}
+
+esp_err_t cal_set_dark_lux(uint16_t lux)
+{
+    if (lux < DARK_LUX_MIN || lux > DARK_LUX_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_dark_lux = lux;
+    return store_u16("light", "dark", lux);
 }
 
 esp_err_t cal_set_press_range(cal_tank_t t, uint16_t range_mm)
