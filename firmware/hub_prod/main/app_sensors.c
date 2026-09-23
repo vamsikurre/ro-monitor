@@ -275,7 +275,15 @@ const char *relay_name(int idx)
     return (idx >= 0 && idx < RELAY_HUB_COUNT) ? s_relay_name[idx] : "?";
 }
 
-uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
+/* WINDOW_PICK_BEGIN
+ * Lifted whole by docs/check_far_echo.py and built against a stub, so what is
+ * tested is what ships. Keep it free of anything but its arguments.
+ */
+
+/* Push one sample and copy the real ones out, sorted. Returns how many there
+ * were. Zeros are "no reading", not "zero distance", and never count - letting
+ * one into the window would drag every figure toward the transducer. */
+static uint8_t window_sorted(median_u16_t *m, uint16_t sample, uint16_t *out)
 {
     m->v[m->next] = sample;
     m->next = (uint8_t)((m->next + 1) % SENSOR_WINDOW);
@@ -283,29 +291,71 @@ uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
         m->n++;
     }
 
-    /* Zeros are "no reading", not "zero distance". Copy out only real samples. */
-    uint16_t valid[SENSOR_WINDOW];
     uint8_t k = 0;
     for (uint8_t i = 0; i < m->n; i++) {
         if (m->v[i] > 0) {
-            valid[k++] = m->v[i];
+            out[k++] = m->v[i];
         }
     }
-    if (k == 0) {
-        return 0;
-    }
-
     for (uint8_t i = 1; i < k; i++) {          /* insertion sort, k <= 5 */
-        uint16_t x = valid[i];
+        uint16_t x = out[i];
         int8_t j = (int8_t)i - 1;
-        while (j >= 0 && valid[j] > x) {
-            valid[j + 1] = valid[j];
+        while (j >= 0 && out[j] > x) {
+            out[j + 1] = out[j];
             j--;
         }
-        valid[j + 1] = x;
+        out[j + 1] = x;
     }
-    return valid[k / 2];
+    return k;
 }
+
+uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
+{
+    uint16_t v[SENSOR_WINDOW];
+    uint8_t  k = window_sorted(m, sample, v);
+    return k ? v[k / 2] : 0;
+}
+
+/*
+ * The FARTHEST sample in the window, for a tank whose sensor can see something
+ * that is not the liquid.
+ *
+ * A median asks which reading is typical. That is the wrong question when the
+ * beam contains a fixed object, because the object is in most of the readings
+ * and the liquid is in a few - the median then reports the obstruction, and
+ * reports it more confidently the worse the problem gets. On 2026-09-23 the
+ * dosing drum ran dry while the hub showed 93%: the true surface at 479 mm and
+ * then 511 mm appeared in roughly one sample in four, and the other three sat
+ * pinned at 264-273 mm all day and all night, not drifting by one step while a
+ * two-hour plant run visibly drew the level down 32 mm. The moment the drum was
+ * refilled above that fixed thing, the 267 mm reading vanished from the record
+ * completely. It is an object in the cone, not a level (WIRING.md 13).
+ *
+ * So ask the question the geometry can answer instead. Below the liquid surface
+ * there is no air path, so the surface is the FARTHEST thing a ping can return
+ * from. Every obstruction, every near-field artifact, every echo off a dangling
+ * cable is nearer than the truth and none of them can be further. Take the last
+ * sample in the window and the whole class is gone.
+ *
+ * The cost is the opposite error: a ping whose first echo is missed and answered
+ * by a later reflection reads too far, and one of those in a window carries it.
+ * That reads the drum emptier than it is, which raises a replenish alert nobody
+ * needed - and that is the direction to be wrong in. The failure this replaces
+ * let a dry drum read 93% for a day and a half, and a dry drum is what costs
+ * membranes. The alert's own confirmation window (ALERT_LEVEL_CONFIRM) absorbs
+ * a few seconds of it.
+ *
+ * ponytail: deliberately not a "both echoes disagree, raise a sensor fault"
+ * detector. That is the better instrument and it is worth building the day the
+ * obstruction cannot be removed; removing the obstruction is worth more.
+ */
+uint16_t far_u16_push(median_u16_t *m, uint16_t sample)
+{
+    uint16_t v[SENSOR_WINDOW];
+    uint8_t  k = window_sorted(m, sample, v);
+    return k ? v[k - 1] : 0;
+}
+/* WINDOW_PICK_END */
 
 uint16_t dosing_read_median_mm(void)
 {

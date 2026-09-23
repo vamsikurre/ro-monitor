@@ -1944,6 +1944,54 @@ The dosing tank sits roughly **100 cm** from the hub enclosure, well inside the 
 
 **As built.** The drum is a **530 mm** deep ~50 L HDPE barrel with the transducer through its lid, ~540 mm face-to-floor. The hub default `250 / 540` matches that; the previous `250 / 900` assumed the §9 bracket and would have shown ~55 % with the drum dry. See §9 for the blind-zone consequence of the lid mount.
 
+### 13.1. There is something in the beam at ~267 mm (2026-09-23)
+
+**The drum ran dry and the hub showed 93% while it happened.** Somebody went up
+and refilled it at 06:30; the dashboard had been reporting 90-something for a day
+and a half, dipping to 20% now and then, and the dips were the true reading.
+
+The sensor sees two things and reports whichever echo comes back first, which is
+the nearer one:
+
+| | |
+| :--- | :--- |
+| **~264-273 mm** | A **fixed object**, not a level. Pinned to four quantisation steps across a whole 24 h window, and it did not move by one step while a two-hour plant run drew the level down 32 mm. |
+| **479 mm, then 511 mm** | The liquid. Tracks the drain, and steps down exactly across the HPP runs that dose. |
+
+The decisive one: when the drum was refilled at 06:48 the reading went to 100%
+(under the 250 mm full mark) and **the 267 mm figure disappeared from the record
+completely** — 0 occurrences in the next 99 samples. A fixed object at 267 mm is
+only visible while the surface is *below* it. Refill over the top of it and it
+stops existing. That is not something a level can do.
+
+**What to look for, in order.** All three are inside the cone of a 45-60 deg
+transducer looking down a ~390 mm barrel:
+
+1. **The 2.5 m transducer coax**, if it hangs back into the drum instead of
+   running straight out of the lid. A cable loop is a superb reflector and is by
+   far the easiest of these to have happened.
+2. **The dosing pump's suction lance / foot valve** and its tubing, if the lid
+   penetration puts it under the transducer rather than beside it.
+3. **A moulded rib or shoulder** in the HDPE at about half depth.
+
+**The fix is physical.** Secure whatever it is out of the beam, or drop a
+50-75 mm stilling tube from the lid so the transducer can only see straight down
+a pipe to the liquid. Until that is done the reading is a guess with a known bias.
+
+**The firmware mitigation is not a fix.** `far_u16_push()` takes the FARTHEST
+sample in the window rather than the median, because below the surface there is
+no air path and every obstruction is therefore nearer than the truth. That makes
+the failure safe rather than absent: a missed first echo answered by a later
+reflection now carries the window and reads the drum emptier than it is. A
+replenish alert nobody needed beats a dry drum reading 93%.
+
+> **The rolling median added on 2026-09-02** — after "four dosing chemical low
+> notifications in forty minutes at 15%, 19%, 13% and 0%" — is worth re-reading in
+> this light. Those four figures are the same shape as the ones that turned out to
+> be true here, and the median's effect was to stop reporting them. It is likely
+> that suppressed a real low drum rather than noise. The median stays for the
+> motor-current channels, which genuinely do want the typical reading.
+
 **Dosing pump.** UKL electronic diaphragm dosing pump on the skid (`images/hardware/dosing_pump_ukl.jpg`), stroke-rate knob, power button, no status contact. **Believed fed from the HPP contactor, not yet metered** — if so, dosing runs exactly when HPP runs and its ~20–30 W is inside the HPP clamp reading, below the 0.1 A floor. Nothing separate to monitor; a dosing-not-running fault would have to come from the drum level not falling while HPP runs.
 
 **What this removes from the build:** one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.

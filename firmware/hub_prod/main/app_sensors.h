@@ -51,6 +51,18 @@ typedef struct {
 
 uint16_t median_u16_push(median_u16_t *m, uint16_t sample);
 
+/*
+ * The farthest sample in the same window, for the dosing drum.
+ *
+ * Its sensor sees a fixed object at ~267 mm as well as the liquid, and a median
+ * reports whichever of the two is more common - which on 2026-09-23 was the
+ * object, while the drum ran dry at 93%. Below the surface there is no air
+ * path, so the surface is the farthest thing a ping can return from and every
+ * obstruction is nearer. See far_u16_push() in app_sensors.c for the full
+ * reasoning and for the error it trades this one against.
+ */
+uint16_t far_u16_push(median_u16_t *m, uint16_t sample);
+
 /* One raw ping. Prefer dosing_read_median_mm() - see above. */
 uint16_t dosing_read_mm(void);
 

@@ -1649,12 +1649,18 @@ static void poll_task(void *arg)
             local.ro_room.fault = true;
         }
 
-        /* raw_mm is the unfiltered ping and distance_mm the median, which is
-         * the same split the RS485 nodes report - the raw figure is what tells
-         * you a sensor is bouncing, and it is the first thing worth looking at
-         * when a level looks wrong. */
+        /* raw_mm is the unfiltered ping and distance_mm the filtered figure,
+         * which is the same split the RS485 nodes report - the raw figure is
+         * what tells you a sensor is bouncing, and it is the first thing worth
+         * looking at when a level looks wrong.
+         *
+         * FARTHEST, not median. This drum's beam contains a fixed object at
+         * ~267 mm, so the typical reading is the obstruction and the rare one is
+         * the liquid; a median picks the wrong one, and picks it harder as the
+         * drum empties past the object. The surface is the farthest thing a ping
+         * can come back from. See far_u16_push(). */
         local.dosing.raw_mm = dosing_read_mm();
-        local.dosing.distance_mm = median_u16_push(&s_dosing_win, local.dosing.raw_mm);
+        local.dosing.distance_mm = far_u16_push(&s_dosing_win, local.dosing.raw_mm);
         if (local.dosing.distance_mm == 0) {
             local.dosing.sensor = SENSOR_NO_ECHO;
             local.dosing.pct = -1;
