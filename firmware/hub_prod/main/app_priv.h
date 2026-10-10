@@ -378,6 +378,12 @@ typedef enum {
 /* The HPP must be off this long before "idle with room in the tank" counts as a
  * fault. Covers the Aster's flush and backwash cycles, which stop the pump. */
 #define ALERT_IDLE_HOLD_MS      900000
+/* HPP short-cycling: this many starts inside the window. Observed 2026-10-09
+ * with a blocked cartridge pre-filter - the Aster's LPS stopped the HPP every
+ * ~20 s and restarted it ~30 s later, 254 starts in a day. A normal run with
+ * flushes is a handful of starts an hour, so 6 in 10 min is never normal. */
+#define SHORT_CYCLE_STARTS      6
+#define SHORT_CYCLE_WINDOW_MS   600000
 
 /*
  * TEMPORARY - remove when WIRING.md 5.3 is resolved.

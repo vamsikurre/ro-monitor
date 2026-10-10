@@ -87,6 +87,12 @@ a RainMaker alert after 3 confirming cycles, repeated hourly while it holds,
 surfaced as `No Production` in the RO Room device, `motors.no_production` in
 telemetry, a dashboard alert, and an event.
 
+**HPP short-cycling** (added 2026-10-09): 6 HPP starts inside 10 minutes
+(`SHORT_CYCLE_*` in `app_priv.h`) — the Aster's LPS stopping a starved HPP and
+restarting it. Seen that day with a blocked cartridge pre-filter: on ~20 s, off
+~30 s, 254 starts. RainMaker alert only, repeated hourly while it holds; the
+start/stop events already show the pattern. Pinned by `docs/check_short_cycle.py`.
+
 **Long history is RainMaker's job**, not the hub's. Every numeric and boolean
 parameter carries `PROP_FLAG_TIME_SERIES`, so what the hub already reports on change
 is kept as a series: charts in the app, and

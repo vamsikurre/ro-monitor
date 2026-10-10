@@ -542,6 +542,7 @@ static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_nop
 static alert_t s_al_longrun;
 static alert_t s_al_bore_dry;
 static alert_t s_al_plant_on, s_al_plant_off;
+static alert_t s_al_short_cycle;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
  * A non-zero value re-notifies on that interval for as long as the condition
@@ -643,6 +644,26 @@ static void alert_eval(alert_t *a, bool tripped, const char *msg,
     a->last_fired_us = now;
     esp_rmaker_raise_alert(msg);
 }
+
+/* SHORT_CYCLE_BEGIN - lifted and compiled by docs/check_short_cycle.py.
+ *
+ * True while the last SHORT_CYCLE_STARTS starts all fall inside
+ * SHORT_CYCLE_WINDOW_MS. A ring of start times: after the push, the slot at
+ * head is the oldest of the last N, so one comparison answers it. */
+static bool hpp_short_cycling(bool running, int64_t now_us)
+{
+    static int64_t starts_us[SHORT_CYCLE_STARTS];
+    static uint8_t head;
+    static bool    was_running;
+    if (running && !was_running) {
+        starts_us[head] = now_us;
+        head = (head + 1) % SHORT_CYCLE_STARTS;
+    }
+    was_running = running;
+    int64_t oldest = starts_us[head];
+    return oldest != 0 && (now_us - oldest) <= (int64_t)SHORT_CYCLE_WINDOW_MS * 1000;
+}
+/* SHORT_CYCLE_END */
 
 static void evaluate_alerts(const hub_state_t *s)
 {
@@ -750,6 +771,17 @@ static void evaluate_alerts(const hub_state_t *s)
     snprintf(msg, sizeof(msg), "RO producing nothing: HPP on %d min, TWT stuck at %d%%. "
              "Check membranes, reject valve and feed.", NOPROD_WINDOW_MIN, s->twt.pct);
     alert_eval(&s_al_noprod, s->no_production, msg, ALERT_REPEAT_MS, 3);
+
+    /* Starved feed: the LPS stops the HPP, the Aster restarts it, forever. Each
+     * start is a dry-ish start on the pump and a hit on the contactor, so it
+     * repeats hourly like no-production. The N starts ARE the confirmation.
+     * Floating cycles count as stopped: a wandering pin dipping under the
+     * active threshold would otherwise invent starts. */
+    snprintf(msg, sizeof(msg), "HPP short-cycling: %d starts in %d min. Low feed pressure? "
+             "Check pre-filter, media filter, RWT.", SHORT_CYCLE_STARTS, SHORT_CYCLE_WINDOW_MS / 60000);
+    alert_eval(&s_al_short_cycle,
+               hpp_short_cycling(s->hpp.running && !s->hpp.ac_floating, now_us),
+               msg, ALERT_REPEAT_MS, 1);
 
     /*
      * TEMPORARY backstop for the overflow of 2026-09-13 - remove with
