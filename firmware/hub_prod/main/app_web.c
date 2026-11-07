@@ -1757,7 +1757,7 @@ static esp_err_t cal_ctl_post(httpd_req_t *req)
     cal_ctl_t k = *cal_ctl();
     if (form_field(body, "token", tok, sizeof(tok)) && tok[0]) {
         if (strlen(tok) > CAL_CTL_TOKEN_MAX) return bad(req, "rejected: token is at most 32 characters");
-        snprintf(k.token, sizeof(k.token), "%s", tok);
+        memcpy(k.token, tok, strlen(tok) + 1);   /* length checked on the line above */
     }
     if (!form_field(body, "noload", nl, sizeof(nl)) || !form_field(body, "maxrun", mr, sizeof(mr))) {
         return bad(req, "need noload and maxrun");
