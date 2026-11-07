@@ -6,7 +6,7 @@ One ESP-IDF project, two roles. Polled by the terrace hub over the LAN
 | Role | Node | Reads |
 | :--- | :--- | :--- |
 | Sump | `0x05` | AJ-SR04M ultrasonic, or a 4-20 mA transducer when `J-PRESS` is shunted |
-| Utility | `0x06` | 3 borewell CTs, 3 sump-motor CT channels, Astero `PUMP ON`, RWT floaty, SHT30 |
+| Utility | `0x06` | 3 borewell CTs, 3 sump-motor CT channels, Astero `PUMP ON`, isolated sump float, SHT30, plus three relays (borewell START/STOP, sump STOP); `rwt_floty` is always null |
 
 ## Build
 
