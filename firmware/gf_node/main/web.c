@@ -41,12 +41,76 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 static esp_err_t ota_post(httpd_req_t *req) { return ota_handle(req); }
 
+#if CONFIG_GF_ROLE_UTILITY
+#define CTL_BODY_MAX 512
+
+/* Reads the whole body into b (NUL-terminated). false = already answered with an error. */
+static bool read_body(httpd_req_t *req, char *b)
+{
+    if (req->content_len == 0 || req->content_len > CTL_BODY_MAX) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body 1..512 bytes");
+        return false;
+    }
+    size_t got = 0;
+    while (got < req->content_len) {
+        int n = httpd_req_recv(req, b + got, req->content_len - got);
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "short body"); return false; }
+        got += n;
+    }
+    b[got] = 0;
+    return true;
+}
+
+static esp_err_t send_parse_err(httpd_req_t *req, int rc)
+{
+    if (rc == 403) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"why\":\"token\"}");
+    }
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad request");
+}
+
+static esp_err_t ctl_post(httpd_req_t *req)
+{
+    char b[CTL_BODY_MAX + 1];
+    if (!read_body(req, b)) return ESP_OK;
+    ctl_motor_t m;  ctl_cmd_t c;  ctl_src_t src;
+    int rc = ctl_parse_cmd(b, CONFIG_GF_CTL_TOKEN, &m, &c, &src);
+    if (rc) return send_parse_err(req, rc);
+    ctl_result_t r = ctl_glue_command(m, c, src);
+    if (r == CTL_REFUSED_INVALID) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid");
+    httpd_resp_set_type(req, "application/json");
+    if (r == CTL_OK) return httpd_resp_sendstr(req, "{\"ok\":true}");
+    static const char *const why[] = { [CTL_REFUSED_SINGLE_PHASE] = "single_phase", [CTL_REFUSED_SUMP_HOLD] = "sump_hold",
+        [CTL_REFUSED_NOT_SETTLED] = "not_settled", [CTL_REFUSED_SUMP_FULL] = "sump_full", [CTL_REFUSED_NO_FLOAT] = "no_float" };
+    char o[48];
+    snprintf(o, sizeof o, "{\"ok\":false,\"why\":\"%s\"}", why[r]);
+    httpd_resp_set_status(req, "409 Conflict");
+    return httpd_resp_sendstr(req, o);
+}
+
+static esp_err_t ctl_cfg_post(httpd_req_t *req)
+{
+    char b[CTL_BODY_MAX + 1];
+    if (!read_body(req, b)) return ESP_OK;
+    ctl_cfg_t cfg;
+    ctl_glue_cfg_get(&cfg);
+    int rc = ctl_parse_cfg(b, CONFIG_GF_CTL_TOKEN, &cfg);
+    if (rc) return send_parse_err(req, rc);
+    ctl_glue_cfg_set(&cfg);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+#endif
+
 bool web_served_once(void) { return s_served; }
 
 esp_err_t web_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 3;
+    cfg.max_uri_handlers = 5;
     cfg.lru_purge_enable = true;
     cfg.stack_size = 6144;
     httpd_handle_t srv = NULL;
@@ -58,6 +122,12 @@ esp_err_t web_start(void)
     httpd_register_uri_handler(srv, &r);
     httpd_register_uri_handler(srv, &t);
     httpd_register_uri_handler(srv, &o);
+#if CONFIG_GF_ROLE_UTILITY
+    httpd_uri_t k = { .uri = "/api/ctl",     .method = HTTP_POST, .handler = ctl_post };
+    httpd_uri_t g = { .uri = "/api/ctl/cfg", .method = HTTP_POST, .handler = ctl_cfg_post };
+    httpd_register_uri_handler(srv, &k);
+    httpd_register_uri_handler(srv, &g);
+#endif
     ESP_LOGI(TAG, "http://" CONFIG_GF_STATIC_IP "/api/telemetry");
     return ESP_OK;
 }

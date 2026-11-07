@@ -71,3 +71,6 @@ ctl_result_t ctl_glue_command(ctl_motor_t m, ctl_cmd_t c, ctl_src_t src);
 void ctl_glue_cfg_set(const ctl_cfg_t *c);   /* replaces and saves the config */
 void ctl_glue_cfg_get(ctl_cfg_t *c);
 int  ctl_glue_json(char *buf, size_t len);   /* ",\"float_low\":..." fields spliced into sensors_json() */
+/* Pure JSON parsers (host-tested). 0 ok, 403 bad/missing token, 400 malformed. cfg is only written on 0. */
+int  ctl_parse_cmd(const char *json, const char *token, ctl_motor_t *m, ctl_cmd_t *c, ctl_src_t *src);
+int  ctl_parse_cfg(const char *json, const char *token, ctl_cfg_t *cfg);

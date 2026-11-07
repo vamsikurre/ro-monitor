@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "nvs.h"
 #include "ctl.h"
+#include "cJSON.h"
 
 static const char *TAG = "ctl";
 #define CFG_VER 1
@@ -62,6 +63,86 @@ static void save_cfg(void)
     nvs_close(h);
 }
 
+/* CTL_PARSE_BEGIN */
+/* Pure: cJSON + string.h only, so docs/check_gf_node.py can compile this block on the host. */
+static bool tok_ok(const cJSON *j, const char *want)
+{
+    const cJSON *t = cJSON_GetObjectItemCaseSensitive(j, "token");
+    if (!want || !*want || !cJSON_IsString(t) || !t->valuestring) return false;   /* empty token = all refused */
+    size_t n = strlen(want), l = strlen(t->valuestring);
+    unsigned d = (unsigned)(n ^ l);                    /* no early exit on the first differing byte */
+    for (size_t i = 0; i < n; i++) d |= (unsigned char)want[i] ^ (i < l ? (unsigned char)t->valuestring[i] : 0u);
+    return d == 0;
+}
+
+static bool str_is(const cJSON *j, const char *key, const char *val)
+{
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(j, key);
+    return cJSON_IsString(v) && v->valuestring && strcmp(v->valuestring, val) == 0;
+}
+
+int ctl_parse_cmd(const char *json, const char *token, ctl_motor_t *m, ctl_cmd_t *c, ctl_src_t *src)
+{
+    cJSON *j = cJSON_Parse(json);
+    if (!cJSON_IsObject(j)) { cJSON_Delete(j); return 400; }
+    int rc = 0;
+    if (!tok_ok(j, token)) rc = 403;
+    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "start")) { *m = CTL_BORE; *c = CTL_CMD_START; }
+    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "stop"))  { *m = CTL_BORE; *c = CTL_CMD_STOP; }
+    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "start")) { *m = CTL_SUMP; *c = CTL_CMD_START; }
+    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "stop"))  { *m = CTL_SUMP; *c = CTL_CMD_STOP; }
+    else rc = 400;
+    if (rc == 0) {
+        if (str_is(j, "src", "app"))       *src = CTL_SRC_APP;
+        else if (str_is(j, "src", "dash")) *src = CTL_SRC_DASH;
+        else rc = 400;
+    }
+    cJSON_Delete(j);
+    return rc;
+}
+
+/* A number field: absent keeps *out; present must be an integer in 0..max. */
+static bool num_field(const cJSON *j, const char *key, unsigned max, unsigned *out)
+{
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(j, key);
+    if (!v) return true;
+    if (!cJSON_IsNumber(v) || v->valuedouble < 0 || v->valuedouble > max
+        || v->valuedouble != (double)(unsigned)v->valuedouble)
+        return false;
+    *out = (unsigned)v->valuedouble;
+    return true;
+}
+
+static bool bool_field(const cJSON *j, const char *key, bool *out)
+{
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(j, key);
+    if (!v) return true;
+    if (!cJSON_IsBool(v)) return false;
+    *out = cJSON_IsTrue(v);
+    return true;
+}
+
+int ctl_parse_cfg(const char *json, const char *token, ctl_cfg_t *cfg)
+{
+    cJSON *j = cJSON_Parse(json);
+    if (!cJSON_IsObject(j)) { cJSON_Delete(j); return 400; }
+    if (!tok_ok(j, token)) { cJSON_Delete(j); return 403; }
+    ctl_cfg_t n = *cfg;                       /* only copied back when every field is valid */
+    unsigned v;
+    bool ok = true;
+#define NUM(field, max) do { v = n.field; ok = ok && num_field(j, #field, max, &v); n.field = (__typeof__(n.field))v; } while (0)
+    NUM(bore_apv_x100, 65535); NUM(sump_apv_x100, 65535); NUM(bore_turns, 255); NUM(sump_turns, 255);
+    NUM(bore_run_da, 65535); NUM(bore_dry_da, 65535); NUM(sump_noload_da, 65535); NUM(max_run_min, 65535);
+#undef NUM
+    ok = ok && bool_field(j, "ctrl_node", &n.ctrl_node) && bool_field(j, "bore_act", &n.bore_act)
+            && bool_field(j, "sump_act", &n.sump_act);
+    cJSON_Delete(j);
+    if (!ok) return 400;
+    *cfg = n;
+    return 0;
+}
+/* CTL_PARSE_END */
+
 void ctl_glue_init(void)
 {
     s_mx = xSemaphoreCreateMutex();
@@ -104,6 +185,11 @@ ctl_result_t ctl_glue_command(ctl_motor_t m, ctl_cmd_t c, ctl_src_t src)
 {
     xSemaphoreTake(s_mx, portMAX_DELAY);
     ctl_result_t r = ctl_command(&s_st, &s_cfg, m, c, src, now_ms());
+    if (r == CTL_OK && c == CTL_CMD_STOP) {   /* a person's Stop reaches the relay now, not at the next sample */
+        if (m == CTL_BORE) { s_out.bore_stop = true; s_out.bore_start = false; }
+        else s_out.sump_stop = true;
+        relay_apply(&s_out);
+    }
     if (ctl_persist_changed(&s_st)) save_persist();
     xSemaphoreGive(s_mx);
     return r;

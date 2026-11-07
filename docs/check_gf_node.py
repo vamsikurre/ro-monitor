@@ -235,11 +235,101 @@ def check_role(role, c_path, fake_state):
         print('FAIL %s: %s' % (c_path, f))
     return not fails
 
+# ---- host-compiled control parsers (ctl_glue.c between CTL_PARSE_BEGIN/END) ----
+CTL_HARNESS = r"""
+#include <stdio.h>
+#include <string.h>
+#include "ctl.h"
+#include "cJSON.h"
+%s
+static int fails = 0;
+#define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
+#define CMD(motor) "{\"token\":\"s3cret\",\"motor\":\"" motor "\",\"cmd\":\"stop\",\"src\":\"app\"}"
+int main(void) {
+    ctl_motor_t m = CTL_BORE; ctl_cmd_t c = CTL_CMD_START; ctl_src_t src = CTL_SRC_AUTO;
+    CHECK(ctl_parse_cmd(CMD("sump"), "s3cret", &m, &c, &src) == 0 && m == CTL_SUMP && c == CTL_CMD_STOP && src == CTL_SRC_APP);
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"start\",\"src\":\"dash\"}", "s3cret", &m, &c, &src) == 0
+          && m == CTL_BORE && c == CTL_CMD_START && src == CTL_SRC_DASH);
+    /* bad_token_refused_and_state_unchanged */
+    ctl_cfg_t cfg = { .bore_apv_x100 = 3000, .bore_turns = 1, .bore_run_da = 10, .ctrl_node = true };
+    ctl_cfg_t before = cfg;
+    const char *body = "{\"token\":\"%%s\",\"bore_run_da\":99,\"ctrl_node\":false}";
+    char b[128];
+    snprintf(b, sizeof b, body, "wrong!");  CHECK(ctl_parse_cfg(b, "s3cret", &cfg) == 403 && memcmp(&cfg, &before, sizeof cfg) == 0);
+    snprintf(b, sizeof b, body, "");        CHECK(ctl_parse_cfg(b, "s3cret", &cfg) == 403 && memcmp(&cfg, &before, sizeof cfg) == 0);
+    snprintf(b, sizeof b, body, "s3cre");   CHECK(ctl_parse_cfg(b, "s3cret", &cfg) == 403);   /* prefix */
+    snprintf(b, sizeof b, body, "s3cretX"); CHECK(ctl_parse_cfg(b, "s3cret", &cfg) == 403);   /* longer */
+    snprintf(b, sizeof b, body, "");        CHECK(ctl_parse_cfg(b, "", &cfg) == 403 && memcmp(&cfg, &before, sizeof cfg) == 0);  /* empty GF_CTL_TOKEN */
+    CHECK(ctl_parse_cfg("{\"bore_run_da\":99}", "s3cret", &cfg) == 403);                       /* no token */
+    CHECK(ctl_parse_cfg("{\"token\":5,\"bore_run_da\":99}", "s3cret", &cfg) == 403);           /* not a string */
+    CHECK(memcmp(&cfg, &before, sizeof cfg) == 0);
+    m = CTL_BORE; c = CTL_CMD_START;
+    CHECK(ctl_parse_cmd(CMD("sump"), "nope", &m, &c, &src) == 403 && m == CTL_BORE && c == CTL_CMD_START);
+    CHECK(ctl_parse_cmd(CMD("sump"), "", &m, &c, &src) == 403);
+    /* partial_cfg_keeps_other_fields */
+    snprintf(b, sizeof b, body, "s3cret");
+    CHECK(ctl_parse_cfg(b, "s3cret", &cfg) == 0);
+    CHECK(cfg.bore_run_da == 99 && !cfg.ctrl_node && cfg.bore_apv_x100 == 3000 && cfg.bore_turns == 1);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\"}", "s3cret", &cfg) == 0 && cfg.bore_run_da == 99);
+    /* range / type checks apply nothing */
+    before = cfg;
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":5,\"bore_turns\":256}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":5,\"max_run_min\":65536}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":5,\"bore_dry_da\":-1}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":5,\"bore_dry_da\":1.5}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":5,\"bore_act\":1}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":\"5\"}", "s3cret", &cfg) == 400);
+    CHECK(memcmp(&cfg, &before, sizeof cfg) == 0);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"max_run_min\":65535,\"bore_turns\":255,\"sump_act\":true}", "s3cret", &cfg) == 0
+          && cfg.max_run_min == 65535 && cfg.bore_turns == 255 && cfg.sump_act);
+    /* unknown_motor_is_400 and other malformed commands */
+    CHECK(ctl_parse_cmd(CMD("pool"), "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"cmd\":\"stop\",\"src\":\"app\"}", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"reset\",\"src\":\"app\"}", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"stop\",\"src\":\"auto\"}", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"stop\"}", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("not json", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cmd("[1,2]", "s3cret", &m, &c, &src) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\"", "s3cret", &cfg) == 400);
+    printf(fails ? "ctl_parse: %%d FAILED\n" : "ctl_parse: OK\n", fails);
+    return fails ? 1 : 0;
+}
+"""
+
+def idf_cjson():
+    idf = os.environ.get('IDF_PATH') or 'C:/esp/v5.4.4/esp-idf'
+    d = os.path.join(idf, 'components', 'json', 'cJSON')
+    if os.path.isfile(os.path.join(d, 'cJSON.c')):
+        return d
+    for root, _, files in os.walk('C:/esp'):
+        if 'cJSON.c' in files and root.endswith('cJSON'):
+            return root
+    return None
+
+def check_ctl_parse():
+    import subprocess, tempfile
+    src = io_read(CTL_GLUE_C)
+    b, e = '/* CTL_PARSE_BEGIN */', '/* CTL_PARSE_END */'
+    if b not in src or e not in src:
+        print('FAIL %s: CTL_PARSE markers missing' % CTL_GLUE_C); return False
+    cj = idf_cjson()
+    if cj is None:
+        print('cJSON.c not found - set IDF_PATH'); return False
+    block = src[src.index(b) + len(b):src.index(e)]
+    d = tempfile.mkdtemp()
+    c_path, exe = os.path.join(d, 'ctlp.c'), os.path.join(d, 'ctlp.exe')
+    with open(c_path, 'w', encoding='utf-8') as f:
+        f.write(CTL_HARNESS % block)
+    if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-I', cj, '-I', os.path.dirname(CTL_GLUE_C),
+                        '-o', exe, c_path, os.path.join(cj, 'cJSON.c')]) != 0:
+        print('gcc refused the extracted ctl parsers'); return False
+    return subprocess.call([exe]) == 0
+
 def main():
     fake_state = load_fake_state()
     sump_ok = check_role('sump', SUMP_C, fake_state)
     util_ok = check_role('util', UTIL_C, fake_state)
-    ok = sump_ok and util_ok
+    ok = sump_ok and util_ok and check_ctl_parse()
     print('check_gf_node: %s' % ('OK' if ok else 'FAILED'))
     return 0 if ok else 1
 
