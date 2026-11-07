@@ -93,8 +93,8 @@ identical to three documents. **The firmware is the authority; if this table and
 | 35 | `IN_RWP_AC` | `J_AC2` pin 3 | |
 | 36 (`SP`) | `IN_HPP_CT` | §7 CT channel 1 | ADC1_CH0. Silkscreened `SP` on the module |
 | 39 (`SN`) | `IN_RWP_CT` | §7 CT channel 2 | ADC1_CH3. Silkscreened `SN` |
-| 5 | `US_TRIG_DOS` | `J_DOS` pin 3 | |
-| 4 | `US_ECHO_DOS` | §8 divider output | **5V→3.3V divider required** |
+| 5 | - (free) | `J_DOS` pin 3 | was `US_TRIG_DOS` |
+| 4 | `DOS_LEVEL` | §8 divider output | **5V→3.3V divider required** |
 | 27 | `OUT_RLY_TWT` | `J_RELAY` pin 2 | Active LOW. Phase C |
 | 23 | `OUT_RLY_RWT` | `J_RELAY` pin 3 | |
 | 18 | `OUT_RLY_DOS` | `J_RELAY` pin 4 | |

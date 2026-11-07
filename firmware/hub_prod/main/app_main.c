@@ -542,7 +542,7 @@ static alert_t s_al_fault, s_al_overcurrent, s_al_node_lost, s_al_idle, s_al_nop
 static alert_t s_al_longrun;
 static alert_t s_al_bore_dry;
 static alert_t s_al_plant_on, s_al_plant_off;
-static alert_t s_al_short_cycle;
+static alert_t s_al_short_cycle, s_al_dos_start;
 
 /* repeat_ms == 0 keeps the original behaviour: one notification per trip, ever.
  * A non-zero value re-notifies on that interval for as long as the condition
@@ -686,12 +686,17 @@ static void evaluate_alerts(const hub_state_t *s)
     if (s->dosing.pct >= 0) {
         bool low = s->dosing.pct < ALERT_DOSING_LOW_PCT;
         if (s->dosing.pct > ALERT_DOSING_LOW_PCT + ALERT_HYST_PCT) low = false;
-        snprintf(msg, sizeof(msg), "Dosing chemical low (%d%%). Replenish the anti-scalant.", s->dosing.pct);
+        snprintf(msg, sizeof(msg), "Dosing chemical below the level sensor. Replenish the anti-scalant.");
         alert_eval(&s_al_dos_low, low, msg, 0, ALERT_LEVEL_CONFIRM);
     }
 
     if (!s->battery_room.fault && s->battery_online) {
-        bool hot = s->battery_room.temp_deci_c >= (int16_t)cal_fan_on_deci_c();
+        /* Clears at fan_off, like the fan itself. Clearing at fan_on let a room
+         * hovering at 35.0-35.3 C re-trip every ALERT_REARM_MS - a notification
+         * every five minutes all afternoon, 2026-10-21. */
+        int16_t t = s->battery_room.temp_deci_c;
+        bool hot = t >= (int16_t)cal_fan_on_deci_c() ||
+                   (s_al_bat_hot.streak > 0 && t > (int16_t)cal_fan_off_deci_c());
         snprintf(msg, sizeof(msg), "Battery room %d.%d C. Exhaust fan %s.",
                  s->battery_room.temp_deci_c / 10, abs(s->battery_room.temp_deci_c % 10),
                  s->fan_on ? "ON" : "not running");
@@ -834,6 +839,16 @@ static void evaluate_alerts(const hub_state_t *s)
         snprintf(msg, sizeof(msg), "RO plant stopped after %u h %02u min. TWT %d%%.",
                  (unsigned)(s->rwp_run_s / 3600), (unsigned)(s->rwp_run_s % 3600 / 60), s->twt.pct);
         alert_eval(&s_al_plant_off, seen_run && !s->rwp_acct_on, msg, 0, 3);
+
+        /* Every start with the drum below its sensor, once per start: judged
+         * on the start edge, so a drum that goes low mid-run is left to the
+         * dosing-low alert above instead of raising both. */
+        static bool was_on = false, low_at_start = false;
+        if (s->rwp_acct_on && !was_on) low_at_start = (s->dosing.sensor == SENSOR_BELOW);
+        if (!s->rwp_acct_on) low_at_start = false;
+        was_on = s->rwp_acct_on;
+        alert_eval(&s_al_dos_start, low_at_start,
+                   "RO started with dosing chemical LOW. Refill the anti-scalant now.", 0, 3);
     }
 
     /* Dry borewell. Repeats like the no-production alert, and for the same
@@ -1589,7 +1604,7 @@ static void poll_task(void *arg)
     s_state.fan_last_on   = cal_event_get(CAL_EVT_FAN_ON);
     hub_state_unlock();
 
-    static median_u16_t s_dosing_win;
+    uint8_t dos_flip = 0;          /* cycles the dosing sensor has disagreed */
 
     run_acct_t hpp_acct = { .which = CAL_CT_HPP }, rwp_acct = { .which = CAL_CT_RWP };
     run_acct_t bore_acct = { .which = CAL_CT_BORE }, smot_acct = { .which = CAL_CT_SUMP };
@@ -1681,27 +1696,26 @@ static void poll_task(void *arg)
             local.ro_room.fault = true;
         }
 
-        /* raw_mm is the unfiltered ping and distance_mm the filtered figure,
-         * which is the same split the RS485 nodes report - the raw figure is
-         * what tells you a sensor is bouncing, and it is the first thing worth
-         * looking at when a level looks wrong.
-         *
-         * FARTHEST, not median. This drum's beam contains a fixed object at
-         * ~267 mm, so the typical reading is the obstruction and the rare one is
-         * the liquid; a median picks the wrong one, and picks it harder as the
-         * drum empties past the object. The surface is the farthest thing a ping
-         * can come back from. See far_u16_push(). */
-        local.dosing.raw_mm = dosing_read_mm();
-        local.dosing.distance_mm = far_u16_push(&s_dosing_win, local.dosing.raw_mm);
-        if (local.dosing.distance_mm == 0) {
-            local.dosing.sensor = SENSOR_NO_ECHO;
-            local.dosing.pct = -1;
-        } else {
-            local.dosing.sensor = (local.dosing.distance_mm < BLIND_ZONE_MM) ? SENSOR_BLIND : SENSOR_OK;
+        /* Point sensor, not a level: 100 above it, 0 below, so the tank
+         * graphic, the app's Dosing Level and the low alert work unchanged and
+         * the sensor word says which it is. A flip has to hold DOS_FLIP_CYCLES
+         * running - a refill splashing past the sensor is not two refills.
+         * The first read is taken as-is, so a hub booting beside a low drum
+         * already knows when the plant starts. */
+        {
+            bool wet = dosing_wet();
+            bool now_wet = (local.dosing.pct == 100);
+            if (local.dosing.pct < 0 || wet == now_wet) {
+                dos_flip = 0;
+                if (local.dosing.pct < 0) now_wet = wet;
+            } else if (++dos_flip >= DOS_FLIP_CYCLES) {
+                dos_flip = 0;
+                now_wet = wet;
+            }
+            local.dosing.pct = now_wet ? 100 : 0;
+            local.dosing.sensor = now_wet ? SENSOR_OK : SENSOR_BELOW;
+            local.dosing.raw_mm = local.dosing.distance_mm = 0;
             local.dosing.last_ok_us = esp_timer_get_time();
-            const cal_tank_cfg_t *c = cal_tank(CAL_TANK_DOS);
-            uint8_t pct = levelPercent(local.dosing.distance_mm, c->full_mm, c->empty_mm);
-            local.dosing.pct = (pct == 255) ? -1 : (int16_t)pct;
         }
 
         local.twt_float_closed = opto_twt_float_closed();

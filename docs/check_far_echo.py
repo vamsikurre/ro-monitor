@@ -1,24 +1,10 @@
-"""Pin the two window picks in app_sensors.c.
+"""Pin the median window in app_sensors.c - the CT clamp filter rides on it.
 
-One window type, two questions. The CT clamp filter asks which reading is
-typical and wants the median; the dosing drum asks where the liquid is and wants
-the farthest. Getting the dosing one wrong is not a cosmetic bug - it is what
-happened on 2026-09-23, when the drum ran dry while the hub reported 93% for a
-day and a half, because the median kept choosing a fixed object in the beam over
-the liquid behind it (WIRING.md 13).
-
-Three ways to break this, none of which crashes anything:
-
-  - use the median for dosing and the obstruction wins again, the more surely
-    the emptier the drum gets;
-  - let a zero into either window and every figure is dragged toward the
-    transducer, which reads as a FULLER tank than is really there;
-  - change median_u16_push() while adding the second pick, and the motor current
-    filter silently changes shape with it.
-
-Same approach as check_bore_dry.py: the picks are lifted out of the firmware
-between the WINDOW_PICK markers and built against a stub, so what is tested is
-what ships.
+The dosing drum used a farthest-echo pick from the same window until the
+ultrasonic was replaced by a point sensor (WIRING.md 13.2). The median checks
+stay: zeros must not count, one wild sample must not move it, and the ring must
+wrap. The code is lifted between the WINDOW_PICK markers and built against a
+stub, so what is tested is what ships.
 
     python docs/check_far_echo.py       # from the repo root
 """
@@ -50,93 +36,7 @@ typedef struct {
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL  line %%d: %%s\n", __LINE__, #expr); fails++; } } while (0)
 
-/* The plant's own figures, 2026-09-23. OBSTRUCTION is the fixed thing in the
-   cone; SURFACE_* are the true readings as the drum drained through the night
-   and then the two-hour plant run. FULL is after it was refilled over the top
-   of the obstruction, where the object cannot be seen at all. */
-#define OBSTRUCTION 267
-#define SURFACE_EVE 479
-#define SURFACE_AM  511
-#define FULL        240
-
-static uint16_t feed_far(uint16_t *seq, int n) {
-    median_u16_t w = {0};
-    uint16_t out = 0;
-    for (int i = 0; i < n; i++) out = far_u16_push(&w, seq[i]);
-    return out;
-}
-
 int main(void) {
-    /* ---- the failure this exists to stop ---- */
-    /* One ping in four sees the liquid; the rest see the object. This is the
-       real mix off the 24 h strip, and a median reports 93%% for a dry drum. */
-    uint16_t mixed[] = { OBSTRUCTION, OBSTRUCTION, SURFACE_AM, OBSTRUCTION, OBSTRUCTION };
-    CHECK(feed_far(mixed, 5) == SURFACE_AM);
-
-    /* Even ONE sighting of the liquid in the whole window must win. Anything
-       else and the guard fails exactly when the drum is worst placed to lose. */
-    uint16_t once[] = { OBSTRUCTION, OBSTRUCTION, OBSTRUCTION, OBSTRUCTION, SURFACE_EVE };
-    CHECK(feed_far(once, 5) == SURFACE_EVE);
-
-    /* And the median really would have got it wrong - the thing being fixed. */
-    {
-        median_u16_t w = {0};
-        uint16_t out = 0;
-        for (int i = 0; i < 5; i++) out = median_u16_push(&w, mixed[i]);
-        CHECK(out == OBSTRUCTION);
-    }
-
-    /* ---- a full drum hides the object, and must read full ---- */
-    uint16_t full[] = { FULL, FULL, FULL, FULL, FULL };
-    CHECK(feed_far(full, 5) == FULL);
-
-    /* ---- draining: the window follows the liquid down, never back up ---- */
-    /* The object stays in the beam the whole way and must never be reported. */
-    {
-        median_u16_t w = {0};
-        uint16_t prev = 0;
-        for (int i = 0; i < 60; i++) {
-            uint16_t truth = (uint16_t)(300 + i * 3);
-            uint16_t ping = (i %% 4 == 0) ? truth : OBSTRUCTION;
-            uint16_t out = far_u16_push(&w, ping);
-            CHECK(out != OBSTRUCTION || truth <= OBSTRUCTION);
-            CHECK(out >= prev);            /* a draining drum never reads fuller */
-            prev = out;
-        }
-        CHECK(prev >= 460);
-    }
-
-    /* ---- zeros are "no reading", not "zero distance" ---- */
-    /* A zero must not win either pick, and must not evict the real samples: a
-       window that reads 0 mm reports a tank brim-full, which is the direction
-       that hides an empty drum. */
-    uint16_t zeros[] = { SURFACE_AM, 0, 0, 0, 0 };
-    CHECK(feed_far(zeros, 5) == SURFACE_AM);
-    {
-        median_u16_t w = {0};
-        uint16_t out = 0;
-        for (int i = 0; i < 5; i++) out = median_u16_push(&w, zeros[i]);
-        CHECK(out == SURFACE_AM);
-    }
-    /* Nothing at all came back: both picks say so rather than inventing a zero. */
-    uint16_t none[] = { 0, 0, 0, 0, 0 };
-    CHECK(feed_far(none, 5) == 0);
-    {
-        median_u16_t w = {0};
-        uint16_t out = 0;
-        for (int i = 0; i < 5; i++) out = median_u16_push(&w, none[i]);
-        CHECK(out == 0);
-    }
-
-    /* ---- a partly filled window works from the first sample ---- */
-    /* There is no warm-up: the hub reports a level on its first cycle and it
-       must be that sample, not a fifth of it. */
-    {
-        median_u16_t a = {0}, b = {0};
-        CHECK(far_u16_push(&a, SURFACE_AM) == SURFACE_AM);
-        CHECK(median_u16_push(&b, SURFACE_AM) == SURFACE_AM);
-    }
-
     /* ---- the median is UNCHANGED: the CT clamp filter rides on it ---- */
     /* Five ascending samples, middle one. Plus the outlier rejection that is the
        whole reason the motor channels use a median at all. */
@@ -162,20 +62,33 @@ int main(void) {
         CHECK(out == 30);
     }
 
+    /* Zeros are "no reading": they never count, and all-zero says so. */
+    {
+        median_u16_t w = {0};
+        uint16_t seq[] = { 511, 0, 0, 0, 0 }, out = 0;
+        for (int i = 0; i < 5; i++) out = median_u16_push(&w, seq[i]);
+        CHECK(out == 511);
+        median_u16_t z = {0};
+        for (int i = 0; i < 5; i++) out = median_u16_push(&z, 0);
+        CHECK(out == 0);
+    }
+    /* No warm-up: the first sample is the answer. */
+    {
+        median_u16_t w = {0};
+        CHECK(median_u16_push(&w, 511) == 511);
+    }
+
     /* ---- the ring wraps, and old samples leave ---- */
-    /* SENSOR_WINDOW+1 pings of the truth must flush the object out entirely,
-       so a drum refilled over the object stops reporting it within a window. */
     {
         median_u16_t w = {0};
         uint16_t out = 0;
-        for (int i = 0; i < SENSOR_WINDOW; i++) out = far_u16_push(&w, SURFACE_AM);
-        CHECK(out == SURFACE_AM);
-        for (int i = 0; i < SENSOR_WINDOW; i++) out = far_u16_push(&w, FULL);
-        CHECK(out == FULL);                /* the old far reading is gone */
+        for (int i = 0; i < SENSOR_WINDOW; i++) out = median_u16_push(&w, 511);
+        for (int i = 0; i < SENSOR_WINDOW; i++) out = median_u16_push(&w, 240);
+        CHECK(out == 240);                 /* the old window is gone */
     }
 
     if (fails) { printf("\n%%d check(s) failed\n", fails); return 1; }
-    printf("OK: dosing takes the farthest echo, the CT median is unchanged\n");
+    printf("OK: the CT median window behaves\n");
     return 0;
 }
 '''
@@ -203,12 +116,6 @@ def main():
     # Drop the marker's own comment block; keep the functions.
     code = code[code.index('*/') + 2:]
     header = open(HEADER, encoding='utf-8').read()
-
-    # The dosing path must actually USE the far pick. A checker that only proves
-    # far_u16_push() is correct proves nothing if nothing calls it.
-    main_c = open('firmware/hub_prod/main/app_main.c', encoding='utf-8').read()
-    if 'far_u16_push(&s_dosing_win' not in main_c:
-        sys.exit('app_main.c no longer feeds the dosing window to far_u16_push()')
 
     src = HARNESS % {
         'code': code,

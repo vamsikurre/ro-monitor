@@ -108,8 +108,8 @@ this document described until 2026-09-08 was never built — see §3.5.
 | **GPIO 23** | `OUT_RLY_RWT` | 4-Ch Relay Module IN2 | Output | RWT Float Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
 | **GPIO 18** | `OUT_RLY_DOS` | 4-Ch Relay Module IN3 | Output | Dosing Level Switch Emulation (`COM`/`NC`, de-energized = closed). Phase C |
 | **GPIO 19** | `OUT_RLY_AUX` | 4-Ch Relay Module IN4 | Output | Auxiliary / interlock override. Polarity depends on target terminal (`WIRING.md` 7.2). Phase C |
-| **GPIO 5** | `US_TRIG_DOS` | AJ-SR04M (Dosing) `TRIG` | Output | 10 µs trigger. Sensor wired direct to hub (`WIRING.md` §13) |
-| **GPIO 4** | `US_ECHO_DOS` | AJ-SR04M (Dosing) `ECHO` | Input | Echo width. **1 kΩ/1.8 kΩ divider as built** (5V→3.21V) |
+| **GPIO 5** | - | Free | - | Was the AJ-SR04M `TRIG` (`WIRING.md` §13.2) |
+| **GPIO 4** | `DOS_LEVEL` | XKC-Y25-PNP (Dosing) `OUT` | Input | High = liquid at sensor (`WIRING.md` §13.2). **1 kΩ/1.8 kΩ divider as built** (5V→3.21V) |
 | **GPIO 2** | `LED_STATUS` | System Heartbeat LED | Output | Active HIGH onboard LED |
 | **GPIO 0** | `BTN_BOOT` | Onboard BOOT Button | Input | Factory reset / provisioning trigger |
 

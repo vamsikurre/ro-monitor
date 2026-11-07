@@ -403,6 +403,12 @@ h1 span{color:var(--ink-3); font-weight:400}
 }
 .vessel .pct small{display:block; font-size:10px; font-weight:600; letter-spacing:.1em; opacity:.72; margin-top:1px}
 .vessel .nodata{font-size:12px; letter-spacing:.1em; color:var(--ink-3)}
+/* Dosing drum below its point sensor: the room-alarm pulse, on the vessel. */
+.unit.alarm .vessel{
+  outline:2px solid var(--fault); outline-offset:3px; border-radius:8px;
+  background:var(--fault-wash); animation:roomalarm 1.1s ease-in-out infinite;
+}
+.unit.alarm .pct{color:var(--fault)}
 .chip{
   font-family:var(--mono); font-size:9.5px; letter-spacing:.11em; text-transform:uppercase;
   padding:2px 7px; border-radius:100px; border:1px solid var(--line); color:var(--ink-2);
@@ -1111,6 +1117,15 @@ function sidePort(cell, id, frac) {
 }
 
 /* ── unit builders ────────────────────────────────────────── */
+/* The dosing drum has a point sensor (WIRING.md 13.2), not a level: liquid is
+   above it or below it, so it shows OK / LOW and never a percentage. */
+const dosLow = t => t.state === "ONLINE" && t.sensor === "Below sensor";
+function tankText(id, t) {
+  if (id !== "dos") return { pct: `${t.pct.toFixed(0)}<small>% full</small>`, sub: `${t.distance_mm} mm` };
+  return dosLow(t) ? { pct: "LOW<small>refill</small>", sub: "below sensor" }
+                   : { pct: "OK<small>level</small>", sub: "point sensor" };
+}
+
 function tankUnit(t, cfg) {
   const u = node("unit");
   u.dataset.u = cfg.id;
@@ -1128,8 +1143,9 @@ function tankUnit(t, cfg) {
     pn.appendChild(txt("nodata", "NO DATA"));
     g.appendChild(pn);
   } else {
-    g.appendChild(node("pct", `${t.pct.toFixed(0)}<small>% full</small>`));
+    g.appendChild(node("pct", tankText(cfg.id, t).pct));
   }
+  if (cfg.id === "dos") u.classList.toggle("alarm", dosLow(t));
   /* Above the vessel, so the plant reads top-down: how clean the water is, then
      how much of it there is. Only the two tanks with probes grow one - dosing
      and the sump are passed no wq and get no permanent dash. */
@@ -1154,9 +1170,9 @@ function tankUnit(t, cfg) {
   u.appendChild(v);
   const cap = node("caption");
   cap.appendChild(txt("name", cfg.label));
-  cap.appendChild(txt("sub", dead ? "—" : `${t.distance_mm} mm`));
+  cap.appendChild(txt("sub", dead ? "—" : tankText(cfg.id, t).sub));
   let label = t.state, kind = "fault";
-  if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : "warn"; }
+  if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : dosLow(t) ? "fault" : "warn"; }
   else if (t.state === "STALE") { kind = "warn"; }
   cap.appendChild(chip(label, kind));
   u.appendChild(cap);
@@ -1710,13 +1726,14 @@ function updatePlant(s) {
     const dead = t.state === "OFFLINE" || t.state === "SENSOR_ERROR";
     if (!dead) setLevel(id, t.pct);
     const pctEl = u.querySelector(".pct");
-    if (pctEl && !dead) pctEl.innerHTML = `${t.pct.toFixed(0)}<small>% full</small>`;
+    if (pctEl && !dead) pctEl.innerHTML = tankText(id, t).pct;
+    if (id === "dos") u.classList.toggle("alarm", dosLow(t));
     const sub = u.querySelector(".sub");
-    if (sub) sub.textContent = dead ? "\u2014" : `${t.distance_mm} mm`;
+    if (sub) sub.textContent = dead ? "\u2014" : tankText(id, t).sub;
     const c = u.querySelector(".chip");
     if (c) {
       let label = t.state, kind = "fault";
-      if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : "warn"; }
+      if (t.state === "ONLINE") { label = t.sensor === "OK" ? "Reading" : t.sensor; kind = t.sensor === "OK" ? "on" : dosLow(t) ? "fault" : "warn"; }
       else if (t.state === "STALE") { kind = "warn"; }
       c.textContent = label;
       c.className = "chip " + kind;
@@ -1887,8 +1904,8 @@ function drawAlerts(s) {
   [["sump", "Sump"], ["rwt", "Raw Water"], ["twt", "Treated Water"]].forEach(([k, n]) => {
     if (T[k].state === "ONLINE" && T[k].pct > 95) add("warn", "Overflow risk", `${n} above 95 percent.`, n);
   });
-  if (T.dosing.state === "ONLINE" && T.dosing.pct < 20)
-    add("warn", "Chemical low", "Dosing tank below 20 percent. Replenish anti-scalant.", "Dosing");
+  if (dosLow(T.dosing))
+    add("fault", "Chemical low", "Dosing chemical below the level sensor. Replenish anti-scalant.", "Dosing");
   if (s.aster.alarm)
     add("fault", "Controller alarm", "Aster NXT 11 alarm contact is active. Check LPS and HPS pressure switches.", "RO Room");
   if (s.motors && s.motors.no_production)
@@ -2233,7 +2250,7 @@ const demo = {
   tanks: {
     sump:   { pct: 46, distance_mm: 1890, state: "ONLINE", sensor: "OK", source: "ultrasonic" },
     rwt:    { pct: 38, distance_mm: 1240, state: "ONLINE", sensor: "OK" },
-    dosing: { pct: 17, distance_mm: 452,  state: "ONLINE", sensor: "OK" },
+    dosing: { pct: 17, distance_mm: 452,  state: "ONLINE", sensor: "Below sensor" },
     twt:    { pct: 71, distance_mm: 640,  state: "ONLINE", sensor: "OK" },
   },
   pumps: {
@@ -2314,6 +2331,7 @@ function stepDemo() {
   d.aster.rwt_floty = T.rwt.pct < 72;
   d.aster.twt_floty = T.twt.pct > 94;
   d.aster.dos_lvl = T.dosing.pct > 12;
+  T.dosing.sensor = T.dosing.pct < 20 ? "Below sensor" : "OK";
 
   for (const k in T) {
     T[k].pct = Math.max(0, Math.min(100, T[k].pct));
@@ -2455,7 +2473,6 @@ function drawTrend() {
   placeLabels([
     { pt: line(1, "rwt", Yt),  name: "RWT",  fmt: pct, cls: "rwt" },
     { pt: line(2, "twt", Yt),  name: "TWT",  fmt: pct, cls: "twt" },
-    { pt: line(3, "dos", Yt),  name: "DOS",  fmt: pct, cls: "dos" },
     { pt: line(9, "sump", Yt), name: "SUMP", fmt: pct, cls: "sump" },
   ], tankY + 4, tankY + TANK_H + 4);
 
@@ -2521,7 +2538,7 @@ function drawTrend() {
     const x = X(best[0]);
     xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("visibility", "visible");
     tip.innerHTML = `<b>${hhmm(best[0])}</b> · HPP ${best[4] & 1 ? "on " + fmtA(best[5]) : "off"} · RWP ${best[4] & 2 ? "on " + fmtA(best[6]) : "off"}<br>`
-      + `RWT ${fmtP(best[1])} · TWT ${fmtP(best[2])} · DOS ${fmtP(best[3])} · RO ${fmtT(best[7])} · BAT ${fmtT(best[8])}`;
+      + `RWT ${fmtP(best[1])} · TWT ${fmtP(best[2])} · RO ${fmtT(best[7])} · BAT ${fmtT(best[8])}`;
     tip.style.display = "block";
     const px = (x / TREND_W) * box.width;
     tip.style.left = Math.max(0, Math.min(px + 12, box.width - tip.offsetWidth - 4)) + "px";
@@ -2615,18 +2632,6 @@ async function pollHistory() {
   } catch { /* the strip keeps its last drawing */ }
 }
 
-/* Dosing drum: days to empty from the 24 h slope. Needs 6 h of level and a
- * falling trend; anything else is "--", never a guess. */
-function dosingDays() {
-  const pts = HIST.filter(r => r[0] > 0 && r[3] >= 0);
-  if (pts.length < 2) return null;
-  const a = pts[0], b = pts[pts.length - 1], hrs = (b[0] - a[0]) / 3600;
-  if (hrs < 6) return null;
-  const perHour = (a[3] - b[3]) / hrs;
-  if (perHour <= 0.02) return null;
-  return b[3] / perHour / 24;
-}
-
 const hm = sec => { const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60); return `${h}<u>h</u> ${String(m).padStart(2, "0")}<u>m</u>`; };
 
 /* Today from the live counters; week (Mon-today) and month (1st-today) from the
@@ -2648,7 +2653,7 @@ function periodTotals(R) {
 function drawRun(s) {
   const R = s.run, host = $("#cRun");
   if (!R) { host.innerHTML = `<div class="empty">No run data</div>`; return; }
-  const P = periodTotals(R), days = dosingDays();
+  const P = periodTotals(R), dos = s.tanks.dosing;
   const L = sec => Math.round(sec / 3600 * R.plant_lph).toLocaleString();
   const kwh = p => (p.hpp * R.hpp_w + p.rwp * R.rwp_w) / 3600 / 1000;
   const rs = p => Math.round(kwh(p) * R.tariff_paise / 100).toLocaleString("en-IN");
@@ -2672,7 +2677,7 @@ function drawRun(s) {
     row("Today", P.today) + row("This week", P.week) + row("This month", P.month) +
     `<div class="sum">
        <div class="metric"><span class="legend">Starts today</span><span class="big">${R.hpp.starts}<u>HPP</u> ${R.rwp.starts}<u>RWP</u> ${g(R.borewell.starts)}<u>BORE</u> ${g(R.sump_motor.starts)}<u>SUMP</u></span></div>
-       <div class="metric"><span class="legend">Dosing drum</span><span class="big">${days === null ? "--" : days.toFixed(0)}<u>days</u></span></div>
+       <div class="metric"><span class="legend">Dosing drum</span><span class="big">${dos.state !== "ONLINE" ? "--" : dosLow(dos) ? "LOW" : "OK"}</span></div>
        <div class="metric"><span class="legend">Lifetime · roof</span><span class="big">${lifeH(R.hpp.total_s)}<u>h HPP</u> ${lifeH(R.rwp.total_s)}<u>h RWP</u></span></div>
        <div class="metric"><span class="legend">Lifetime · ground</span><span class="big">${gfLive ? `${lifeH(R.borewell.total_s)}<u>h BORE</u> ${lifeH(R.sump_motor.total_s)}<u>h SUMP</u>` : "–"}</span></div>
      </div>`;

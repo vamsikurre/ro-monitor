@@ -190,8 +190,8 @@ CRC is computed over bytes 2 … 4+N (address through payload). Preamble exclude
 | 25 | `IN_RL2_STAT` | PC817 ch2 | `INPUT_PULLUP` |
 | 33 | `IN_LPS` | PC817 ch3 | `INPUT_PULLUP`. **Reassigned 2026-08-27** — Aster `LPS`, `C`/`NO`. Tapped to demultiplex `AUX OP`, which reports that something faulted without saying what (`WIRING.md` §6.6) |
 | 13 | `IN_ALARM` | Aster `AUX OP` relay, **direct** | `INPUT_PULLUP`, debounced 6-of-8. No optocoupler: the relay contact is already the isolation barrier, and the relay is enclosed, so the internal pull-up's ~73 µA is acceptable wetting. Moved off PC817 ch3 on 2026-08-27 — `WIRING.md` §6.6 |
-| 5 | `US_TRIG_DOS` | AJ-SR04M (dosing) | Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
-| 4 | `US_ECHO_DOS` | AJ-SR04M (dosing) | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
+| 5 | - | free | Was `US_TRIG_DOS`; ultrasonic replaced by a point sensor 2026-10-10 (`WIRING.md` §13.2). Added 2026-08-25. Dosing node `0x01` deleted, sensor wired direct — `WIRING.md` §13 |
+| 4 | `DOS_LEVEL` | XKC-Y25-PNP (dosing), was AJ-SR04M `ECHO` | **1 kΩ/2 kΩ divider, 5V→3.3V.** Digital use only — `GPIO 4` is `ADC2` and ADC2 is dead while Wi-Fi is up |
 | 34 | `IN_HPP_AC` | AC opto 1 | ADC1_CH6. **Corrected 2026-08-27:** module has its own 47 k pull-up to `VCC`; no external resistor — §3.5 |
 | 35 | `IN_RWP_AC` | AC opto 2 | ADC1_CH7. Same onboard pull-up — §3.5 |
 | 36 | `IN_HPP_CT` | SCT-013-030 clamp | ADC1_CH0, 11 dB. Added 2026-08-26 — §7.3 |

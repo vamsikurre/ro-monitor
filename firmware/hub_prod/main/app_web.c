@@ -114,6 +114,7 @@ static const char *sensor_word(sensor_status_t s)
         case SENSOR_BLIND:    return "Blind zone";
         case SENSOR_NO_ECHO:  return "No echo";
         case SENSOR_HW_FAULT: return "Sensor fault";
+        case SENSOR_BELOW:    return "Below sensor";
         default:              return "Unknown";
     }
 }

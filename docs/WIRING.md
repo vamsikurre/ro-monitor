@@ -211,8 +211,8 @@ Drawn form of this same table, with the modules and wire colours:
 | **GPIO 25** | `IN_RL2_STAT`| 4-Ch PC817 Opto Board (Channel 2) | `V2` | Input | Active LOW when Aster RL2 / Multiport valve contact is closed (`INPUT_PULLUP`) |
 | **GPIO 33** | `IN_LPS`     | 4-Ch PC817 Opto Board (Channel 3) | `V3` | Input | Active LOW when the Aster `LPS` low-pressure contact (`C`/`NO`) is closed. **Took this channel from `IN_ALARM` on 2026-08-27** — §6.6 (`INPUT_PULLUP`) |
 | **GPIO 13** | `IN_ALARM`   | Aster `AUX OP` relay `C` / `NO` | **direct** | Input | Active LOW when the Aster `AUX OP` contact closes. **No optocoupler and no external parts** — two wires and `INPUT_PULLUP`, debounced in firmware. §6.6 |
-| **GPIO 5**  | `US_TRIG_DOS`| AJ-SR04M (Dosing Tank) | `TRIG` | Output | 10 µs trigger pulse. Dosing sensor is wired direct to the hub — see Section 13 |
-| **GPIO 4**  | `US_ECHO_DOS`| AJ-SR04M (Dosing Tank) | `ECHO` | Input | Echo pulse width. **5V → 3.3V divider required. As built: 1 kΩ series + 1.8 kΩ to GND → 3.21 V** (the design figure was 2 kΩ / 3.33 V). 1.8 kΩ is an E24 value that 2 kΩ is not, it sits *under* 3.3 V rather than over it, and the AJ-SR04M's 5 V `ECHO` still clears `V_IH` with room to spare. Do not "correct" the board to the 2 kΩ figure. |
+| **GPIO 5**  | -            | Free | - | - | Was the AJ-SR04M `TRIG`; the dosing ultrasonic was replaced by a point sensor on GPIO 4 (Section 13.2) |
+| **GPIO 4**  | `DOS_LEVEL`  | XKC-Y25-PNP (Dosing drum) | `OUT` | Input | High = liquid at the sensor (Section 13.2). Same divider the AJ-SR04M `ECHO` used. **5V → 3.3V divider required. As built: 1 kΩ series + 1.8 kΩ to GND → 3.21 V** (the design figure was 2 kΩ / 3.33 V). 1.8 kΩ is an E24 value that 2 kΩ is not, it sits *under* 3.3 V rather than over it, and the AJ-SR04M's 5 V `ECHO` still clears `V_IH` with room to spare. Do not "correct" the board to the 2 kΩ figure. |
 | **GPIO 34** | `IN_HPP_AC` | 220V AC Opto Module #1 (HPP Contactor) | `OUT` | Input (GPI) | Active LOW when HPP contactor is energized. Module carries its own **47 k pull-up to `VCC`** (silkscreen `47K VCC`); wire `VCC` to 3V3 and no external resistor is needed — see §8 |
 | **GPIO 35** | `IN_RWP_AC` | 220V AC Opto Module #2 (RWP Contactor) | `OUT` | Input (GPI) | Active LOW when RWP contactor is energized. Same onboard 47 k pull-up — see §8 |
 | **GPIO 36** | `IN_HPP_CT`  | SCT-013-030 clamp, HPP `P` conductor | Tip (3.5 mm) | Input (GPI) | Analog. ADC1_CH0, 11 dB. Rides a shared 1.65 V bias rail — spec §7.3 |
@@ -1994,7 +1994,43 @@ replenish alert nobody needed beats a dry drum reading 93%.
 
 **Dosing pump.** UKL electronic diaphragm dosing pump on the skid (`images/hardware/dosing_pump_ukl.jpg`), stroke-rate knob, power button, no status contact. **Believed fed from the HPP contactor, not yet metered** — if so, dosing runs exactly when HPP runs and its ~20–30 W is inside the HPP clamp reading, below the 0.1 A floor. Nothing separate to monitor; a dosing-not-running fault would have to come from the drum level not falling while HPP runs.
 
-**What this removes from the build:** one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.
+### 13.2. Replaced by a point sensor (2026-10-10)
+
+On 2026-10-10 the object at ~264 mm answered **every** ping: the drum was low
+and the hub read 95% with the farthest-echo filter in place, because there was
+no farther echo left to pick. The ultrasonic is retired.
+
+**XKC-Y25-PNP** clamp-on capacitive sensor, taped to the outside of the drum
+wall a bit above the refill mark. Nothing touches the chemical and there is no
+beam to block. It answers one question: is there liquid at this height.
+
+| XKC-Y25-PNP | Cat5 extension (as built 2026-11-07) | Hub |
+| :--- | :--- | :--- |
+| Brown (+) | Brown | 5 V (the old AJ-SR04M `VCC`) |
+| Blue (-) | Blue | GND |
+| Yellow (OUT) | Orange | the old `ECHO` wire, into the existing 1 kΩ / 1.8 kΩ divider → GPIO 4 |
+| Black (mode) | **not extended** — insulated and folded back at the sensor | — |
+
+Black floating is the datasheet's normally-open mode: OUT is **high when wet**.
+**Never ground it** — that inverts the sensor and an empty drum reads full.
+Bench-tested through the Cat5 on 2026-11-07: ~0 V dry, ~3 V wet at the divider.
+
+PNP, not NPN: a PNP output drives 5 V when active and floats when not, so the
+divider gives 3.2 V wet and its 1.8 kΩ pulls GPIO 4 to 0 V dry. An NPN
+open-collector output reads 0 V both ways on this divider. If the dashboard says
+*Below sensor* with the drum full, the mode wire is the other way round: flip
+`DOS_WET_LEVEL` in `app_priv.h` (or the black wire). With nothing connected
+the line reads dry, which is the safe way to be wrong.
+
+Firmware: the drum reports 100% above the sensor and 0% with the word *Below
+sensor* below it. The state has to hold `DOS_FLIP_CYCLES` before it flips, so a
+refill splashing past the sensor does not count as two refills. Two alerts:
+*dosing chemical below the level sensor* once when it drops, and *RO started with
+dosing chemical LOW* at **every plant start** while it stays low.
+
+GPIO 5 (old `TRIG`) is free. The `/cal` page still lists the dosing tank's
+full/empty mm; they are no longer used.
+ one Arduino Nano, one XY-485 transceiver, one Mini560 buck, one enclosure, one 1.5 m Cat5e drop, one RS485 address, and one more thing that can go offline. What it adds: two GPIOs and two resistors.
 
 ---
 

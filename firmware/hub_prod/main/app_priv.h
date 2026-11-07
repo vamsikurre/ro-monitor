@@ -85,11 +85,13 @@ extern "C" {
 #define GPIO_IN_HPP_CT          36   /* ADC1_CH0 */
 #define GPIO_IN_RWP_CT          39   /* ADC1_CH3 */
 
-/* Dosing tank AJ-SR04M, wired straight to the hub (WIRING.md §13). ECHO is 5V
- * logic and reaches GPIO 4 through a 1k/2k divider — ESP32 pads are not 5V
- * tolerant. Digital only: GPIO 4 is ADC2, and ADC2 is dead while Wi-Fi is up. */
-#define GPIO_US_TRIG_DOS        5
-#define GPIO_US_ECHO_DOS        4
+/* Dosing drum point sensor, XKC-Y25-PNP on the drum wall (WIRING.md §13.2),
+ * on the old AJ-SR04M ECHO line: its 5 V output reaches GPIO 4 through the
+ * existing 1k/1.8k divider, and the 1.8k holds the pin low when it is off.
+ * GPIO 5 (old TRIG) is free. DOS_WET_LEVEL follows the sensor's mode wire -
+ * flip it if the dashboard says "Below sensor" with the drum full. */
+#define GPIO_DOS_LEVEL          4
+#define DOS_WET_LEVEL           1
 
 /* 4-channel relay board, ACTIVE LOW. Float emulation is Phase C; these are
  * driven to the de-energised state at boot and then left alone. */
@@ -227,8 +229,6 @@ extern "C" {
  */
 #define WATER_TEMP_MIN_DECI_C   50      /* 5.0 C */
 #define WATER_TEMP_MAX_DECI_C   500     /* 50.0 C */
-#define US_TRIG_WIDTH_US        10      /* some AJ-SR04M batches want 20 — WIRING.md §9.0 */
-#define US_TIMEOUT_US           35000   /* ~6 m of flight time */
 
 /* Mains present on a 240 V opto channel. The module rectifies, clamps and
  * smooths before the LED, so a live channel sits steady near 0 V rather than
@@ -361,6 +361,8 @@ typedef enum {
 
 #define ALERT_TANK_FULL_PCT     95
 #define ALERT_DOSING_LOW_PCT    20
+/* Cycles the dosing point sensor must disagree before its state flips. */
+#define DOS_FLIP_CYCLES         5
 #define ALERT_HYST_PCT          5
 /* Consecutive cycles a level condition must hold before it is believed. At
  * POLL_CYCLE_MS that is about a minute - invisible against a tank that drains
@@ -635,6 +637,7 @@ typedef enum {
     SENSOR_BLIND     = 1,
     SENSOR_NO_ECHO   = 2,
     SENSOR_HW_FAULT  = 3,
+    SENSOR_BELOW     = 4,   /* hub only: dosing drum is under its point sensor */
 } sensor_status_t;
 
 typedef enum {

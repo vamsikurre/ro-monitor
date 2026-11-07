@@ -129,19 +129,9 @@ esp_err_t sensors_init(void)
         gpio_set_level(relays[i], RELAY_OFF);
     }
 
-    /* --- dosing ultrasonic --- */
-    gpio_config_t trig = {
-        .pin_bit_mask = 1ULL << GPIO_US_TRIG_DOS,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&trig));
-    gpio_set_level(GPIO_US_TRIG_DOS, 0);
-
+    /* --- dosing point sensor; GPIO 5 (old TRIG) is now unused --- */
     gpio_config_t echo = {
-        .pin_bit_mask = 1ULL << GPIO_US_ECHO_DOS,
+        .pin_bit_mask = 1ULL << GPIO_DOS_LEVEL,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -316,80 +306,23 @@ uint16_t median_u16_push(median_u16_t *m, uint16_t sample)
     return k ? v[k / 2] : 0;
 }
 
-/*
- * The FARTHEST sample in the window, for a tank whose sensor can see something
- * that is not the liquid.
- *
- * A median asks which reading is typical. That is the wrong question when the
- * beam contains a fixed object, because the object is in most of the readings
- * and the liquid is in a few - the median then reports the obstruction, and
- * reports it more confidently the worse the problem gets. On 2026-09-23 the
- * dosing drum ran dry while the hub showed 93%: the true surface at 479 mm and
- * then 511 mm appeared in roughly one sample in four, and the other three sat
- * pinned at 264-273 mm all day and all night, not drifting by one step while a
- * two-hour plant run visibly drew the level down 32 mm. The moment the drum was
- * refilled above that fixed thing, the 267 mm reading vanished from the record
- * completely. It is an object in the cone, not a level (WIRING.md 13).
- *
- * So ask the question the geometry can answer instead. Below the liquid surface
- * there is no air path, so the surface is the FARTHEST thing a ping can return
- * from. Every obstruction, every near-field artifact, every echo off a dangling
- * cable is nearer than the truth and none of them can be further. Take the last
- * sample in the window and the whole class is gone.
- *
- * The cost is the opposite error: a ping whose first echo is missed and answered
- * by a later reflection reads too far, and one of those in a window carries it.
- * That reads the drum emptier than it is, which raises a replenish alert nobody
- * needed - and that is the direction to be wrong in. The failure this replaces
- * let a dry drum read 93% for a day and a half, and a dry drum is what costs
- * membranes. The alert's own confirmation window (ALERT_LEVEL_CONFIRM) absorbs
- * a few seconds of it.
- *
- * ponytail: deliberately not a "both echoes disagree, raise a sensor fault"
- * detector. That is the better instrument and it is worth building the day the
- * obstruction cannot be removed; removing the obstruction is worth more.
- */
-uint16_t far_u16_push(median_u16_t *m, uint16_t sample)
-{
-    uint16_t v[SENSOR_WINDOW];
-    uint8_t  k = window_sorted(m, sample, v);
-    return k ? v[k - 1] : 0;
-}
 /* WINDOW_PICK_END */
 
-uint16_t dosing_read_median_mm(void)
+/* The ultrasonic is gone (WIRING.md 13.2): a fixed object in its beam won every
+ * ping. A clamp-on capacitive sensor on the drum wall answers the only question
+ * the alerts ask - is the chemical above this height - and has no beam to block.
+ * Same 6-of-8 vote as alarm_active(): a contactor a metre away couples into a
+ * line this long. */
+bool dosing_wet(void)
 {
-    static median_u16_t win;
-    return median_u16_push(&win, dosing_read_mm());
-}
-
-uint16_t dosing_read_mm(void)
-{
-    gpio_set_level(GPIO_US_TRIG_DOS, 0);
-    esp_rom_delay_us(4);
-    gpio_set_level(GPIO_US_TRIG_DOS, 1);
-    esp_rom_delay_us(US_TRIG_WIDTH_US);
-    gpio_set_level(GPIO_US_TRIG_DOS, 0);
-
-    /* Wait for the echo to rise, then time how long it stays high. Busy-wait
-     * rather than an interrupt: the whole thing is bounded at 35 ms, it runs in
-     * the idle part of the cycle, and an ISR here would buy nothing. */
-    int64_t start = esp_timer_get_time();
-    while (gpio_get_level(GPIO_US_ECHO_DOS) == 0) {
-        if (esp_timer_get_time() - start > US_TIMEOUT_US) {
-            return 0;                      /* never rose: no echo */
+    uint8_t wet = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+        if (gpio_get_level(GPIO_DOS_LEVEL) == DOS_WET_LEVEL) {
+            wet++;
         }
+        esp_rom_delay_us(200);
     }
-
-    int64_t rise = esp_timer_get_time();
-    while (gpio_get_level(GPIO_US_ECHO_DOS) == 1) {
-        if (esp_timer_get_time() - rise > US_TIMEOUT_US) {
-            return 0;                      /* stuck high: treat as no echo */
-        }
-    }
-    int64_t width = esp_timer_get_time() - rise;
-
-    return (uint16_t)((width * 10) / 58);  /* mm at ~343 m/s */
+    return wet >= 6;
 }
 
 /* --------------------------------------------------------- dry-contact optos */
