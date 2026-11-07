@@ -384,6 +384,12 @@ static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_
 
 static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
 static esp_rmaker_device_t *s_dev_ground;
+/* The ground-floor control toggles' last reported values (ctrl_node, bore_act,
+ * sump_act; -1 none yet). Shared by the poll task's report_bool() and
+ * write_cb, which reports straight back after a write; a stale read between
+ * the two only costs one extra report. */
+static int s_last_ctl[3] = { -1, -1, -1 };
+
 static esp_rmaker_device_t *s_dev_outdoor;
 static esp_rmaker_device_t *s_dev_ro_room;
 static esp_rmaker_device_t *s_dev_ro_room;
@@ -2062,12 +2068,6 @@ static void poll_task(void *arg)
 }
 
 /* -------------------------------------------------- RainMaker node assembly */
-
-/* The ground-floor control toggles' last reported values (ctrl_node, bore_act,
- * sump_act; -1 none yet). Shared by the poll task's report_bool() and
- * write_cb, which reports straight back after a write; a stale read between
- * the two only costs one extra report. */
-static int s_last_ctl[3] = { -1, -1, -1 };
 
 typedef struct { int which; bool v; } ctl_toggle_t;
 static void apply_ctl_toggle(cal_ctl_t *k, void *arg)

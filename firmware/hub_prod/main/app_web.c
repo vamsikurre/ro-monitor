@@ -214,7 +214,7 @@ static esp_err_t deny(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* CSRF guard for every POST (all of them change state: /api/cal/*, /api/motor).
+/* CSRF guard for every POST (all of them change state: /api/cal/..., /api/motor).
  * A browser that has the Basic credentials cached will send them with a form
  * posted from any other site; it also sends Origin (or at least Referer), and
  * that must name this hub. No Origin and no Referer = not a browser form
