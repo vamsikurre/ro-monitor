@@ -56,7 +56,8 @@ typedef struct { bool bore_stop, bore_start, sump_stop; } ctl_out_t;  /* true = 
 typedef struct { bool user_stop_bore, user_stop_sump, single_phase; } ctl_persist_t;
 
 typedef enum { CTL_OK = 0, CTL_REFUSED_SINGLE_PHASE, CTL_REFUSED_SUMP_HOLD, CTL_REFUSED_NOT_SETTLED,
-               CTL_REFUSED_SUMP_FULL } ctl_result_t;
+               CTL_REFUSED_SUMP_FULL,
+               CTL_REFUSED_INVALID, CTL_REFUSED_NO_FLOAT } ctl_result_t;
 
 struct ctl_state {
     uint16_t flags;

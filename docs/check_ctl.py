@@ -409,10 +409,11 @@ static void t_start_refused_before_settle_stop_accepted(void) {
 }
 static void t_sump_start_releases_stop_and_dry_but_not_hold(void) {
     rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
-    runsump(&r, 25, 1, 100, 5 + 0, 0, true);                /* present common at ~0 A: dry stop */
+    runsump(&r, 25, 1, 100, 5, 0, true);                    /* present common at ~0 A: dry stop */
     CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY); CHECK(r.o.sump_stop);
     CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
     CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY));
+    stepsump(&r, 1, 100, 5, 0, true);  CHECK(!r.o.sump_stop);
     rig_t h; bore_failed(&h);                               /* borewell failed + float low */
     runsump(&h, 1, 1, 0, 0, 0, false);
     CHECK(ctl_flags(&h.s) & CTL_F_SUMP_HOLD);
@@ -425,6 +426,35 @@ static void t_bore_start_clears_dry_latch_and_failed(void) {
     CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_DASH, r.t) == CTL_OK);
     CHECK(!(ctl_flags(&r.s) & (CTL_F_START_FAILED | CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH)));
     CHECK(r.s.dry_attempts == 0);
+}
+
+static void t_invalid_command_changes_nothing(void) {
+    rig_t r; settled(&r);
+    ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_STOP, CTL_SRC_APP, r.t);
+    ctl_state_t before = r.s;
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, (ctl_cmd_t)7, CTL_SRC_APP, r.t) == CTL_REFUSED_INVALID);
+    CHECK(ctl_command(&r.s, &r.c, (ctl_motor_t)5, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_INVALID);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, (ctl_src_t)9, r.t) == CTL_REFUSED_INVALID);
+    CHECK(!memcmp(&before, &r.s, sizeof before));
+    runmv(&r, 60, 1, 100, 100, 100);
+    CHECK(r.starts == 0);
+}
+static void t_pending_start_dropped_if_float_goes_high(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 5, 0, 100, 100, 100);                               /* motor running so no auto start; raw high 4 s: still debounced low */
+    CHECK(ctl_float_low(&r.s) == 1);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
+    stepmv(&r, 0, 100, 100, 100);                                 /* debounce flips to high on this step */
+    CHECK(ctl_float_low(&r.s) == 0); CHECK(r.starts == 0);
+    runmv(&r, 20, 0, 100, 100, 100);  CHECK(r.starts == 0);
+}
+static void t_bore_start_refused_without_float_in_node_mode(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 10, -1, 0, 0, 0);
+    CHECK(ctl_float_low(&r.s) == -1);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_NO_FLOAT);
+    rig_t n; rig(&n, false); runmv(&n, 31, -1, 0, 0, 0);
+    CHECK(ctl_command(&n.s, &n.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, n.t) == CTL_OK);
 }
 
 int main(void) {
@@ -469,6 +499,9 @@ int main(void) {
     t_start_refused_before_settle_stop_accepted();
     t_sump_start_releases_stop_and_dry_but_not_hold();
     t_bore_start_clears_dry_latch_and_failed();
+    t_invalid_command_changes_nothing();
+    t_pending_start_dropped_if_float_goes_high();
+    t_bore_start_refused_without_float_in_node_mode();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }

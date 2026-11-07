@@ -190,9 +190,12 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
 
     out->sump_stop = sump_protect(s, c, in) || (s->flags & CTL_F_USER_STOP_SUMP);
     if (bore_protect(s, c, in, out) || (s->flags & CTL_F_USER_STOP_BORE)) { out->bore_stop = true; out->bore_start = false; return; }
-    if (s->pend_start) {
-        s->pend_start = false;  out->bore_start = true;
-        s->start_try = 1;  s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS;
+    if (s->pend_start) {   /* node mode: the tank may have filled since the command, so no edge unless still low */
+        s->pend_start = false;
+        if (!c->ctrl_node || s->float_db == 1) {
+            out->bore_start = true;
+            s->start_try = 1;  s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS;
+        }
     }
     if (out->bore_start) return;   /* a person's Start or the dry rest's restart already owns this step */
     if (!c->ctrl_node) { verify_start(s, in, out); return; }   /* NEC mode: the float logic is node-only */
@@ -216,6 +219,10 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
 ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_cmd_t cmd, ctl_src_t src, int64_t now_ms)
 {
     (void)now_ms;
+    /* match every enum explicitly: a corrupted value must never fall through to a borewell START */
+    if ((cmd != CTL_CMD_START && cmd != CTL_CMD_STOP) || (m != CTL_BORE && m != CTL_SUMP)
+        || (src != CTL_SRC_AUTO && src != CTL_SRC_APP && src != CTL_SRC_DASH))
+        return CTL_REFUSED_INVALID;
     if (cmd == CTL_CMD_STOP) {
         if (m == CTL_BORE) { s->flags |= CTL_F_USER_STOP_BORE; s->start_try = 0; s->pend_start = false; }
         else s->flags |= CTL_F_USER_STOP_SUMP;
@@ -225,6 +232,7 @@ ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_
             if (s->flags & CTL_F_SUMP_HOLD) return CTL_REFUSED_SUMP_HOLD;
             s->flags &= ~(CTL_F_USER_STOP_SUMP | CTL_F_SUMP_DRY);  s->sd_on = false;
         } else {
+            if (c->ctrl_node && s->float_db < 0) return CTL_REFUSED_NO_FLOAT;
             if (c->ctrl_node && s->float_db == 0) return CTL_REFUSED_SUMP_FULL;
             /* measured now: while held off it cannot be seen, so Start clears it and the 5 s detector re-trips */
             if (s->sp_now) return CTL_REFUSED_SINGLE_PHASE;
