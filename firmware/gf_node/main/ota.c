@@ -37,6 +37,17 @@ static esp_err_t err500(httpd_req_t *req, const char *reason)
  * booted. Rollback is main.c's job: the new image must prove itself. */
 esp_err_t ota_handle(httpd_req_t *req)
 {
+    /* Same token as /api/ctl, checked before a byte of the body is read: an
+     * image from anyone on the LAN would own the relays. No token configured
+     * = refused, so such a node is flashed over USB only. A header longer than
+     * the buffer reads as an error and is refused too. */
+    char tok[65] = "";
+    if (httpd_req_get_hdr_value_str(req, "X-Ctl-Token", tok, sizeof tok) != ESP_OK
+        || !ctl_token_ok(tok, CONFIG_GF_CTL_TOKEN)) {
+        ESP_LOGW(TAG, "refused: missing or wrong X-Ctl-Token");
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "X-Ctl-Token missing or wrong\n");
+    }
     int total = req->content_len;
     if (total < 100000) {
         httpd_resp_set_status(req, "400 Bad Request");

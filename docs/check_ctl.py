@@ -473,7 +473,17 @@ static void t_alert_only_drops_stale_dry_latch(void) {
     CHECK(!r.o.bore_stop);                                  /* no held STOP from the stale latch */
 }
 
+static void t_token_compare(void) {
+    CHECK(ctl_token_ok("s3cret", "s3cret"));
+    CHECK(!ctl_token_ok("s3cre", "s3cret"));     /* prefix */
+    CHECK(!ctl_token_ok("s3cretX", "s3cret"));   /* longer */
+    CHECK(!ctl_token_ok("S3cret", "s3cret"));
+    CHECK(!ctl_token_ok("", "s3cret") && !ctl_token_ok(NULL, "s3cret"));
+    CHECK(!ctl_token_ok("", "") && !ctl_token_ok("x", NULL));   /* no token configured: all refused */
+}
+
 int main(void) {
+    t_token_compare();
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
     t_float_low_starts_after_settle();

@@ -64,15 +64,11 @@ static void save_cfg(void)
 }
 
 /* CTL_PARSE_BEGIN */
-/* Pure: cJSON + string.h only, so docs/check_gf_node.py can compile this block on the host. */
+/* Pure: cJSON, string.h and ctl.c (ctl_token_ok), so docs/check_gf_node.py can compile this block on the host. */
 static bool tok_ok(const cJSON *j, const char *want)
 {
     const cJSON *t = cJSON_GetObjectItemCaseSensitive(j, "token");
-    if (!want || !*want || !cJSON_IsString(t) || !t->valuestring) return false;   /* empty token = all refused */
-    size_t n = strlen(want), l = strlen(t->valuestring);
-    unsigned d = (unsigned)(n ^ l);                    /* no early exit on the first differing byte */
-    for (size_t i = 0; i < n; i++) d |= (unsigned char)want[i] ^ (i < l ? (unsigned char)t->valuestring[i] : 0u);
-    return d == 0;
+    return cJSON_IsString(t) && ctl_token_ok(t->valuestring, want);
 }
 
 static bool str_is(const cJSON *j, const char *key, const char *val)

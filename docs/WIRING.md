@@ -1642,6 +1642,17 @@ wiring choice below; write it in the record, not on trust.
    which of `R` / `Y` is the Start winding.
 5. **Cable route and length** from the sump to the panel; keep the float cable
    out of mains conduit where possible.
+6. **Control token**, before the node goes in the panel. Set
+   `CONFIG_GF_CTL_TOKEN` with
+   `idf.py -B build_util -D SDKCONFIG=build_util/sdkconfig menuconfig`
+   (*Ground-floor node* → *Control token*), then build and flash.
+   `build_util/sdkconfig` is untracked; **never** put the token in the
+   tracked `sdkconfig.util` or `sdkconfig.defaults`. Type the same string
+   into the token field of *Ground-floor control* on the hub's `/cal`. Until
+   the two match, the node refuses every command, every config push and every
+   OTA upload (`403`) and stays in its defaults: NEC-49 in charge, Alert
+   only. A node with no token set can only be flashed over USB
+   (`firmware/gf_node/README.md`).
 
 #### Node GPIO map (utility `0x06`)
 

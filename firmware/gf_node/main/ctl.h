@@ -101,3 +101,6 @@ ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_
 void        ctl_persist(const ctl_state_t *s, ctl_persist_t *p);   /* what to write to NVS */
 bool        ctl_persist_changed(const ctl_state_t *s);             /* since last ctl_persist() */
 const char *ctl_last_cmd(const ctl_state_t *s);                    /* "app:bore:start" etc.; "" before any */
+/* Constant-time token check for /api/ctl, /api/ctl/cfg and /ota. An empty or
+ * NULL `want` (no CONFIG_GF_CTL_TOKEN) refuses everything. */
+bool        ctl_token_ok(const char *got, const char *want);

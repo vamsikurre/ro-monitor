@@ -32,8 +32,12 @@ menu "Ground-floor node"
             The PC817 pulls GPIO 26 low when the float loop is closed. 0 = opto
             on means sump low; set 1 if the float is wired the other way round.
     config GF_CTL_TOKEN
-        string "Control token for pump Start/Stop commands (utility node)"
+        string "Control token (pump commands, config push, OTA)"
         default ""
         help
-            Empty means every command is refused.
+            Must match the token on the hub's /cal (utility node) and the
+            X-Ctl-Token header of an OTA push (both roles). Empty means every
+            command, config push and OTA upload is refused: USB flashing only.
+            Set it in build_<role>/sdkconfig, never in the tracked
+            sdkconfig.util or sdkconfig.defaults.
 endmenu

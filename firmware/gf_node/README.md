@@ -66,6 +66,19 @@ the utility role's two-line overlay (`CONFIG_GF_ROLE_UTILITY`,
 deleting it means nobody can reproduce the utility build from a clean
 checkout.
 
+**Control token.** In the same `menuconfig`, set *Ground-floor node* →
+*Control token* (`CONFIG_GF_CTL_TOKEN`), always through
+`idf.py -B build_util -D SDKCONFIG=build_util/sdkconfig menuconfig` (or the
+`build_sump` equivalent) so it lands in the untracked `build_<role>/sdkconfig`.
+**Never** put it in the tracked `sdkconfig.util` or `sdkconfig.defaults`.
+On the utility node, type the same string into the token field of
+*Ground-floor control* on the hub's `/cal` (blank there keeps the stored one;
+it cannot be cleared from `/cal`). Until the two match, the utility node
+refuses every command and config push (`403`) and stays in its defaults:
+NEC-49 in charge, Alert only. The token also guards `POST /ota` on both
+roles (below), so a node built with an empty token can only be flashed over
+USB.
+
 The static IP you set in `menuconfig` is what you type on the hub's `/cal`
 page. Give it a reservation on the router too, or pick one outside the DHCP
 pool.
@@ -87,8 +100,14 @@ Two app slots (`partitions.csv`), rollback on
 needed:
 
 ```
-curl --data-binary @build_sump/gf_node.bin http://192.168.1.51/ota
+curl -H "X-Ctl-Token: <token>" --data-binary @build_util/gf_node.bin http://<node-ip>/ota
 ```
+
+(`build_sump/gf_node.bin` for the sump node.) The `X-Ctl-Token` header must
+match the node's `CONFIG_GF_CTL_TOKEN`; it is checked, in constant time,
+before any of the body is read. Missing, wrong, or no token configured on
+the node: `403` and nothing is written. **A node with no token set can only
+be flashed over USB.**
 
 The node streams the image into whichever slot is not currently running,
 validates it (`esp_ota_end` checks the image header and checksum — a text
@@ -111,6 +130,7 @@ gf_node sump id 5 fw v1.4.2-3-gab12cd4
 | :--- | :--- |
 | `200 OK N bytes, rebooting into ota_N` | written, validated, rebooting |
 | `400` | body too small, or not a valid ESP32 app image |
+| `403` | `X-Ctl-Token` missing or wrong, or the node has no token set |
 | `408` | transfer stalled for 60 s (a dropped-association Wi-Fi failure looks like this, not like a clean disconnect) |
 | `413` | image larger than the OTA slot |
 | `500` | no free partition, the OTA write could not be started, connection dropped, flash write failed, or the image is valid but the boot pointer could not be set — each with its own reason string in the body |

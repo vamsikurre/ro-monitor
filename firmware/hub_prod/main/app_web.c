@@ -1448,7 +1448,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "<label><input type=checkbox name=bact value=1%s> borewell protection acts</label> "
         "<label><input type=checkbox name=sact value=1%s> sump protection acts</label> "
         "<button>Save</button></form>"
-        "<p><small>The token must match the utility node's GF_CTL_TOKEN; blank keeps the stored one. "
+        "<p><small>The token must match the utility node's GF_CTL_TOKEN; blank keeps the stored one, and there is no way to clear it here. "
         "These and the borewell / sump motor clamp figures are sent to the node when saved and each "
         "time it comes back online. 0 switches a check off; an unticked protection only alerts.</small></p>"
         "</fieldset>",

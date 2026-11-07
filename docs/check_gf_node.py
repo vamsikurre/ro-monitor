@@ -334,7 +334,8 @@ def check_ctl_parse():
     with open(c_path, 'w', encoding='utf-8') as f:
         f.write(CTL_HARNESS % block)
     if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-I', cj, '-I', os.path.dirname(CTL_GLUE_C),
-                        '-o', exe, c_path, os.path.join(cj, 'cJSON.c')]) != 0:
+                        '-o', exe, c_path, os.path.join(cj, 'cJSON.c'),
+                        os.path.join(os.path.dirname(CTL_GLUE_C), 'ctl.c')]) != 0:   # tok_ok -> ctl_token_ok
         print('gcc refused the extracted ctl parsers'); return False
     return subprocess.call([exe]) == 0
 

@@ -27,10 +27,13 @@ credentials arrive over BLE during RainMaker provisioning and live in NVS.
   "open" is a flag someone has to write deliberately.
 * **Basic auth is base64, not encryption**, and this is plain HTTP. Anyone
   sniffing the LAN sees the password. That is accepted for a house network.
-* **The ground-floor nodes have no authentication at all.** Their HTTP endpoints
-  (`/id`, `/telemetry`, `/ota`) answer anyone on the LAN. They report readings
-  and accept firmware — the OTA path is protected only by ESP-IDF's rollback,
-  not by a password.
+* **The ground-floor nodes' readings are open; their writes take a token.**
+  `GET /` and `/api/telemetry` answer anyone on the LAN. `POST /ota` (both
+  nodes, `X-Ctl-Token` header) and the utility node's `/api/ctl` and
+  `/api/ctl/cfg` (token in the JSON body) need `CONFIG_GF_CTL_TOKEN`, set in
+  the node's untracked `build_<role>/sdkconfig` and, for the utility node,
+  entered on the hub's `/cal`. A node built without one refuses all three and
+  can only be flashed over USB (`firmware/gf_node/README.md`).
 
 ## 3. Changing the calibration password
 

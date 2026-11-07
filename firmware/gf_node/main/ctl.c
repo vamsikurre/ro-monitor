@@ -267,3 +267,12 @@ bool ctl_persist_changed(const ctl_state_t *s)
 }
 
 const char *ctl_last_cmd(const ctl_state_t *s) { return s->last_cmd; }
+
+bool ctl_token_ok(const char *got, const char *want)
+{
+    if (!want || !*want || !got) return false;   /* empty token = all refused */
+    size_t n = strlen(want), l = strlen(got);
+    unsigned d = (unsigned)(n ^ l);              /* no early exit on the first differing byte */
+    for (size_t i = 0; i < n; i++) d |= (unsigned char)want[i] ^ (i < l ? (unsigned char)got[i] : 0u);
+    return d == 0;
+}
