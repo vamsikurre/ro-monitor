@@ -134,7 +134,8 @@ static bool sump_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in)
 
     /* No-load dry. In Act the stop is timed, not condition-based: a stopped pump draws
      * nothing, so it cannot prove itself healthy. */
-    bool dry = c->sump_noload_da && in->pump_on && com < (int)c->sump_noload_da;
+    /* raw 0 mV = no clamp (pedestal fault): not evidence of dry; a few mV is a present clamp at 0 A */
+    bool dry = c->sump_noload_da && in->sump_mv[0] && in->pump_on && com < (int)c->sump_noload_da;
     if (!c->sump_act) {
         if (held_for(dry, &s->sd_on, &s->sd_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_SUMP_DRY;
         else if (!dry) s->flags &= ~CTL_F_SUMP_DRY;
@@ -147,7 +148,7 @@ static bool sump_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in)
     }
 
     /* Capacitor suspect (alert only): Common fine, Start channel dead after having read */
-    bool cap = c->sump_noload_da && in->pump_on && com >= (int)c->sump_noload_da && s->cap_seen && st <= 0;
+    bool cap = c->sump_noload_da && in->pump_on && com >= (int)c->sump_noload_da && s->cap_seen && in->sump_mv[1] && st <= 0;
     if (held_for(cap, &s->cap_on, &s->cap_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_CAP_SUSPECT;
     else if (!cap) s->flags &= ~CTL_F_CAP_SUSPECT;
 

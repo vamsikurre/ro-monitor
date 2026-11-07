@@ -278,6 +278,16 @@ static void t_sump_alert_only_never_energises(void) {
     CHECK(ctl_flags(&r.s) & CTL_F_SUMP_HOLD); CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY);
     CHECK(!r.o.sump_stop);
 }
+static void t_unplugged_common_clamp_is_not_sump_dry(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
+    runsump(&r, 60, 1, 100, 0, 0, true);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY)); CHECK(!r.o.sump_stop);
+}
+static void t_present_common_at_zero_amps_is_sump_dry(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 30;
+    runsump(&r, 21, 1, 100, 3, 0, true);
+    CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY);
+}
 static void t_sump_dry_stop_releases_after_five_minutes(void) {
     rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
     runsump(&r, 21, 1, 100, 67, 0, true);               /* stop begins at the 21st step */
@@ -298,7 +308,9 @@ static void t_cap_suspect_alert_only(void) {
     runsump(&r, 25, 1, 100, 100, 0, true);              /* Start never read: not suspect */
     CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
     runsump(&r, 3, 1, 100, 100, 100, true);             /* Start reads once */
-    runsump(&r, 25, 1, 100, 100, 0, true);              /* then goes dead while Common is fine */
+    runsump(&r, 25, 1, 100, 100, 0, true);              /* unplugged Start: not suspect */
+    CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
+    runsump(&r, 25, 1, 100, 100, 3, true);              /* present at 0 A while Common is fine */
     CHECK(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT); CHECK(!r.o.sump_stop);
     runsump(&r, 3, 1, 100, 100, 100, true);
     CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
@@ -331,6 +343,8 @@ int main(void) {
     t_sump_dry_needs_threshold_and_pump_on();
     t_sump_alert_only_never_energises();
     t_sump_dry_stop_releases_after_five_minutes();
+    t_unplugged_common_clamp_is_not_sump_dry();
+    t_present_common_at_zero_amps_is_sump_dry();
     t_nec_mode_sump_dry_still_runs();
     t_cap_suspect_alert_only();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
