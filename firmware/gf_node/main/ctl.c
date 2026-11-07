@@ -1,4 +1,5 @@
 #include "ctl.h"
+#include <stdio.h>
 #include <string.h>
 
 int16_t ctl_deci_amps(uint16_t mv, uint16_t apv_x100, uint8_t turns)
@@ -19,6 +20,7 @@ void ctl_init(ctl_state_t *s, const ctl_persist_t *p, int64_t boot_ms)
         if (p->user_stop_bore) s->flags |= CTL_F_USER_STOP_BORE;
         if (p->user_stop_sump) s->flags |= CTL_F_USER_STOP_SUMP;
         if (p->single_phase)   s->flags |= CTL_F_SINGLE_PHASE;
+        s->saved = *p;
     }
 }
 
@@ -77,7 +79,8 @@ static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in,
     phase_range(c, in, &n, &lo, &hi);
     int64_t now = in->now_ms;
 
-    if (held_for(s->bore_running && n >= 2 && lo * 100 < hi * 30, &s->sp_on, &s->sp_since_ms, now, CTL_SINGLE_PHASE_MS))
+    s->sp_now = s->bore_running && n >= 2 && lo * 100 < hi * 30;
+    if (held_for(s->sp_now, &s->sp_on, &s->sp_since_ms, now, CTL_SINGLE_PHASE_MS))
         s->flags |= CTL_F_SINGLE_PHASE;
 
     if (held_for(s->bore_running, &s->run_on, &s->run_since_ms, now, (int64_t)c->max_run_min * 60000 + 1) && c->max_run_min)
@@ -102,7 +105,7 @@ static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in,
     } else if (!(s->flags & CTL_F_BORE_DRY_LATCH) && now >= s->rest_until_ms
                && (!c->ctrl_node || s->float_db == 1)) {   /* node mode: never restart a full tank */
         s->flags &= ~CTL_F_BORE_DRY;
-        if (!(s->flags & CTL_F_SINGLE_PHASE)) {   /* never a START edge while a stop is held */
+        if (!(s->flags & CTL_F_SINGLE_PHASE) && !(s->flags & CTL_F_USER_STOP_BORE)) {   /* never a START edge while a stop is held */
             out->bore_start = true;
             if (c->ctrl_node) { s->start_try = 1;  s->start_deadline_ms = now + CTL_START_VERIFY_MS; }
         }
@@ -155,6 +158,17 @@ static bool sump_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in)
     return c->sump_act && (s->flags & (CTL_F_SUMP_HOLD | CTL_F_SUMP_DRY));
 }
 
+/* Start verify: no current within the window earns one retry, then START_FAILED */
+static void verify_start(ctl_state_t *s, const ctl_in_t *in, ctl_out_t *out)
+{
+    if (!s->start_try) return;
+    if (s->bore_running) s->start_try = 0;
+    else if (in->now_ms >= s->start_deadline_ms) {
+        if (s->start_try == 1) { s->start_try = 2; s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS; out->bore_start = true; }
+        else { s->start_try = 0; s->flags |= CTL_F_START_FAILED; }
+    }
+}
+
 void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -167,12 +181,21 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
     if (in->float_low >= 0 && s->float_reads < 2) s->float_reads++;
     if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && (s->float_reads >= 2 || !c->ctrl_node))
         s->settled = true;
-    if (!s->settled) return;
+    /* Held stops hold from the first step, settled or not: a STOP at boot is safe, a START is not. */
+    if (!s->settled) {
+        out->sump_stop = (s->flags & CTL_F_USER_STOP_SUMP) != 0;
+        out->bore_stop = (s->flags & CTL_F_USER_STOP_BORE) || (c->bore_act && (s->flags & CTL_F_SINGLE_PHASE));
+        return;
+    }
 
-    out->sump_stop = sump_protect(s, c, in);
-    if (bore_protect(s, c, in, out)) { out->bore_stop = true; return; }
-    if (!c->ctrl_node) return;     /* NEC mode: the float logic below is node-only */
-    if (out->bore_start) return;   /* the dry rest's restart already owns this step */
+    out->sump_stop = sump_protect(s, c, in) || (s->flags & CTL_F_USER_STOP_SUMP);
+    if (bore_protect(s, c, in, out) || (s->flags & CTL_F_USER_STOP_BORE)) { out->bore_stop = true; out->bore_start = false; return; }
+    if (s->pend_start) {
+        s->pend_start = false;  out->bore_start = true;
+        s->start_try = 1;  s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS;
+    }
+    if (out->bore_start) return;   /* a person's Start or the dry rest's restart already owns this step */
+    if (!c->ctrl_node) { verify_start(s, in, out); return; }   /* NEC mode: the float logic is node-only */
 
     /* a person's float going high clears a failed start so the next low gets a fresh try */
     if (s->float_db != 1) { s->flags &= ~CTL_F_START_FAILED; s->start_try = 0; }
@@ -184,13 +207,53 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
     out->bore_stop = in->now_ms < s->stop_until_ms && s->stop_sent;
     if (out->bore_stop) return;
 
-    if (s->start_try) {
-        if (s->bore_running) s->start_try = 0;
-        else if (in->now_ms >= s->start_deadline_ms) {
-            if (s->start_try == 1) { s->start_try = 2; s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS; out->bore_start = true; }
-            else { s->start_try = 0; s->flags |= CTL_F_START_FAILED; }
-        }
-    } else if (s->float_db == 1 && !s->bore_running && !(s->flags & CTL_F_START_FAILED)) {
+    if (!s->start_try && s->float_db == 1 && !s->bore_running && !(s->flags & CTL_F_START_FAILED)) {
         s->start_try = 1;  s->start_deadline_ms = in->now_ms + CTL_START_VERIFY_MS;  out->bore_start = true;
     }
+    verify_start(s, in, out);
 }
+
+ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_cmd_t cmd, ctl_src_t src, int64_t now_ms)
+{
+    (void)now_ms;
+    if (cmd == CTL_CMD_STOP) {
+        if (m == CTL_BORE) { s->flags |= CTL_F_USER_STOP_BORE; s->start_try = 0; s->pend_start = false; }
+        else s->flags |= CTL_F_USER_STOP_SUMP;
+    } else {
+        if (!s->settled) return CTL_REFUSED_NOT_SETTLED;
+        if (m == CTL_SUMP) {
+            if (s->flags & CTL_F_SUMP_HOLD) return CTL_REFUSED_SUMP_HOLD;
+            s->flags &= ~(CTL_F_USER_STOP_SUMP | CTL_F_SUMP_DRY);  s->sd_on = false;
+        } else {
+            if (c->ctrl_node && s->float_db == 0) return CTL_REFUSED_SUMP_FULL;
+            /* measured now: while held off it cannot be seen, so Start clears it and the 5 s detector re-trips */
+            if (s->sp_now) return CTL_REFUSED_SINGLE_PHASE;
+            s->flags &= ~(CTL_F_USER_STOP_BORE | CTL_F_SINGLE_PHASE | CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH | CTL_F_START_FAILED);
+            s->sp_on = s->dry_on = false;  s->dry_attempts = 0;
+            s->pend_start = true;
+        }
+    }
+    static const char *const src_n[] = { "auto", "app", "dash" };
+    snprintf(s->last_cmd, sizeof s->last_cmd, "%s:%s:%s", src_n[src], m == CTL_BORE ? "bore" : "sump",
+             cmd == CTL_CMD_START ? "start" : "stop");
+    return CTL_OK;
+}
+
+/* const for the caller's sake; `saved` is bookkeeping, not controller state */
+void ctl_persist(const ctl_state_t *s, ctl_persist_t *p)
+{
+    p->user_stop_bore = (s->flags & CTL_F_USER_STOP_BORE) != 0;
+    p->user_stop_sump = (s->flags & CTL_F_USER_STOP_SUMP) != 0;
+    p->single_phase   = (s->flags & CTL_F_SINGLE_PHASE) != 0;
+    ((ctl_state_t *)s)->saved = *p;
+}
+
+bool ctl_persist_changed(const ctl_state_t *s)
+{
+    ctl_persist_t p = { (s->flags & CTL_F_USER_STOP_BORE) != 0, (s->flags & CTL_F_USER_STOP_SUMP) != 0,
+                        (s->flags & CTL_F_SINGLE_PHASE) != 0 };
+    return p.user_stop_bore != s->saved.user_stop_bore || p.user_stop_sump != s->saved.user_stop_sump
+        || p.single_phase != s->saved.single_phase;
+}
+
+const char *ctl_last_cmd(const ctl_state_t *s) { return s->last_cmd; }

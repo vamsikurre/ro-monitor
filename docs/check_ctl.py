@@ -10,6 +10,7 @@ CTL_DIR = 'firmware/gf_node/main'
 
 HARNESS = r'''
 #include <stdio.h>
+#include <string.h>
 #include "ctl.h"
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL %s (line %d)\n", #expr, __LINE__); fails++; } } while (0)
@@ -316,6 +317,116 @@ static void t_cap_suspect_alert_only(void) {
     CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
 }
 
+/* Commands, latches, persistence */
+static void t_user_stop_holds_even_in_alert_only_and_nec_mode(void) {
+    rig_t r; settled(&r);                                   /* node, Alert only */
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_STOP, CTL_SRC_APP, r.t) == CTL_OK);
+    CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_STOP, CTL_SRC_APP, r.t) == CTL_OK);
+    runmv(&r, 60, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop); CHECK(r.o.sump_stop); CHECK(r.starts == 0);
+    CHECK(ctl_flags(&r.s) & CTL_F_USER_STOP_BORE); CHECK(ctl_flags(&r.s) & CTL_F_USER_STOP_SUMP);
+    rig_t n; rig(&n, false); runmv(&n, 31, -1, 100, 100, 100);   /* NEC, Alert only */
+    CHECK(ctl_command(&n.s, &n.c, CTL_BORE, CTL_CMD_STOP, CTL_SRC_DASH, n.t) == CTL_OK);
+    runmv(&n, 5, -1, 100, 100, 100);
+    CHECK(n.o.bore_stop);
+}
+static void t_start_clears_user_stop_and_starts(void) {
+    rig_t r; settled(&r);
+    ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_STOP, CTL_SRC_APP, r.t);
+    runmv(&r, 5, 1, 0, 0, 0);
+    CHECK(r.starts == 0);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
+    stepmv(&r, 1, 0, 0, 0);
+    CHECK(r.starts == 1); CHECK(!r.o.bore_stop);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_USER_STOP_BORE));
+    runmv(&r, 30, 1, 0, 0, 0);                              /* start verify: one retry, then failed */
+    CHECK(r.starts == 2); CHECK(ctl_flags(&r.s) & CTL_F_START_FAILED);
+    rig_t n; rig(&n, false); runmv(&n, 31, -1, 0, 0, 0);    /* NEC: one edge, same verify */
+    CHECK(ctl_command(&n.s, &n.c, CTL_BORE, CTL_CMD_START, CTL_SRC_DASH, n.t) == CTL_OK);
+    runmv(&n, 30, -1, 0, 0, 0);
+    CHECK(n.starts == 2); CHECK(ctl_flags(&n.s) & CTL_F_START_FAILED);
+}
+static void t_start_refused_while_phase_still_missing(void) {
+    rig_t r; settled(&r);                                   /* Alert only: motor keeps running on two phases */
+    runmv(&r, 6, 1, 200, 200, 17);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_SINGLE_PHASE);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE); CHECK(ctl_last_cmd(&r.s)[0] == 0);
+}
+static void t_start_clears_single_phase_when_gone(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true;
+    runmv(&r, 6, 1, 200, 200, 17);
+    runmv(&r, 5, 1, 0, 0, 0);                               /* held off: cannot be measured */
+    CHECK(r.o.bore_stop);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE));
+    stepmv(&r, 1, 0, 0, 0);
+    CHECK(r.starts == 1); CHECK(!r.o.bore_stop);
+}
+static void t_repeated_stop_is_idempotent(void) {
+    rig_t r; settled(&r);  ctl_persist_t p;
+    ctl_persist(&r.s, &p);  CHECK(!ctl_persist_changed(&r.s));
+    ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_STOP, CTL_SRC_APP, r.t);
+    CHECK(ctl_persist_changed(&r.s));
+    ctl_persist(&r.s, &p);  CHECK(p.user_stop_sump); CHECK(!p.user_stop_bore);
+    ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_STOP, CTL_SRC_APP, r.t);
+    CHECK(!ctl_persist_changed(&r.s));
+}
+static void t_boot_restores_held_stops_never_starts(void) {
+    ctl_persist_t p = { .user_stop_bore = true, .single_phase = true };
+    rig_t r; r.c = cfg(true); r.c.bore_act = true; r.t = 0; r.starts = 0; r.stop_seen = false;
+    ctl_init(&r.s, &p, 0);
+    stepmv(&r, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop);                                   /* first step, before settle */
+    runmv(&r, 600, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop); CHECK(r.starts == 0);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_STOP, CTL_SRC_APP, r.t) == CTL_OK);
+    CHECK(!ctl_persist_changed(&r.s));                      /* seeded: nothing new to write */
+    ctl_persist_t q = { .single_phase = true };             /* latch alone holds only in Act */
+    r.c.bore_act = false;  ctl_init(&r.s, &q, 0);  stepmv(&r, 1, 0, 0, 0);
+    CHECK(!r.o.bore_stop);
+}
+static void t_last_cmd_names_source(void) {
+    rig_t r; settled(&r);
+    CHECK(ctl_last_cmd(&r.s)[0] == 0);
+    ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t);
+    CHECK(!strcmp(ctl_last_cmd(&r.s), "app:bore:start"));
+    ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_STOP, CTL_SRC_DASH, r.t);
+    CHECK(!strcmp(ctl_last_cmd(&r.s), "dash:sump:stop"));
+}
+static void t_bore_start_refused_when_sump_full(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 10, 0, 100, 100, 100);                        /* float high, debounced */
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_SUMP_FULL);
+}
+static void t_start_refused_before_settle_stop_accepted(void) {
+    rig_t r; rig(&r, true);  runmv(&r, 5, 1, 0, 0, 0);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_NOT_SETTLED);
+    CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_NOT_SETTLED);
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_STOP, CTL_SRC_APP, r.t) == CTL_OK);
+    stepmv(&r, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop);
+}
+static void t_sump_start_releases_stop_and_dry_but_not_hold(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
+    runsump(&r, 25, 1, 100, 5 + 0, 0, true);                /* present common at ~0 A: dry stop */
+    CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY); CHECK(r.o.sump_stop);
+    CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY));
+    rig_t h; bore_failed(&h);                               /* borewell failed + float low */
+    runsump(&h, 1, 1, 0, 0, 0, false);
+    CHECK(ctl_flags(&h.s) & CTL_F_SUMP_HOLD);
+    CHECK(ctl_command(&h.s, &h.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, h.t) == CTL_REFUSED_SUMP_HOLD);
+}
+static void t_bore_start_clears_dry_latch_and_failed(void) {
+    rig_t r; bore_failed(&r);
+    CHECK(ctl_flags(&r.s) & CTL_F_START_FAILED);
+    r.s.flags |= CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH;  r.s.dry_attempts = 3;
+    CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_DASH, r.t) == CTL_OK);
+    CHECK(!(ctl_flags(&r.s) & (CTL_F_START_FAILED | CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH)));
+    CHECK(r.s.dry_attempts == 0);
+}
+
 int main(void) {
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
@@ -347,6 +458,17 @@ int main(void) {
     t_present_common_at_zero_amps_is_sump_dry();
     t_nec_mode_sump_dry_still_runs();
     t_cap_suspect_alert_only();
+    t_user_stop_holds_even_in_alert_only_and_nec_mode();
+    t_start_clears_user_stop_and_starts();
+    t_start_refused_while_phase_still_missing();
+    t_start_clears_single_phase_when_gone();
+    t_repeated_stop_is_idempotent();
+    t_boot_restores_held_stops_never_starts();
+    t_last_cmd_names_source();
+    t_bore_start_refused_when_sump_full();
+    t_start_refused_before_settle_stop_accepted();
+    t_sump_start_releases_stop_and_dry_but_not_hold();
+    t_bore_start_clears_dry_latch_and_failed();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }

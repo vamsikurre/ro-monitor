@@ -55,6 +55,9 @@ typedef struct {
 typedef struct { bool bore_stop, bore_start, sump_stop; } ctl_out_t;  /* true = energise */
 typedef struct { bool user_stop_bore, user_stop_sump, single_phase; } ctl_persist_t;
 
+typedef enum { CTL_OK = 0, CTL_REFUSED_SINGLE_PHASE, CTL_REFUSED_SUMP_HOLD, CTL_REFUSED_NOT_SETTLED,
+               CTL_REFUSED_SUMP_FULL } ctl_result_t;
+
 struct ctl_state {
     uint16_t flags;
     int64_t  boot_ms;
@@ -73,6 +76,11 @@ struct ctl_state {
     /* sump motor */
     bool     sc_on, sd_on, cap_on, cap_seen;
     int64_t  sc_since_ms, sd_since_ms, sd_until_ms, cap_since_ms;
+    /* commands */
+    bool     pend_start;   /* a person's borewell Start, emitted by the next step */
+    bool     sp_now;       /* single-phasing measured on the last step */
+    ctl_persist_t saved;   /* what ctl_persist() last handed out */
+    char     last_cmd[24];
 };
 typedef struct ctl_state ctl_state_t;  /* opaque to callers by convention */
 
@@ -82,3 +90,10 @@ uint16_t ctl_flags(const ctl_state_t *s);
 bool     ctl_bore_running(const ctl_state_t *s);   /* any phase >= bore_run_da */
 int8_t   ctl_float_low(const ctl_state_t *s);      /* debounced: 1 low, 0 high, -1 not read */
 int16_t  ctl_deci_amps(uint16_t mv, uint16_t apv_x100, uint8_t turns);  /* == hub gfPhaseDeciAmps */
+
+/* Stop is always accepted. Start is refused (and changes nothing) before settle, while single-phasing
+ * is measured now, while the sump is held (sump), or while the tank reads full (borewell, node mode). */
+ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_cmd_t cmd, ctl_src_t src, int64_t now_ms);
+void        ctl_persist(const ctl_state_t *s, ctl_persist_t *p);   /* what to write to NVS */
+bool        ctl_persist_changed(const ctl_state_t *s);             /* since last ctl_persist() */
+const char *ctl_last_cmd(const ctl_state_t *s);                    /* "app:bore:start" etc.; "" before any */
