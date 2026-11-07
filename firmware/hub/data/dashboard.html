@@ -1984,9 +1984,7 @@ function drawAlerts(s) {
   if (s.motors && s.motors.borewell && s.motors.borewell.dry) {
     const bd = s.motors.borewell;
     add("fault", "Borewell dry",
-        bd.dry_why === 2
-          ? `Running 20 min with the sump flat at ${T.sump.pct}%. Check the bore before the pump runs on.`
-          : `Drawing ${ampsText(bd.amps).replace(/<[^>]+>/g, "")}, under the ${(bd.dry_at_deci_a / 10).toFixed(1)} A threshold. Stop the pump — it is pumping air.`,
+        `Drawing ${ampsText(bd.amps).replace(/<[^>]+>/g, "")}, under the ${(bd.dry_at_deci_a / 10).toFixed(1)} A threshold. Stop the pump — it is pumping air.`,
         "Borewell");
   }
   if (s.motors && s.motors.overcurrent)
@@ -2342,7 +2340,7 @@ const demo = {
   motors: {
     hpp: { amps: 8.4 }, rwp: { amps: 5.1 }, overcurrent: false, no_production: false,
     /* dry:false with a threshold set, so demo shows the armed-and-healthy case.
-       Flip dry to true and dry_why to 1 or 2 to review either alert wording. */
+       Flip dry to true and dry_why to 1 to review the alert wording. */
     borewell:   { amps: 4.1, phases: [4.1, 4.0, 3.9], imbalance_pct: 5, running: true,
                   dry: false, dry_why: 0, dry_at_deci_a: 29,
                   ctl: { flags: 0x0004, act: true, user_stop: false, last_cmd: "dash:bore:start" } },

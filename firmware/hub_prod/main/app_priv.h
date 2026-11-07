@@ -464,7 +464,7 @@ typedef enum {
  * pump or read plausibly and be wrong, and there is no honest number until
  * somebody sees the real dry current. Set it on /cal to about 70% of the
  * observed loaded current, between run_deci_amps and oc_deci_amps.
- * Until then BORE_DRY_WINDOW_MIN below is the detector that works. */
+ * Until then there is no borewell dry alert. */
 #define BORE_DRY_DECI_A_DEFAULT 0
 /* Seconds the current must stay under the threshold, while running, before the
  * flag is raised. Rides out the start surge and the priming that follows it,
@@ -472,20 +472,6 @@ typedef enum {
  * cannot chatter the flag. 20 s: dry running costs a submersible its seals in
  * minutes, so this is short next to the damage and long next to a start. */
 #define BORE_DRY_DEBOUNCE_S     20
-
-/* Second detector, and the only one that works before the clamp threshold
- * above is set: the borewell has run for this many minutes without the sump
- * rising. Same shape as NOPROD_* (architecture.txt 91 - the borewell fills the
- * sump, which is why the sump high-level float cuts it off).
- *
- * Only evaluated across a window where the SUMP MOTOR was off throughout.
- * The two run together in normal operation, and a sump motor pumping out as
- * fast as the borewell fills leaves the level flat with a perfectly healthy
- * bore - which this would otherwise report as dry. Costs coverage: if they
- * always run together this never fires and the clamp threshold is the only
- * detector. A backstop that stays quiet beats one that cries wolf. */
-#define BORE_DRY_WINDOW_MIN     20
-#define BORE_DRY_RISE_PCT       1
 
 /* Rated permeate output (L/h) - the skid meter says ~900 against a 1200
  * nameplate, so 900 is the default and /cal owns the real figure. */
@@ -725,8 +711,6 @@ typedef struct {
     uint8_t  imbalance_pct;        /* (max-min)/max over fitted phases, 0 if < 2 */
 } gf_motor_state_t;
 
-/* Everything the dashboard and RainMaker read. Written only by the poll task,
- * read by the web handlers — see the note on locking in app_main.c. */
 /* Utility node pump-control flags - mirrored from firmware/gf_node/main/ctl.h;
  * docs/check_gf.py fails if a value drifts. */
 #define GF_CTL_F_START_FAILED     0x0001  /* commanded on, no current after retry */
@@ -749,6 +733,8 @@ typedef struct {
     char     last_cmd[24];              /* "<src>:<motor>:<cmd>" or "" */
 } gf_ctl_t;
 
+/* Everything the dashboard and RainMaker read. Written only by the poll task,
+ * read by the web handlers — see the note on locking in app_main.c. */
 typedef struct {
     tank_state_t    rwt, twt, dosing;
     wq_state_t      rwt_wq, twt_wq;
