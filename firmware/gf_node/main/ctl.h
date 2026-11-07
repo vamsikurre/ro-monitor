@@ -31,6 +31,7 @@ typedef enum { CTL_SRC_AUTO, CTL_SRC_APP, CTL_SRC_DASH } ctl_src_t;
 #define CTL_SINGLE_PHASE_MS   5000
 #define CTL_DRY_MS            20000
 #define CTL_DRY_REST_MS       (30LL * 60 * 1000)
+#define CTL_DRY_OK_MS         (10LL * 60 * 1000)
 #define CTL_DRY_ATTEMPTS      3
 
 typedef struct {

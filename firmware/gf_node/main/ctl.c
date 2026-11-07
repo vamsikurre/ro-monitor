@@ -84,21 +84,27 @@ static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in,
         s->flags |= CTL_F_MAX_RUN;
     if (!s->bore_running) s->flags &= ~CTL_F_MAX_RUN;
 
-    if (!(s->flags & (CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH))) {
-        bool dry = c->bore_dry_da && s->bore_running && hi < (int)c->bore_dry_da;
+    bool dry = c->bore_dry_da && s->bore_running && hi < (int)c->bore_dry_da;
+    if (!c->bore_act) {
+        /* Alert only: no rest, no retries -- the flag just follows the debounced condition */
+        if (held_for(dry, &s->dry_on, &s->dry_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_BORE_DRY;
+        else if (!dry) s->flags &= ~CTL_F_BORE_DRY;
+    } else if (!(s->flags & (CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH))) {
         if (held_for(dry, &s->dry_on, &s->dry_since_ms, now, CTL_DRY_MS)) {
             s->flags |= CTL_F_BORE_DRY;  s->dry_on = false;
             s->rest_until_ms = now + CTL_DRY_REST_MS;
             if (++s->dry_attempts >= CTL_DRY_ATTEMPTS) s->flags |= CTL_F_BORE_DRY_LATCH;
         }
-        /* a full dry window of healthy running earns the attempts back */
-        if (held_for(c->bore_dry_da && s->bore_running && hi >= (int)c->bore_dry_da, &s->ok_on, &s->ok_since_ms, now, CTL_DRY_MS))
+        /* only a long healthy run earns the attempts back, so a bore that recovers
+         * briefly and dries again every rest still latches */
+        if (held_for(c->bore_dry_da && s->bore_running && hi >= (int)c->bore_dry_da, &s->ok_on, &s->ok_since_ms, now, CTL_DRY_OK_MS))
             s->dry_attempts = 0;
-    } else if (!(s->flags & CTL_F_BORE_DRY_LATCH) && now >= s->rest_until_ms) {
-        if (!c->bore_act) s->flags &= ~CTL_F_BORE_DRY;
-        else if (s->float_db == 1) {   /* the rest's own timed restart: a verified START */
-            s->flags &= ~CTL_F_BORE_DRY;
-            s->start_try = 1;  s->start_deadline_ms = now + CTL_START_VERIFY_MS;  out->bore_start = true;
+    } else if (!(s->flags & CTL_F_BORE_DRY_LATCH) && now >= s->rest_until_ms
+               && (!c->ctrl_node || s->float_db == 1)) {   /* node mode: never restart a full tank */
+        s->flags &= ~CTL_F_BORE_DRY;
+        if (!(s->flags & CTL_F_SINGLE_PHASE)) {   /* never a START edge while a stop is held */
+            out->bore_start = true;
+            if (c->ctrl_node) { s->start_try = 1;  s->start_deadline_ms = now + CTL_START_VERIFY_MS; }
         }
     }
 
@@ -112,16 +118,16 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
     debounce(s, in);
     if (!c->ctrl_node) s->float_db = -1;   /* NEC-49 is in charge: nothing here drives */
     s->bore_running = any_at_least(in->bore_mv, c->bore_apv_x100, c->bore_turns, c->bore_run_da);
-    if (!c->ctrl_node) return;
 
     /* Settle: a fresh boot reads garbage for a while (float not debounced), and a ctl_step is a full clamp sample, so reaching this point is the clamp read
      * (idle clamps read ~0 and must not block settle). A wrong first decision starts or stops a motor. */
     if (in->float_low >= 0 && s->float_reads < 2) s->float_reads++;
-    if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && s->float_reads >= 2)
+    if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && (s->float_reads >= 2 || !c->ctrl_node))
         s->settled = true;
     if (!s->settled) return;
 
     if (bore_protect(s, c, in, out)) { out->bore_stop = true; return; }
+    if (!c->ctrl_node) return;     /* NEC mode: the float logic below is node-only */
     if (out->bore_start) return;   /* the dry rest's restart already owns this step */
 
     /* a person's float going high clears a failed start so the next low gets a fresh try */

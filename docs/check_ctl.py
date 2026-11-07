@@ -185,6 +185,52 @@ static void t_max_run_flags_never_stops(void) {
     CHECK(ctl_flags(&r.s) & CTL_F_MAX_RUN); CHECK(!r.stop_seen);
 }
 
+static void t_nec_mode_single_phase_act_holds_stop(void) {
+    rig_t r; rig(&r, false);  r.c.bore_act = true;
+    runmv(&r, 31, -1, 200, 200, 200);
+    runmv(&r, 6, -1, 200, 200, 17);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE); CHECK(r.o.bore_stop);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_NOT_SETTLED));
+}
+static void t_nec_mode_dry_rest_ends_with_start(void) {
+    rig_t r; rig(&r, false);  r.c.bore_act = true; r.c.bore_dry_da = 20;
+    runmv(&r, 31, -1, 34, 34, 34);
+    runmv(&r, 25, -1, 34, 34, 34);
+    CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY); CHECK(r.o.bore_stop);
+    runmv(&r, 1790, -1, 0, 0, 0);
+    CHECK(r.o.bore_stop); CHECK(r.starts == 0);
+    runmv(&r, 11, -1, 0, 0, 0);
+    CHECK(r.starts == 1); CHECK(!r.o.bore_stop);
+}
+static void t_no_start_edge_while_stop_held(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true; r.c.bore_dry_da = 20;
+    runmv(&r, 21, 1, 34, 34, 34);                       /* dry stop, rest begins */
+    CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY);
+    r.s.flags |= CTL_F_SINGLE_PHASE;                    /* latched during the rest */
+    runmv(&r, 1900, 1, 0, 0, 0);
+    CHECK(r.starts == 0); CHECK(r.o.bore_stop);
+}
+static void t_brief_recovery_does_not_reset_dry_attempts(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true; r.c.bore_dry_da = 20;
+    for (int k = 1; k <= 3; k++) {
+        runmv(&r, 21, 1, 34, 34, 34);
+        CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY);
+        if (k == 3) break;
+        runmv(&r, 1801, 1, 0, 0, 0);                    /* rest, START edge */
+        runmv(&r, 120, 1, 200, 200, 200);               /* 2 min healthy */
+    }
+    CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY_LATCH);
+}
+static void t_alert_only_dry_flag_follows_condition(void) {
+    rig_t r; settled(&r);  r.c.bore_dry_da = 20;
+    runmv(&r, 25, 1, 34, 34, 34);
+    CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY); CHECK(!r.stop_seen);
+    runmv(&r, 3, 1, 200, 200, 200);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY));
+    runmv(&r, 3000, 1, 34, 34, 34);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY_LATCH)); CHECK(!r.stop_seen);
+}
+
 int main(void) {
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
@@ -202,6 +248,11 @@ int main(void) {
     t_lost_phase_with_clamp_present_is_single_phasing();
     t_dry_retry_three_times_then_latch();
     t_max_run_flags_never_stops();
+    t_nec_mode_single_phase_act_holds_stop();
+    t_nec_mode_dry_rest_ends_with_start();
+    t_no_start_edge_while_stop_held();
+    t_brief_recovery_does_not_reset_dry_attempts();
+    t_alert_only_dry_flag_follows_condition();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }
