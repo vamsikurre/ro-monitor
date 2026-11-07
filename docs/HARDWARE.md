@@ -51,15 +51,16 @@ GROUND FLOOR SUBSYSTEM (WI-FI LAN, POLLED BY THE HUB) - MONITORING ONLY, NO RELA
 │  - Sump Level: ultrasonic OR  │        │  - Borewell + sump motor CT clamps      │
 │    4-20 mA loop (J-LOOP)      │        │    (6 channels, 5 fitted, 1 empty)      │
 │  - AJ-SR04M Sensor            │        │  - Astero PUMP ON dry contact (sump)    │
-│  - 230V -> 12V module -> buck │        │  - RWT floaty opto (after metering)     │
+│  - 230V -> 12V module -> buck │        │  - Sump float opto + 3 relays (ctl)    │
 │    -> 5V (loop needs the 12V) │        │  - SHT30 (utility room temp/RH)         │
 │                                │        │  - Hi-Link HLK-20M5 (5V DC)             │
 └───────────────────────────────┘        └─────────────────────────────────────────┘
 ```
 
-**No relay board on either node.** This subsystem only reads the ground
-floor; it does not switch anything. The 4-channel relay interlock design
-this document described until 2026-09-08 was never built — see §3.5.
+**Relays on node 0x06 only.** Node 0x05 only reads. Node 0x06 carries a
+3-channel relay module for borewell START/STOP and sump STOP (§3.5,
+`WIRING.md` §11.2); the 4-channel interlock design of 2026-09-08 and before
+was never built.
 
 ---
 
@@ -74,7 +75,14 @@ this document described until 2026-09-08 was never built — see §3.5.
 | **Current Clamp** | `SCT-013-030` split-core CT, 30 A / 1 V output | 8 | 1x HPP + 1x RWP on the hub (`WIRING.md` §14; nameplates in §14.5 — RWP is 6.2 A max, so 3 turns), then **3 phases each** on the ground-floor sump and borewell motors (§11.3). Voltage-output variant: burden resistor is inside, do not add one. Sump and borewell have **no readable nameplate** (submersible, confirmed 2026-08-27) — size from the starter overload dial and a clamp meter, and expect to need 2-3 turns for resolution (`WIRING.md` §11.3.1) |
 | **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 2 | RO Room (HPP/RWP) only. **The ground floor has none** — its motors are read by CT clamps and the Astero `PUMP ON` dry contact, not by sensing the contactor coil (`WIRING.md` §11.2). A DC optocoupler for the ground floor's `RWT FLOTY` loop is a separate part, added only if metering that loop finds low-voltage DC (§11.4) — **a 5th of this AC part** is still needed only if the Aster `ALARM` output measures as switched mains — see `WIRING.md` 6.4 |
 | **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. `IN_ALARM` needed no optocoupler and moved to a direct input on GPIO 13, which freed channel 3 for `LPS` (`WIRING.md` §6.6). **An 8-channel PC817 board is already owned and unused** (order 2026-08-16) — the 4-channel one was fitted because it was to hand, so extra taps need no purchase, only a rewire. See §0.4 of `WIRING.md` for why pins, not channels, are now the limit |
-| **Relay Modules** | 4-Channel 5V Relay Board | 1 | RO Room (Aster Float Emulation) only. **No relay board on the ground floor** — the interlock design once specified for node `0x06` (§3.5) was never built and is out of scope for this round (`WIRING.md` §11) |
+| **Relay Modules** | 4-Channel 5V Relay Board | 1 | RO Room (Aster Float Emulation) only. The ground floor's only relays are node `0x06`'s 3-channel module below (`WIRING.md` §11.2); node `0x05` has none |
+| **Relay Module (Utility node)** | 3-channel 5 V relay module, high/low trigger jumper set HIGH, ≥ 250 VAC 10 A, JD-VCC opto | 1 | Node `0x06`: `RLY_BORE_START` / `RLY_BORE_STOP` / `RLY_SUMP_STOP` on GPIO 16/17/18 — `WIRING.md` §11.2 |
+| **Relay input pull-downs** | 10 kΩ 0.25 W | 3 | One from each relay `IN` to GND, so a floating pin reads off |
+| **Isolated 12 V module** | Isolated 230 V → 12 V module | 1 | Powers the sump float loop only; output not tied to node GND (`WIRING.md` §11.2) |
+| **Float-loop opto** | PC817 (single) | 1 | Sump float → GPIO 26, isolated |
+| **Float-loop parts** | 1.2 kΩ 0.25 W, 1N4148, 10 kΩ, 100 nF × 2, TVS SMBJ15CA | 1 set | 1.2 kΩ sets ~9 mA; 1N4148 reverse across the opto LED; 10 kΩ + 100 nF on GPIO 26 (second 100 nF spare); TVS across the float wires at the board |
+| **Bypass switches** | 2-pole (borewell), 1-pole (sump) | 2 | Take the node out of the starter / float circuit — `WIRING.md` §11.2 |
+| **Junction box** | Weatherproof | 1 | Above-water joint between the float extension cable and the sump float |
 | **Relay Module (Single)** | 1-Channel 5V Relay Board | 1 | Battery Room (Exhaust Fan Switching) |
 | **Ultrasonic Sensors** | Waterproof Ultrasonic (**AJ-SR04M**) | 4 | **Dosing (wired direct to hub)**, RWT (`0x02`), TWT (`0x03`), Ground Sump (`0x05`). Confirm `R19` mode pad is empty (Trig/Echo mode) — `WIRING.md` §9.0 |
 | **Resistors** | 1 kΩ + 1.8 kΩ (1/4 W) | 2 pairs | `ECHO` 5V→3.3V dividers: hub dosing sensor + ground-floor sump sensor. **1.8 kΩ as built**, not the 2 kΩ originally specified — `WIRING.md` §1, §13 |

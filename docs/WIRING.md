@@ -1591,12 +1591,11 @@ treatment, and this is the second data point saying so.
 
 ## 11. Ground Floor Wi-Fi Nodes Wiring
 
-**Superseded 2026-09-07 — no relay board.** Everything below described a
-4-channel relay board on node `0x06` doing starter interlocks; that node was
-never built that way. What shipped is two ESP32s that only *read* the
-ground floor and are polled by the hub over the house LAN (`RS485_PROTOCOL.md`
-§5) — no relays, no pump control, no float cutoffs. The 4-channel interlock
-idea stays a Phase-2 option, out of scope for this round.
+**Superseded 2026-09-07 — no relay board; reinstated for node `0x06` 2026-11-07.** The
+original 4-channel interlock board was never built: the nodes shipped as two
+ESP32s that only *read* the ground floor, polled by the hub over the house LAN
+(`RS485_PROTOCOL.md` §5). Node `0x06` now carries a 3-channel relay module for
+borewell START/STOP and sump STOP (§11.2); node `0x05` has none.
 
 ### 11.1. Ground Floor ESP32 Node 1: Sump Level (0x05)
 
@@ -1621,31 +1620,124 @@ idea stays a Phase-2 option, out of scope for this round.
 * `source` in the telemetry (`RS485_PROTOCOL.md` §5.1) is decided by
   `J-PRESS`, read once at boot: shunt fitted = pressure, off = ultrasonic.
 
-### 11.2. Ground Floor ESP32 Node 2: Utility Room Monitoring (0x06)
+### 11.2. Ground Floor ESP32 Node 2: Utility Room Monitoring and Pump Control (0x06)
 
-* **Power Source:** 230V AC $\to$ Hi-Link `HLK-20M5` (5V DC 4A). No loop
-  here, so no 12 V is needed on this node.
+**Safety first.** The borewell panel is **415 V three-phase**. Isolate and lock
+off before any wire is touched. Two conductors are known to be green-yellow
+wires **used as live conductors** (borewell tail 4/T2 and sump `Y`), so wire
+colour is not evidence of earth here. Meter every conductor dead before
+handling it.
+
+**Commissioning — measure before wiring** (spec §9). Each result decides a
+wiring choice below; write it in the record, not on trust.
+
+1. **Borewell contactor coil voltage** (230 V or 415 V) — sets the relay
+   rating and where the node's HLK-20M5 is fed from.
+2. **Astero float input:** which loop state it reads as "tank full", and the
+   loop voltage — decides `RLY_SUMP_STOP` NC-in-series versus NO-across, and
+   its rating.
+3. **Float wires:** which pair closes with the float **hanging down**.
+4. **Running currents:** borewell per phase; sump Common / Start / Run; and
+   which of `R` / `Y` is the Start winding.
+5. **Cable route and length** from the sump to the panel; keep the float cable
+   out of mains conduit where possible.
+
+#### Node GPIO map (utility `0x06`)
+
+| GPIO | Signal | Notes |
+|---|---|---|
+| 32 / 33 / 34 | Borewell clamps L1 / L2 / L3 | ADC1, §11.3 bias network |
+| 35 / 36 / 39 | Sump Common / Start / Run | ADC1; Run socket unfitted |
+| 25 | Astero `PUMP ON` | C → GND, NO → GPIO 25, 10 kΩ to 3V3 |
+| 26 | Sump float (PC817 output) | 10 kΩ to 3V3, 100 nF to GND |
+| 16 | `RLY_BORE_START` | high = energise |
+| 17 | `RLY_BORE_STOP` | high = energise |
+| 18 | `RLY_SUMP_STOP` | high = energise |
+| 21 / 22 | SHT30 SDA / SCL | |
+
+The RWT floaty is **not** read by this node any more: `rwt_floty` is always
+`null`, and GPIO 26 is the sump float.
+
+#### Relay module
+
+3-channel 5 V relay module **with a high/low trigger jumper set to HIGH**,
+contacts ≥ 250 VAC 10 A, JD-VCC opto isolation. `VCC`/`JD-VCC` from the node's
+5 V, `GND` common, `IN1..3` from GPIO 16/17/18, **10 kΩ from each `IN` to GND**
+so a pin floating during reset or flashing reads off.
+
+#### Borewell starter (MK1 DOL + NEC-49)
+
+| Relay | Contact | Before cutover | After cutover (NEC-49 removed) |
+|---|---|---|---|
+| `RLY_BORE_STOP` | COM + **NC** | in series with the NEC-49 **"NV Coil Series"** pair (break one of its two wires and insert COM/NC) | the two "NV Coil Series" wires join through COM/NC only |
+| `RLY_BORE_START` | COM + **NO** | in parallel with the NEC-49 **"ON Button Side"** pair (both land on the same two terminals) | COM/NO alone across those two terminals |
+
+A **2-pole bypass switch**: pole 1 shorts the `RLY_BORE_STOP` COM-NC pair,
+pole 2 opens the `RLY_BORE_START` COM-NO line. Bypass ON = node out of the
+circuit, starter on its own buttons.
+
+#### Sump motor (Astero)
+
+| Relay | Contact | Wiring (chosen at commissioning, spec §9 item 2) |
+|---|---|---|
+| `RLY_SUMP_STOP` | COM + **NC** | if an **open** float loop reads as "tank full": in series with one wire of the `TWT FLOTY` loop |
+| | COM + **NO** | if a **closed** loop reads as "tank full": across the two `TWT FLOTY` terminals |
+
+Bypass switch: shorts the NC (series case) or opens the NO (parallel case).
+
+#### Sump float loop (isolated, ~9 mA)
+
+```
+ Isolated 12 V module (+) ── 1.2 kΩ 0.25 W ──► PC817 pin 1 (anode)
+                                               PC817 pin 2 (cathode) ── float wire A ─┐
+ Isolated 12 V module (−) ───────────────────────────────────────── float wire B ─┘
+   1N4148 reverse across pins 1-2;  SMBJ15CA TVS across float wires A-B at the board
+ PC817 pin 4 (collector) ── GPIO 26 (10 kΩ to 3V3, 100 nF to GND)
+ PC817 pin 3 (emitter)   ── node GND
+```
+
+**The 12 V module's output is not connected to the node's ground** — that
+isolation is why a float cable running through a pump pit cannot put anything
+on the ESP32. Float wires A/B are the pair that closes with the float
+**hanging down** (measured on site); third wire insulated. Joint to the
+extension cable above water in a junction box; route away from mains conduit
+where possible.
+
+#### Power
+
+HLK-20M5 fed from the **same L-N as the borewell contactor coil** (if the coil
+is 230 V), through a 1 A fuse — losing the coil's phase drops coil and node
+together, and losing any other phase leaves the node alive to see the
+single-phasing. The isolated 12 V module from the same feed, own fuse.
+
+#### Clamps
+
+As §11.3: borewell T1 / T2 / T3 → channels 1-3; sump **B (Common)** → ch 4,
+**Start winding** → ch 5, Run → ch 6 (later). Isolate and lock off before
+fitting.
+
+#### `PUMP ON` and SHT30
+
 * **`PUMP ON` (C, NO)** — a spare dry contact on the sump motor's **Astero**
-  controller (§11.4; not the RO-room Aster panel of §6, a different device
-  at a different panel), unused until now: closed while the controller has
-  the pump on. This **is** the sump-motor run signal, and it is wired the
-  same way the hub's own `IN_ALARM` is (§6.6) — two wires straight to a GPIO
-  with a pull-up, no optocoupler, no module:
-  * `PUMP ON` `C` $\to$ `ESP32 GPIO 25`
-  * `PUMP ON` `NO` $\to$ `GND`
-* **RWT floaty $\to$ `ESP32 GPIO 26`, opto, pull-up — after metering the
-  Astero's `TWT FLOTY` terminal, not before.** §11.4 has the rule: the RWT
-  float cable lands on a pair labelled `TWT FLOTY` on this controller's
-  factory terminal strip — a preprinted label that has nothing to do with
-  the treated water tank here, only with what this Astero unit ships
-  labelled. Low-voltage DC across the loop gets an optocoupler; mains
-  potential gets nothing landed on it at all, and `rwt_floty` reports
-  `null`.
+  controller (§11.4), closed while the controller has the pump on. Wired like
+  the hub's own `IN_ALARM` (§6.6): `C` $\to$ `GPIO 25`, `NO` $\to$ `GND`, no
+  optocoupler.
 * **SHT30** `SDA` $\to$ `GPIO 21`, `SCL` $\to$ `GPIO 22`.
-* **No relay board.** The 4-channel relay interlocks this section used to
-  describe (Sump Low Float Cutoff, Borewell High Float Cutoff, two aux
-  overrides) do not exist on the built node — see the note at the top of
-  §11.
+
+#### Bench, DATE (Task 12 fills this in)
+
+Lamps on the relay contacts, float in a bucket, clamps on a test load (a
+kettle or fan), node + hub on the bench LAN.
+
+- [ ] Node unpowered: all three contacts in their resting state (meter): STOP NCs closed, START NO open.
+- [ ] Power-cycle the node 20 times with the float low, `ctrl_node=true` and both motors idle: the START lamp never lights before 30 s; it pulses once after.
+- [ ] OTA the node with the float low: no START during or after the update until settled.
+- [ ] Each app button and each dashboard button: correct lamp, event logged with source.
+- [ ] Stop from the app, power-cycle the node: STOP lamp re-lit within one cycle, START never.
+- [ ] Wrong token on `/cal`: buttons refused, node state unchanged.
+- [ ] Unplug one clamp of a "running" set: no single-phasing alert.
+
+Results: _not yet recorded._
 
 ### 11.3. Node 0x06 Current Clamps — Six Channels, Three Per Motor
 
@@ -1788,13 +1880,12 @@ from the RO-room's own Aster panel, §6). Its terminal strip: `PULSE O/P`,
 * `PUMP ON (C, NO)` was unused and is an isolated dry contact, closed while
   the controller has the pump on. This is the sump-motor run signal
   (§11.2).
-* `TWT FLOTY` is where the RWT float cable lands — a factory-printed label
+* `TWT FLOTY` is where the sump float cable lands — a factory-printed label
   that has nothing to do with the treated water tank on this particular
-  controller, only with what Astero prints on every unit of this model.
-  Whether the node can read it depends on the voltage the Astero puts across
-  the loop, **to be metered before any wire is connected**: low-voltage DC
-  across the loop gets an optocoupler; mains potential is not tapped at all,
-  and `rwt_floty` reports `null`.
+  controller, only with what Astero prints on every unit of this model. The
+  node no longer reads it (`rwt_floty` is always `null`); `RLY_SUMP_STOP`
+  goes in this loop (§11.2), and the node's own float is a separate isolated
+  loop.
 * `PUMP CONT.` has one wire that goes to nowhere — an abandoned
   external-contactor option from some earlier configuration of this
   controller. Tape the loose end and leave the pair alone.
