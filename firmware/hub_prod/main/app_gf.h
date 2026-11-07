@@ -69,6 +69,7 @@ typedef struct {
     uint8_t  bore_turns, sump_turns;
     uint16_t bore_run_da, bore_dry_da, sump_noload_da, max_run_min;
     bool     ctrl_node, bore_act, sump_act;
+    bool     ctrl_node_set;   /* false: leave "ctrl_node" out, the node keeps its own */
 } gf_ctl_cfg_t;
 
 esp_err_t gf_init(void);

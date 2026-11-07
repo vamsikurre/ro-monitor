@@ -187,8 +187,8 @@ esp_err_t cal_init(void)
     load_u16(h, "smot", "nl", &s_ctl.sump_noload_da);
     load_u16(h, "bore", "mr", &s_ctl.max_run_min);
     uint16_t f = 0;
-    load_u16(h, "ctl", "fl", &f);   /* bit0 ctrl_node, bit1 bore_act, bit2 sump_act */
-    s_ctl.ctrl_node = f & 1; s_ctl.bore_act = f & 2; s_ctl.sump_act = f & 4;
+    load_u16(h, "ctl", "fl", &f);   /* bit0 ctrl_node, bit1 bore_act, bit2 sump_act, bit3 ctrl_node_set */
+    s_ctl.ctrl_node = f & 1; s_ctl.bore_act = f & 2; s_ctl.sump_act = f & 4; s_ctl.ctrl_node_set = f & 8;
     if (s_ctl.sump_noload_da > CAL_SUMP_NOLOAD_DA_MAX) s_ctl.sump_noload_da = 0;
     if (s_ctl.max_run_min > CAL_MAX_RUN_MIN_MAX) s_ctl.max_run_min = 0;
     for (int i = 0; i < CAL_CT_COUNT; i++) {
@@ -445,7 +445,8 @@ static esp_err_t store_ctl(const cal_ctl_t *c)
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
     char key[16];
-    uint16_t f = (c->ctrl_node ? 1 : 0) | (c->bore_act ? 2 : 0) | (c->sump_act ? 4 : 0);
+    uint16_t f = (c->ctrl_node ? 1 : 0) | (c->bore_act ? 2 : 0) | (c->sump_act ? 4 : 0)
+               | (c->ctrl_node_set ? 8 : 0);
     err = c->token[0] ? nvs_set_str(h, "ctl_token", c->token) : nvs_erase_key(h, "ctl_token");
     if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     key_for(key, sizeof(key), "smot", "nl");

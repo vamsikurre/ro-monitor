@@ -204,7 +204,7 @@ int gf_cfg_body(const gf_ctl_cfg_t *g, const char *token, char *buf, size_t len)
         && cJSON_AddNumberToObject(o, "bore_dry_da", g->bore_dry_da)
         && cJSON_AddNumberToObject(o, "sump_noload_da", g->sump_noload_da)
         && cJSON_AddNumberToObject(o, "max_run_min", g->max_run_min)
-        && cJSON_AddBoolToObject(o, "ctrl_node", g->ctrl_node)
+        && (!g->ctrl_node_set || cJSON_AddBoolToObject(o, "ctrl_node", g->ctrl_node))
         && cJSON_AddBoolToObject(o, "bore_act", g->bore_act)
         && cJSON_AddBoolToObject(o, "sump_act", g->sump_act);
     if (!ok) { cJSON_Delete(o); return -1; }
@@ -455,6 +455,7 @@ static void gf_push_cfg(void)
         .bore_run_da = b->run_deci_amps, .bore_dry_da = b->dry_deci_amps,
         .sump_noload_da = k->sump_noload_da, .max_run_min = k->max_run_min,
         .ctrl_node = k->ctrl_node, .bore_act = k->bore_act, .sump_act = k->sump_act,
+        .ctrl_node_set = k->ctrl_node_set,
     };
     /* No token yet: the node refuses everything, so do not knock every 5 s.
      * Saving one on /cal re-arms the push. */
@@ -481,12 +482,12 @@ static void gf_push_cfg(void)
         }
         return;
     }
-    ESP_LOGI(TAG, "control config pushed: ctrl_node=%d bore_act=%d sump_act=%d",
-             g.ctrl_node, g.bore_act, g.sump_act);
+    ESP_LOGI(TAG, "control config pushed: ctrl_node=%s bore_act=%d sump_act=%d",
+             g.ctrl_node_set ? (g.ctrl_node ? "1" : "0") : "node's own", g.bore_act, g.sump_act);
     /* The node holds these now. Put them in the snapshot rather than wait a
      * poll, so the app is told what the node has without a stale flicker. */
     xSemaphoreTake(s_mux, portMAX_DELAY);
-    s_util.ctrl_node = g.ctrl_node;
+    if (g.ctrl_node_set) s_util.ctrl_node = g.ctrl_node;
     s_util.bore_act = g.bore_act;
     s_util.sump_act = g.sump_act;
     xSemaphoreGive(s_mux);

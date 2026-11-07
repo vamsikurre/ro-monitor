@@ -333,11 +333,12 @@ static void day_ledger_save(uint32_t midnight, const run_acct_t *hpp, const run_
 
 static esp_rmaker_device_t *s_dev_ro_room, *s_dev_battery, *s_dev_tanks;
 static esp_rmaker_device_t *s_dev_ground;
-/* The ground-floor control toggles' last reported values (ctrl_node, bore_act,
- * sump_act; -1 none yet). Shared by the poll task's report_bool() and
- * write_cb, which reports straight back after a write; a stale read between
- * the two only costs one extra report. */
-static int s_last_ctl[3] = { -1, -1, -1 };
+/* The ground-floor control toggles' last reported values (bore_act, sump_act;
+ * -1 none yet). Node mode (ctrl_node) is not in the app: it changes who runs
+ * the borewell, so it is set on /cal only. Shared by the poll task's
+ * report_bool() and write_cb, which reports straight back after a write; a
+ * stale read between the two only costs one extra report. */
+static int s_last_ctl[2] = { -1, -1 };
 
 static esp_rmaker_device_t *s_dev_outdoor;
 static esp_rmaker_device_t *s_dev_ro_room;
@@ -1874,9 +1875,8 @@ static void poll_task(void *arg)
             }
             /* What the NODE holds, not what the app last wrote: a refused or
              * not-yet-pushed config shows as the setting still in force. */
-            report_bool(s_dev_ground, PARAM_CTRL_NODE, local.ctl.ctrl_node, &s_last_ctl[0]);
-            report_bool(s_dev_ground, PARAM_BORE_ACT, local.ctl.bore_act, &s_last_ctl[1]);
-            report_bool(s_dev_ground, PARAM_SUMP_ACT, local.ctl.sump_act, &s_last_ctl[2]);
+            report_bool(s_dev_ground, PARAM_BORE_ACT, local.ctl.bore_act, &s_last_ctl[0]);
+            report_bool(s_dev_ground, PARAM_SUMP_ACT, local.ctl.sump_act, &s_last_ctl[1]);
         }
 
         report_bool(s_dev_ro_room, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
@@ -2040,9 +2040,8 @@ typedef struct { int which; bool v; } ctl_toggle_t;
 static void apply_ctl_toggle(cal_ctl_t *k, void *arg)
 {
     const ctl_toggle_t *t = (const ctl_toggle_t *)arg;
-    if (t->which == 0)      k->ctrl_node = t->v;
-    else if (t->which == 1) k->bore_act = t->v;
-    else                    k->sump_act = t->v;
+    if (t->which == 0) k->bore_act = t->v;
+    else               k->sump_act = t->v;
 }
 
 static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_t *param,
@@ -2052,7 +2051,7 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     ESP_LOGI(TAG, "write %s from %s", name, ctx ? esp_rmaker_device_cb_src_to_str(ctx->src) : "?");
 
     /* Writable: the fan (switch, mode, threshold), Dark Below, and on the
-     * ground floor the pump Start/Stop triggers and the three control toggles.
+     * ground floor the pump Start/Stop triggers and the two protection toggles.
      * Everything else this hub publishes is a measurement, and a measurement
      * is not a control.
      * Calibration deliberately lives on /cal rather than in the app: it needs a
@@ -2129,8 +2128,8 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
      * force NOW - the node's value while it is online (the push lands within
      * a poll and the poll task reports the change), the hub's cal while it is
      * not. Never the bare write: a refused push would leave the app wrong. */
-    static const char *const tog[] = { PARAM_CTRL_NODE, PARAM_BORE_ACT, PARAM_SUMP_ACT };
-    for (int i = 0; i < 3; i++) {
+    static const char *const tog[] = { PARAM_BORE_ACT, PARAM_SUMP_ACT };
+    for (int i = 0; i < 2; i++) {
         if (strcmp(name, tog[i]) != 0) continue;
         ctl_toggle_t t = { i, val.val.b };
         esp_err_t err = cal_update_ctl(apply_ctl_toggle, &t);
@@ -2141,8 +2140,7 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
         hub_state_lock();
         const hub_state_t *st = hub_state();
         bool on = st->utility_online;
-        bool now = (i == 0) ? (on ? st->ctl.ctrl_node : k.ctrl_node)
-                 : (i == 1) ? (on ? st->ctl.bore_act : k.bore_act)
+        bool now = (i == 0) ? (on ? st->ctl.bore_act : k.bore_act)
                             : (on ? st->ctl.sump_act : k.sump_act);
         hub_state_unlock();
         esp_rmaker_param_update_and_report(param, esp_rmaker_bool(now));
@@ -2356,7 +2354,7 @@ static void build_node(esp_rmaker_node_t *node)
     cal_ctl_get(&kc);
     const cal_ctl_t *k = &kc;
     const struct { const char *name; bool v; } tog[] = {
-        { PARAM_CTRL_NODE, k->ctrl_node }, { PARAM_BORE_ACT, k->bore_act }, { PARAM_SUMP_ACT, k->sump_act },
+        { PARAM_BORE_ACT, k->bore_act }, { PARAM_SUMP_ACT, k->sump_act },
     };
     for (size_t i = 0; i < sizeof(tog) / sizeof(tog[0]); i++) {
         esp_rmaker_param_t *t = esp_rmaker_param_create(tog[i].name, ESP_RMAKER_PARAM_TOGGLE, esp_rmaker_bool(tog[i].v),

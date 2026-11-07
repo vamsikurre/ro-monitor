@@ -569,7 +569,6 @@ typedef enum {
 #define PARAM_SMOT_START        "Sump Motor Start"
 #define PARAM_SMOT_STOP         "Sump Motor Stop"
 /* Toggles: a write saves the hub cal and pushes it; the value shown is the node's. */
-#define PARAM_CTRL_NODE         "Node Controls Borewell"
 #define PARAM_BORE_ACT          "Borewell Protection Acts"
 #define PARAM_SUMP_ACT          "Sump Protection Acts"
 

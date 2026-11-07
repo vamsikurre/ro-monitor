@@ -81,7 +81,7 @@ enum { GF_SRC_AUTO = 0, GF_SRC_APP = 1, GF_SRC_DASH = 2 };
 typedef struct { uint8_t motor, cmd, src; } gf_cmd_t;
 typedef struct { uint16_t bore_apv_x100, sump_apv_x100; uint8_t bore_turns, sump_turns;
                  uint16_t bore_run_da, bore_dry_da, sump_noload_da, max_run_min;
-                 bool ctrl_node, bore_act, sump_act; } gf_ctl_cfg_t;
+                 bool ctrl_node, bore_act, sump_act, ctrl_node_set; } gf_ctl_cfg_t;
 %s
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
@@ -144,10 +144,15 @@ int main(int argc, char **argv) {
         CHECK(gf_ctl_body(&bad1, "t", b, sizeof b) == -1);          /* the node refuses src auto */
         CHECK(gf_ctl_body(&bad2, "t", b, sizeof b) == -1 && gf_ctl_body(&bad3, "t", b, sizeof b) == -1);
         char cb[400];
-        gf_ctl_cfg_t g = { 3000, 2950, 1, 2, 10, 0, 30, 120, true, false, true };
+        gf_ctl_cfg_t g = { 3000, 2950, 1, 2, 10, 0, 30, 120, true, false, true, true };
         int n = gf_cfg_body(&g, "t", cb, sizeof cb);
         CHECK(n == (int)strlen(CFG_EXPECT) && strcmp(cb, CFG_EXPECT) == 0);
         if (strcmp(cb, CFG_EXPECT) != 0) printf("  got  %%s\n", cb);
+        /* never saved on /cal (or a wiped hub NVS): no ctrl_node, the node keeps its own */
+        g.ctrl_node_set = false;
+        CHECK(gf_cfg_body(&g, "t", cb, sizeof cb) > 0 && strstr(cb, "ctrl_node") == NULL &&
+              strstr(cb, "\"bore_act\":false,\"sump_act\":true}") != NULL);
+        g.ctrl_node_set = true;
         CHECK(gf_cfg_body(&g, "t", cb, 40) == -1);
         CHECK(gf_cfg_body(&g, NULL, cb, sizeof cb) == -1);
         /* why -> event b */

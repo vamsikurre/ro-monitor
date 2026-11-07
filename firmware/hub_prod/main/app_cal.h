@@ -110,6 +110,8 @@ typedef struct {
     uint16_t sump_noload_da;   /* sump running below this = dry; 0 = off */
     uint16_t max_run_min;      /* borewell alert after this long; 0 = off */
     bool     ctrl_node;        /* node reads the float and runs the borewell */
+    bool     ctrl_node_set;    /* ctrl_node was saved on /cal; until then (and after an
+                                * NVS wipe) the push leaves it out and the node keeps its own */
     bool     bore_act, sump_act;   /* protections stop the motor, not just alert */
 } cal_ctl_t;
 /* A copy, taken under the lock. */

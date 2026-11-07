@@ -1861,6 +1861,7 @@ static esp_err_t cal_ctl_post(httpd_req_t *req)
     k.sump_noload_da = nld;
     k.max_run_min = (uint16_t)m;
     k.ctrl_node = form_field(body, "node", box, sizeof(box));
+    k.ctrl_node_set = true;   /* from here on the hub's value is pushed */
     k.bore_act  = form_field(body, "bact", box, sizeof(box));
     k.sump_act  = form_field(body, "sact", box, sizeof(box));
     if (cal_update_ctl(apply_ctl_form, &k) != ESP_OK) return bad(req, "rejected: sump dry 0-30.0 A, max run 0-1440 min");
