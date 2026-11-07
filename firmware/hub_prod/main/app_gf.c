@@ -119,6 +119,23 @@ bool gf_parse_util(const char *json, gf_util_t *out)
     u.sht_ok       = cJSON_IsTrue(sht);
     u.temp_deci_c  = (int16_t)t;
     u.hum_deci_pct = (uint16_t)(rh < 0 ? 0 : rh);
+    /* control fields: optional, reset every parse so nothing stale survives */
+    const cJSON *fv = cJSON_GetObjectItemCaseSensitive(o, "float_low");
+    u.float_low = cJSON_IsBool(fv) ? (cJSON_IsTrue(fv) ? 1 : 0) : -1;
+    u.ctrl_node = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, "ctrl_node"));
+    u.bore_act  = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, "bore_act"));
+    u.sump_act  = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, "sump_act"));
+    int fg = 0;
+    u.flags = (jint(o, "flags", &fg) && fg >= 0 && fg <= 65535) ? (uint16_t)fg : 0;
+    const cJSON *ra = cJSON_GetObjectItemCaseSensitive(o, "relays");
+    for (int i = 0; i < 3; i++)
+        u.relays[i] = cJSON_IsArray(ra) && cJSON_IsTrue(cJSON_GetArrayItem(ra, i));
+    const cJSON *lc = cJSON_GetObjectItemCaseSensitive(o, "last_cmd");
+    u.last_cmd[0] = '\0';
+    if (cJSON_IsString(lc)) {
+        strncpy(u.last_cmd, lc->valuestring, sizeof(u.last_cmd) - 1);
+        u.last_cmd[sizeof(u.last_cmd) - 1] = '\0';
+    }
     *out = u;
     ok = true;
 done:

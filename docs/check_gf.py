@@ -5,7 +5,7 @@ so what is tested is what ships.
 
     python docs/check_gf.py     # from the repo root
 """
-import io, os, subprocess, sys, tempfile
+import io, os, re, subprocess, sys, tempfile
 
 CAL = 'firmware/hub_prod/main/app_cal.c'
 BEGIN, END = '/* GF_PURE_BEGIN */', '/* GF_PURE_END */'
@@ -72,7 +72,9 @@ typedef struct { bool valid; bool online; uint8_t misses; int64_t last_ok_us; in
 typedef struct { gf_link_t link; bool pressure; uint16_t distance_mm; uint8_t quality;
                  sensor_status_t sensor; uint32_t loop_ua; } gf_sump_t;
 typedef struct { gf_link_t link; uint16_t bore_mv[3]; uint16_t sump_mv[3]; bool sump_on;
-                 int8_t rwt_floty; int16_t temp_deci_c; uint16_t hum_deci_pct; bool sht_ok; } gf_util_t;
+                 int8_t rwt_floty; int16_t temp_deci_c; uint16_t hum_deci_pct; bool sht_ok;
+                 int8_t float_low; bool ctrl_node, bore_act, sump_act; uint16_t flags; bool relays[3];
+                 char last_cmd[24]; } gf_util_t;
 %s
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
@@ -98,6 +100,22 @@ int main(int argc, char **argv) {
                         "\"sump_mv\":[0,0,0],\"sump_on\":false,\"rwt_floty\":false,"
                         "\"t_deci_c\":0,\"rh_deci_pct\":0,\"sht_ok\":false}", &u));
     CHECK(u.rwt_floty == 0 && !u.sht_ok);
+    /* Task 7: node control fields. Older firmware without them still parses. */
+    CHECK(u.flags == 0 && u.float_low == -1 && !u.ctrl_node && !u.bore_act && !u.sump_act &&
+          !u.relays[0] && !u.relays[1] && !u.relays[2] && u.last_cmd[0] == 0);
+    CHECK(gf_parse_util("{\"id\":6,\"fw\":\"b\",\"uptime_s\":9,\"rssi\":-68,\"bore_mv\":[0,0,0],"
+                        "\"sump_mv\":[0,0,0],\"sump_on\":false,\"rwt_floty\":null,"
+                        "\"t_deci_c\":0,\"rh_deci_pct\":0,\"sht_ok\":true,"
+                        "\"float_low\":true,\"ctrl_node\":true,\"bore_act\":true,\"sump_act\":false,"
+                        "\"flags\":1029,\"relays\":[false,true,true],\"last_cmd\":\"web:bore:start\"}", &u));
+    CHECK(u.float_low == 1 && u.ctrl_node && u.bore_act && !u.sump_act && u.flags == 1029);
+    CHECK(!u.relays[0] && u.relays[1] && u.relays[2] && strcmp(u.last_cmd, "web:bore:start") == 0);
+    CHECK(gf_parse_util("{\"id\":6,\"fw\":\"b\",\"uptime_s\":9,\"rssi\":-68,\"bore_mv\":[0,0,0],"
+                        "\"sump_mv\":[0,0,0],\"sump_on\":false,\"rwt_floty\":null,"
+                        "\"t_deci_c\":0,\"rh_deci_pct\":0,\"sht_ok\":true,\"float_low\":null,"
+                        "\"last_cmd\":\"abcdefghijklmnopqrstuvwxyz0123456789\"}", &u));
+    CHECK(u.float_low == -1 && !u.ctrl_node && u.flags == 0 && !u.relays[1]);   /* stale ctl fields cleared */
+    CHECK(strlen(u.last_cmd) == 23 && strncmp(u.last_cmd, "abcdefghijklmnopqrstuvw", 23) == 0);
     CHECK(!gf_parse_util("{\"id\":6,\"fw\":\"b\",\"bore_mv\":[1,2]}", &u));   /* short array */
     /* latch: 3 misses to offline, reprobe slower, first reply restores */
     gf_link_t l = {0}; int64_t t = 1000000;
@@ -151,7 +169,19 @@ def build_parse_exe():
         print('gcc refused the extracted parser -- that is the finding.'); return None
     return exe
 
+def check_ctl_flags():
+    """Every CTL_F_* in the node's ctl.h must be mirrored, same value, as GF_CTL_F_* in app_priv.h."""
+    rx = r'#define\s+(?:GF_)?CTL_F_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)'
+    node = dict(re.findall(rx, io.open('firmware/gf_node/main/ctl.h', encoding='utf-8').read()))
+    hub = dict(re.findall(r'#define\s+GF_CTL_F_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)',
+                          io.open('firmware/hub_prod/main/app_priv.h', encoding='utf-8').read()))
+    bad = [k for k in node if k not in hub or int(hub[k], 0) != int(node[k], 0)]
+    if not node or bad or set(hub) - set(node):
+        print('CTL_F_* mismatch ctl.h vs app_priv.h: %s' % (bad or sorted(set(hub) ^ set(node)) or 'none found')); return 1
+    return 0
+
 def main_parse():
+    if check_ctl_flags(): return 1
     exe = build_parse_exe()
     return 1 if exe is None else subprocess.call([exe])
 

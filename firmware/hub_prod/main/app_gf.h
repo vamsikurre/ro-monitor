@@ -46,6 +46,13 @@ typedef struct {
     int16_t   temp_deci_c;
     uint16_t  hum_deci_pct;
     bool      sht_ok;
+    /* Pump-control fields (node firmware with ctl). Absent keys parse as
+     * float_low -1, bools false, flags 0, last_cmd "" - an un-reflashed node. */
+    int8_t    float_low;           /* -1 null/unknown, 0 water ok, 1 low */
+    bool      ctrl_node, bore_act, sump_act;
+    uint16_t  flags;               /* GF_CTL_F_* */
+    bool      relays[3];           /* bore_stop, bore_start, sump_stop */
+    char      last_cmd[24];        /* "<src>:<motor>:<cmd>" or "" */
 } gf_util_t;
 
 esp_err_t gf_init(void);

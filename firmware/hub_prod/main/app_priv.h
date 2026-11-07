@@ -719,6 +719,28 @@ typedef struct {
 
 /* Everything the dashboard and RainMaker read. Written only by the poll task,
  * read by the web handlers — see the note on locking in app_main.c. */
+/* Utility node pump-control flags - mirrored from firmware/gf_node/main/ctl.h;
+ * docs/check_gf.py fails if a value drifts. */
+#define GF_CTL_F_START_FAILED     0x0001  /* commanded on, no current after retry */
+#define GF_CTL_F_SINGLE_PHASE     0x0002  /* latched */
+#define GF_CTL_F_BORE_DRY         0x0004  /* dry stop active (resting or latched) */
+#define GF_CTL_F_BORE_DRY_LATCH   0x0008  /* 3 attempts used, waits for a person */
+#define GF_CTL_F_MAX_RUN          0x0010  /* alert only, never stops */
+#define GF_CTL_F_SUMP_HOLD        0x0020  /* borewell failed + float low */
+#define GF_CTL_F_SUMP_DRY         0x0040  /* no-load current */
+#define GF_CTL_F_USER_STOP_BORE   0x0080
+#define GF_CTL_F_USER_STOP_SUMP   0x0100
+#define GF_CTL_F_NOT_SETTLED      0x0200
+#define GF_CTL_F_CAP_SUSPECT      0x0400  /* optional, Task 3 */
+
+typedef struct {
+    int8_t   float_low;                 /* -1 unknown, 0 water ok, 1 low */
+    bool     ctrl_node, bore_act, sump_act;
+    uint16_t flags;                     /* GF_CTL_F_* */
+    bool     relays[3];                 /* bore_stop, bore_start, sump_stop */
+    char     last_cmd[24];              /* "<src>:<motor>:<cmd>" or "" */
+} gf_ctl_t;
+
 typedef struct {
     tank_state_t    rwt, twt, dosing;
     wq_state_t      rwt_wq, twt_wq;
@@ -735,6 +757,7 @@ typedef struct {
     gf_motor_state_t borewell, sump_motor;
     climate_state_t  utility_room;
     int8_t           rwt_floty;             /* -1 unknown, 0 open, 1 closed */
+    gf_ctl_t         ctl;                   /* utility node's pump-control state; zeroed when offline */
     bool             sump_configured, utility_configured;
     bool             sump_online, utility_online;
     int64_t          sump_last_us, utility_last_us;

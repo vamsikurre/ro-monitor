@@ -1567,6 +1567,12 @@ static void gf_apply(hub_state_t *s)
         s->utility_room.hum_deci_pct = gu.hum_deci_pct;
         s->utility_room.last_ok_us   = gu.link.last_ok_us;
         s->rwt_floty = gu.rwt_floty;
+        s->ctl.float_low = gu.float_low;
+        s->ctl.ctrl_node = gu.ctrl_node; s->ctl.bore_act = gu.bore_act; s->ctl.sump_act = gu.sump_act;
+        s->ctl.flags = gu.flags;
+        memcpy(s->ctl.relays, gu.relays, sizeof(s->ctl.relays));
+        strncpy(s->ctl.last_cmd, gu.last_cmd, sizeof(s->ctl.last_cmd) - 1);
+        s->ctl.last_cmd[sizeof(s->ctl.last_cmd) - 1] = '\0';
     } else {
         bm->running = sm->running = false;
         bm->deci_amps = sm->deci_amps = -1;
@@ -1574,6 +1580,11 @@ static void gf_apply(hub_state_t *s)
         bm->imbalance_pct = sm->imbalance_pct = 0;
         s->utility_room.fault = true;
         s->rwt_floty = -1;
+    }
+    /* offline (or never heard): no stale control state */
+    if (!s->utility_online) {
+        memset(&s->ctl, 0, sizeof(s->ctl));
+        s->ctl.float_low = -1;
     }
 }
 
