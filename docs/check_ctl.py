@@ -19,8 +19,8 @@ static ctl_cfg_t cfg(bool node) {
                     .bore_run_da = 10, .ctrl_node = node };
     return c;
 }
-/* Harness rig: 1 s steps; bore current is 0.1 V (3.0 A, running) or 20 mV (0.6 A, idle).
- * The sump clamp always reads something so the boot settle sees a clamp. */
+/* Harness rig: 1 s steps; bore clamp is 0.1 V (3.0 A) when running, else 0 mV like a real
+ * idle power-up. Sump clamp is 0 unless a test sets it. */
 typedef struct { ctl_state_t s; ctl_cfg_t c; int64_t t; int starts; bool stop_seen; ctl_out_t o; } rig_t;
 static void rig(rig_t *r, bool node) {
     ctl_persist_t p = {0};
@@ -29,7 +29,7 @@ static void rig(rig_t *r, bool node) {
 }
 static void step(rig_t *r, int8_t fl, bool running) {
     ctl_in_t in = { .now_ms = r->t, .float_low = fl };
-    in.bore_mv[0] = running ? 100 : 20;  in.sump_mv[0] = 50;
+    in.bore_mv[0] = running ? 100 : 0;
     ctl_step(&r->s, &r->c, &in, &r->o);
     if (r->o.bore_start) r->starts++;
     if (r->o.bore_stop) r->stop_seen = true;
@@ -58,6 +58,15 @@ static void t_float_low_starts_after_settle(void) {
     CHECK(!(ctl_flags(&r.s) & CTL_F_NOT_SETTLED));
     step(&r, 1, false);
     CHECK(r.starts == 1);                      /* an edge, not a level */
+}
+static void t_settle_with_all_clamps_idle_starts(void) {
+    rig_t r; rig(&r, true);
+    run_for(&r, 30, 1, false);
+    CHECK(r.starts == 0);
+    step(&r, 1, false);
+    CHECK(r.starts == 1);
+    run_for(&r, 5, 1, false);
+    CHECK(r.starts == 1);
 }
 static void t_settle_needs_two_float_reads(void) {
     rig_t r; rig(&r, true);
@@ -117,6 +126,7 @@ int main(void) {
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
     t_float_low_starts_after_settle();
+    t_settle_with_all_clamps_idle_starts();
     t_settle_needs_two_float_reads();
     t_float_chatter_under_debounce_does_nothing();
     t_float_high_pulses_stop();

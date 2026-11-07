@@ -56,12 +56,10 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
     s->bore_running = any_at_least(in->bore_mv, c->bore_apv_x100, c->bore_turns, c->bore_run_da);
     if (!c->ctrl_node) return;
 
-    /* Settle: a fresh boot reads garbage for a while (float not debounced, clamps
-     * not yet sampled), and a wrong first decision starts or stops a motor. */
+    /* Settle: a fresh boot reads garbage for a while (float not debounced), and a ctl_step is a full clamp sample, so reaching this point is the clamp read
+     * (idle clamps read ~0 and must not block settle). A wrong first decision starts or stops a motor. */
     if (in->float_low >= 0 && s->float_reads < 2) s->float_reads++;
-    for (int i = 0; i < 3; i++)
-        if (in->bore_mv[i] >= CT_NOISE_FLOOR_MV || in->sump_mv[i] >= CT_NOISE_FLOOR_MV) s->clamp_seen = true;
-    if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && s->float_reads >= 2 && s->clamp_seen)
+    if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && s->float_reads >= 2)
         s->settled = true;
     if (!s->settled) return;
 

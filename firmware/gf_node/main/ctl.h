@@ -55,7 +55,7 @@ struct ctl_state {
     /* float debounce: raw value and when it last changed */
     int8_t   raw_float;  int64_t raw_since_ms;  int8_t float_db;
     /* boot settle */
-    uint8_t  float_reads;  bool clamp_seen;  bool settled;
+    uint8_t  float_reads;  bool settled;
     /* borewell start verify: 0 idle, 1 first try in flight, 2 retry in flight */
     uint8_t  start_try;  int64_t start_deadline_ms;
     bool     stop_sent;  int64_t stop_until_ms;   /* one STOP pulse per float-high episode */
