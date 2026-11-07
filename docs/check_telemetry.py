@@ -60,6 +60,12 @@ REQUIRED = [
     'motors.borewell.imbalance_pct', 'motors.borewell.running',
     'motors.sump_motor.amps', 'motors.sump_motor.phases',
     'motors.sump_motor.imbalance_pct', 'motors.sump_motor.running',
+    # pump control: the Start/Stop buttons, tags and hold reasons read these
+    'motors.borewell.ctl.flags', 'motors.borewell.ctl.act',
+    'motors.borewell.ctl.user_stop', 'motors.borewell.ctl.last_cmd',
+    'motors.sump_motor.ctl.flags', 'motors.sump_motor.ctl.act',
+    'motors.sump_motor.ctl.user_stop', 'motors.sump_motor.ctl.last_cmd',
+    'ground.float_low', 'ground.ctrl_node',
     # drawRun() dereferences all four motors unconditionally, so a missing one
     # throws inside render() and the page goes to 'No data from hub'.
     'run.hpp.today_s', 'run.hpp.starts', 'run.hpp.total_s',

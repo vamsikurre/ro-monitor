@@ -15,6 +15,7 @@
  * and no liquid, where a zero would draw an empty tank that looks measured.
  */
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdlib.h>
@@ -509,7 +510,7 @@ static esp_err_t events_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[4500];   /* +200 quality, +420 run block, +900 ground floor, +100 light */
+    static char json[4900];   /* +200 quality, +420 run block, +900 ground floor, +100 light, +300 pump control */
 
     hub_state_lock();
     const hub_state_t *s = hub_state();
@@ -590,6 +591,21 @@ static esp_err_t telemetry_get(httpd_req_t *req)
                             : (!s->sump_online ? "Offline" : sensor_word(s->sump.sensor));
     const char *sump_source = !sump_live ? "none" : (s->sump_pressure ? "pressure" : "ultrasonic");
 
+    /* Pump-control view of the utility node: all defaults while it is not
+     * answering, like the amps above. last_cmd came off the LAN, so it is
+     * copied through a whitelist that cannot break the JSON. */
+    uint16_t cf = util_live ? s->ctl.flags : 0;
+    bool bore_act = util_live && s->ctl.bore_act, sump_act = util_live && s->ctl.sump_act;
+    bool ctrl_node = util_live && s->ctl.ctrl_node;
+    char last_cmd[sizeof s->ctl.last_cmd] = "";
+    if (util_live) {
+        size_t o = 0;
+        for (const char *c = s->ctl.last_cmd; *c && o < sizeof last_cmd - 1; c++)
+            if (isalnum((unsigned char)*c) || *c == ':' || *c == '_' || *c == '-') last_cmd[o++] = *c;
+        last_cmd[o] = ' ';
+    }
+    const char *float_low = (!util_live || s->ctl.float_low < 0) ? "null" : (s->ctl.float_low ? "true" : "false");
+
     char sump_fw[16], util_fw[16];
     fw_word(sump_fw, sizeof sump_fw, s->sump_fw);
     fw_word(util_fw, sizeof util_fw, s->utility_fw);
@@ -637,10 +653,13 @@ static esp_err_t telemetry_get(httpd_req_t *req)
           "\"hpp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"rwp\":{\"amps\":%s,\"mv_lo\":%lu,\"mv_hi\":%lu},"
           "\"borewell\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s,"
-                        "\"dry\":%s,\"dry_why\":%u,\"dry_at_deci_a\":%u},"
-          "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s},"
+                        "\"dry\":%s,\"dry_why\":%u,\"dry_at_deci_a\":%u,"
+                        "\"ctl\":{\"flags\":%u,\"act\":%s,\"user_stop\":%s,\"last_cmd\":\"%s\"}},"
+          "\"sump_motor\":{\"amps\":%s,\"phases\":%s,\"imbalance_pct\":%s,\"running\":%s,"
+                        "\"ctl\":{\"flags\":%u,\"act\":%s,\"user_stop\":%s,\"last_cmd\":\"%s\"}},"
           "\"overcurrent\":%s,\"no_production\":%s"
         "},"
+        "\"ground\":{\"float_low\":%s,\"ctrl_node\":%s},"
         "\"run\":{"
           "\"hpp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
           "\"rwp\":{\"today_s\":%lu,\"starts\":%u,\"total_s\":%lu},"
@@ -737,10 +756,15 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         s->bore_dry ? "true" : "false",
         (unsigned)s->bore_dry_why,
         (unsigned)cal_ct(CAL_CT_BORE)->dry_deci_amps,
+        (unsigned)cf, bore_act ? "true" : "false",
+        (cf & GF_CTL_F_USER_STOP_BORE) ? "true" : "false", last_cmd,
         smot_amps, smot_ph, smot_imb,
         s->sump_motor.running ? "true" : "false",
+        (unsigned)cf, sump_act ? "true" : "false",
+        (cf & GF_CTL_F_USER_STOP_SUMP) ? "true" : "false", last_cmd,
         s->overcurrent ? "true" : "false",
         s->no_production ? "true" : "false",
+        float_low, ctrl_node ? "true" : "false",
 
         (unsigned long)s->hpp_run_today_s, (unsigned)s->hpp_starts_today, (unsigned long)s->hpp_run_total_s,
         (unsigned long)s->rwp_run_today_s, (unsigned)s->rwp_starts_today, (unsigned long)s->rwp_run_total_s,
@@ -1314,13 +1338,11 @@ static esp_err_t cal_get(httpd_req_t *req)
                 "<b>0 switches it off</b>, which is how it leaves the factory. "
                 "Set it to roughly 70%% of the loaded current you see above "
                 "while the bore is healthy; it must sit between run A and trip "
-                "A. Until it is set, the hub still catches a dry bore the slow "
-                "way: %d minutes running with the sump not rising (and the sump "
-                "motor off throughout). When it does trip, the event log records "
-                "the exact current &mdash; that is the number to put here.</small></p>",
+                "A. Dry-run detection now runs on the utility node, and the dry "
+                "threshold set here is pushed to it. When it trips, the event log "
+                "records the exact current &mdash; that is the number to put here.</small></p>",
                 c->dry_deci_amps / 10, c->dry_deci_amps % 10,
-                c->dry_deci_amps == 0 ? "off" : "armed",
-                BORE_DRY_WINDOW_MIN);
+                c->dry_deci_amps == 0 ? "off" : "armed");
         }
     }
     PAGE_APPEND(

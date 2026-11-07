@@ -270,6 +270,18 @@ h1 span{color:var(--ink-3); font-weight:400}
    absent measurement rather than a clean one. */
 .tds.none{color:var(--ink-3); font-weight:500}
 .amps.over{color:var(--fault)}
+/* Pump control under a motor: acts-or-alerts tag, Start/Stop, the HTTP result for
+   a few seconds, and the node's hold reasons in words. Offline hatches it like
+   every other cleared reading. */
+.mctl{display:flex; flex-direction:column; align-items:center; gap:4px; margin-top:5px; font-size:11px}
+.mctl .tag{font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.mctl .btns{display:flex; gap:6px}
+.mctl button{font:600 11px var(--ui); padding:4px 10px; border:1px solid var(--line-2); border-radius:3px;
+  background:var(--panel); color:var(--ink); cursor:pointer}
+.mctl button:disabled{cursor:not-allowed; color:var(--ink-3);
+  background:repeating-linear-gradient(45deg,transparent 0 3px,var(--line-2) 3px 4px)}
+.mctl .res{min-height:13px; font-family:var(--mono); color:var(--ink-2)}
+.mctl .why{max-width:190px; text-align:center; color:var(--fault)}
 .room > .roomenv,.annex > .roomenv,.earth > .roomenv{
   position:absolute; bottom:12px; right:14px; display:flex; align-items:baseline; gap:12px;
   background:var(--ground-c); padding:4px 9px; border-radius:3px;
@@ -1232,8 +1244,52 @@ function machineUnit(m, label, id, r, draw, ct) {
     ph.innerHTML = phasesText(ct.phases, ct.imbalance_pct);
     u.appendChild(ph);
   }
+  if (ct && ct.ctl) u.appendChild(ctlBox(id));
   return u;
 }
+
+/* ── pump control (borewell and sump motor, via the hub to the utility node) ── */
+const CTL_REASONS = {
+  bore: [[0x0001, "Start failed."], [0x0002, "Lost a phase."], [0x0004, "Running dry, resting."],
+         [0x0008, "Dry 3 times, waiting for you."], [0x0010, "Long run."], [0x0080, "Stopped by you."]],
+  smotor: [[0x0020, "Sump held off because the borewell is down."], [0x0040, "Sump running dry."],
+           [0x0400, "Start winding suspect."], [0x0100, "Stopped by you."]],
+};
+function ctlReasons(id, f) {
+  /* the resting and latched dry flags both carry BORE_DRY; say only the stronger */
+  return CTL_REASONS[id].filter(([bit]) => (f & bit) && !(bit === 0x0004 && (f & 0x0008))).map(r => r[1]).join(" ");
+}
+function ctlBox(id) {
+  const b = node("mctl");
+  b.dataset.ctl = id;
+  b.innerHTML = `<span class="tag"></span><span class="btns"><button data-cmd="start">Start</button>` +
+    `<button data-cmd="stop">Stop</button></span><span class="res"></span><span class="why"></span>`;
+  return b;
+}
+function ctlFill(id, s) {
+  const key = PUMP_SRC[id], b = document.querySelector(`[data-ctl="${id}"]`);
+  const c = b && s.motors && s.motors[key] && s.motors[key].ctl;
+  if (!c) return;
+  const dead = !!s.pumps[key].state && s.pumps[key].state !== "ONLINE";
+  b.querySelectorAll("button").forEach(x => { x.disabled = dead; });
+  b.querySelector(".tag").textContent = dead ? "" : (c.act ? "Acts" : "Alert only");
+  b.querySelector(".why").textContent = dead ? "" : ctlReasons(id, c.flags);
+}
+document.addEventListener("click", async ev => {
+  const btn = ev.target.closest && ev.target.closest(".mctl button[data-cmd]");
+  if (!btn || btn.disabled) return;
+  const box = btn.closest(".mctl"), id = box.dataset.ctl, cmd = btn.dataset.cmd;
+  if (id === "bore" && cmd === "start" && !window.confirm("Start the borewell?")) return;
+  let msg;
+  try {
+    const r = await fetch("/api/motor", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ motor: id === "bore" ? "bore" : "sump", cmd }) });
+    msg = r.status === 202 ? "sent" : r.status === 503 ? "busy, try again" : "refused";
+  } catch { msg = "no answer"; }
+  const res = box.querySelector(".res");
+  res.textContent = msg;
+  setTimeout(() => { if (res.textContent === msg) res.textContent = ""; }, 4000);
+});
 
 /* ── orthogonal pipe routing over measured anchors ──────────
    Pipes are drawn after layout from real element rects, so the elevation
@@ -1632,6 +1688,7 @@ function buildPlant(s) {
         sumpHost.appendChild(sp);
       }
     }
+    if (sct && sct.ctl) sumpHost.appendChild(ctlBox("smotor"));
     sidePort(sumpCell, "smotor", DRAW_PORT);
 
     // the terrace has planters
@@ -1733,6 +1790,12 @@ function updatePlant(s) {
     if (id === "dos") u.classList.toggle("alarm", dosLow(t));
     const sub = u.querySelector(".sub");
     if (sub) sub.textContent = dead ? "\u2014" : tankText(id, t).sub;
+    if (id === "sump" && s.ground) {
+      let fl = u.querySelector(".float");
+      if (!fl) { fl = node("sub float"); (u.querySelector(".caption") || u).appendChild(fl); }
+      const fv = s.ground.float_low;
+      fl.textContent = "Float: " + (fv === null || fv === undefined ? "not read" : fv ? "low" : "high");
+    }
     const c = u.querySelector(".chip");
     if (c) {
       let label = t.state, kind = "fault";
@@ -1775,6 +1838,7 @@ function updatePlant(s) {
     const phEl = u.querySelector(`[data-phases="${id}"]`);
     if (phEl && ct && Array.isArray(ct.phases))
       phEl.innerHTML = phasesText(ct.phases, ct.imbalance_pct, id === "smotor" ? SUMP_WINDINGS : null);
+    if (id === "bore" || id === "smotor") ctlFill(id, s);
   });
 
   /* Toggled here rather than in the structural rebuild: the alarm flips on a
@@ -2143,7 +2207,10 @@ function offlineView(s) {
     if (Array.isArray(m.phases)) m.phases = m.phases.map(() => null);
     m.imbalance_pct = null;
     if ("dry" in m) { m.dry = false; m.dry_why = 0; }
+    if ("ctl" in m) m.ctl = { flags: 0, act: false, user_stop: false, last_cmd: "" };
   });
+  /* float unseen is null, not "high": the same rule as every contact in aster */
+  v.ground = { float_low: null, ctrl_node: false };
   if (v.motors) { v.motors.overcurrent = false; v.motors.no_production = false; }
   ["rwt", "twt"].forEach(k => {
     const q = v.quality && v.quality[k];
@@ -2277,9 +2344,12 @@ const demo = {
     /* dry:false with a threshold set, so demo shows the armed-and-healthy case.
        Flip dry to true and dry_why to 1 or 2 to review either alert wording. */
     borewell:   { amps: 4.1, phases: [4.1, 4.0, 3.9], imbalance_pct: 5, running: true,
-                  dry: false, dry_why: 0, dry_at_deci_a: 29 },
-    sump_motor: { amps: 9.1, phases: [9.1, 3.2, null], imbalance_pct: 0, running: true },
+                  dry: false, dry_why: 0, dry_at_deci_a: 29,
+                  ctl: { flags: 0x0004, act: true, user_stop: false, last_cmd: "dash:bore:start" } },
+    sump_motor: { amps: 9.1, phases: [9.1, 3.2, null], imbalance_pct: 0, running: true,
+                  ctl: { flags: 0, act: false, user_stop: false, last_cmd: "" } },
   },
+  ground: { float_low: false, ctrl_node: true },
   env: {
     ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },
     battery_room: { t: 36.2, rh: 48, fan: false, state: "ONLINE", src: "SHT30 · Node 0x04", age_s: 1 },
@@ -2590,6 +2660,15 @@ const EV = {
   24: () => ["dim",  "Borewell dry cleared", ""],
   25: () => ["dim",  "Dark outside", "roof light below threshold"],
   26: () => ["dim",  "Daylight", ""],
+  /* e[2] = (motor << 4) | (cmd << 2) | src; e[3] the node's HTTP status, e[4] why */
+  27: e => {
+    const WHY = ["", "single phase", "sump held", "not settled", "sump full", "no float"];
+    const who = ({ 1: "App", 2: "Dashboard" })[e[2] & 3] || "Hub";
+    const what = `${who}: ${(e[2] >> 4) & 1 ? "Sump" : "Borewell"} ${((e[2] >> 2) & 3) ? "Stop" : "Start"}`;
+    if (e[3] === 202) return ["", what, "sent"];
+    const why = e[4] ? ` (${WHY[e[4]] || "other"})` : "";
+    return ["warn", what, (e[3] === 0 ? "no answer" : e[3] === 503 ? "busy" : "refused") + why];
+  },
 };
 const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room", 5: "0x05 Sump", 6: "0x06 Utility" })[a] || ("0x0" + a);
 /* 12-hour, like the header's Updated clock, so an event time reads against it

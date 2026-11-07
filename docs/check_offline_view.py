@@ -140,6 +140,16 @@ def main():
         if m.get('amps') is not None or m.get('running'):
             fails.append('motors.%s still reads amps=%r running=%r'
                          % (name, m.get('amps'), m.get('running')))
+    # pump control: nothing about what the utility node is doing survives
+    for name in ('borewell', 'sump_motor'):
+        c = ((after.get('motors') or {}).get(name) or {}).get('ctl')
+        if c is None:
+            fails.append('motors.%s.ctl is missing from the cleared payload' % name)
+        elif c.get('flags') or c.get('act') or c.get('user_stop') or c.get('last_cmd'):
+            fails.append('motors.%s.ctl still reads %r' % (name, c))
+    g = after.get('ground')
+    if g is None or g.get('float_low') is not None or g.get('ctrl_node'):
+        fails.append('ground still reads %r - float must be null once the node is unseen' % g)
     for k, v in (after.get('aster') or {}).items():
         if v is not None:
             fails.append('aster.%s is %r - a contact nobody is reading must be null' % (k, v))
