@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include <esp_app_desc.h>
 #include <esp_netif.h>
@@ -162,6 +163,22 @@ static const char *sump_state_word(const tank_state_t *t, bool configured, bool 
 
 /* ------------------------------------------------------------ Basic auth */
 
+/* WEB_PURE_BEGIN */
+/* Pure, host-tested by docs/check_gf.py. Does an Origin ("http://h:p") or
+ * Referer ("http://h:p/path") name the same host[:port] as the Host header?
+ * Anything without a scheme - including the literal "null" a sandboxed or
+ * file: page sends - is refused. Case-insensitive, port must match exactly. */
+static bool same_origin(const char *host, const char *hdr)
+{
+    if (host == NULL || hdr == NULL || host[0] == '\0') return false;
+    const char *a = strstr(hdr, "://");
+    if (a == NULL) return false;
+    a += 3;
+    size_t alen = strcspn(a, "/?#");
+    return alen == strlen(host) && strncasecmp(a, host, alen) == 0;
+}
+/* WEB_PURE_END */
+
 static bool authorised(httpd_req_t *req)
 {
     char hdr[128];
@@ -197,6 +214,25 @@ static esp_err_t deny(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* CSRF guard for every POST (all of them change state: /api/cal/*, /api/motor).
+ * A browser that has the Basic credentials cached will send them with a form
+ * posted from any other site; it also sends Origin (or at least Referer), and
+ * that must name this hub. No Origin and no Referer = not a browser form
+ * (curl, scripts), allowed - the password still applies. A Referer longer
+ * than the buffer arrives truncated, which still holds its host. */
+static bool post_same_origin(httpd_req_t *req)
+{
+    char host[64], from[160];
+    esp_err_t e = httpd_req_get_hdr_value_str(req, "Origin", from, sizeof(from));
+    if (e == ESP_ERR_NOT_FOUND) e = httpd_req_get_hdr_value_str(req, "Referer", from, sizeof(from));
+    if (e == ESP_ERR_NOT_FOUND) return true;
+    if (e != ESP_OK && e != ESP_ERR_HTTPD_RESULT_TRUNC) return false;
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+    if (same_origin(host, from)) return true;
+    ESP_LOGW(TAG, "refused %s from %s (host %s)", req->uri, from, host);
+    return false;
+}
+
 typedef struct {
     const char      *uri;
     httpd_method_t   method;
@@ -213,6 +249,10 @@ static esp_err_t gate(httpd_req_t *req)
     if (!r->open && !authorised(req)) {
         return deny(req);
     }
+    if (req->method == HTTP_POST && !post_same_origin(req)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "cross-site request refused");
+    }
     return r->fn(req);
 }
 
@@ -220,9 +260,15 @@ static esp_err_t gate(httpd_req_t *req)
  * encryption. Over plain HTTP on a house LAN that is a deliberate, bounded
  * choice: the thing being protected is a calibration constant, the alternative
  * is a TLS certificate to provision and renew on an embedded box, and nothing
- * here can start a motor. It is documented rather than hidden.
- * ponytail: Basic over HTTP on the LAN. If this ever gains a control that moves
- * water, put it behind HTTPS or the RainMaker cloud path instead. */
+ * here could start a motor when this was written. It is documented rather
+ * than hidden.
+ * Now /api/motor starts one and /api/cal/ctl decides what the utility node's
+ * protections do, so every POST also passes post_same_origin() in gate()
+ * (a cross-site form carrying cached credentials is refused) and /api/motor
+ * takes only Content-Type: application/json (no plain HTML form can send it).
+ * ponytail: Basic over HTTP on the LAN plus an Origin check. Anyone on the LAN
+ * who sniffs the password can still drive the pumps; HTTPS or the RainMaker
+ * cloud path is the upgrade if that LAN is ever shared. */
 
 /* -------------------------------------------------------------- handlers */
 
@@ -971,20 +1017,29 @@ static void html_escape(char *out, size_t out_len, const char *in)
     out[o] = '\0';
 }
 
+/* Append to the /cal page. On truncation n sticks at WEB_SCRATCH_BYTES, so
+ * every later append is handed size 0 and the end-of-page guard sends a 500. */
+#define PAGE_APPEND(...) do {                                                   \
+        int w_ = snprintf(page + n, WEB_SCRATCH_BYTES - n, __VA_ARGS__);       \
+        n = (w_ < 0 || n + w_ >= (int)WEB_SCRATCH_BYTES) ? (int)WEB_SCRATCH_BYTES : n + w_; \
+    } while (0)
+
 static esp_err_t cal_get(httpd_req_t *req)
 {
     /* 8 K, not 4 K. The page was 4027 bytes against a 4096 buffer before the relay
      * test was added - 69 bytes of headroom, and one more sentence anywhere would
      * have tipped it. The guard at the end catches only the FIRST truncation and
      * only after the fact: `n` is snprintf's would-have-written length, so once
-     * it passes WEB_SCRATCH_BYTES the `WEB_SCRATCH_BYTES - n` argument to every later call
-     * underflows to a huge size_t and those writes run past the end of the
-     * buffer. So the guard reports corruption rather than preventing it - keep
-     * the headroom, do not rely on the check. Static, so BSS rather than stack. */
+     * it passed WEB_SCRATCH_BYTES the `WEB_SCRATCH_BYTES - n` argument to every later call
+     * underflowed to a huge size_t and those writes ran past the end of the
+     * buffer. PAGE_APPEND now pins n at WEB_SCRATCH_BYTES on overflow, so later
+     * appends get size 0 and write nothing, and the guard turns it into a 500.
+     * Keep the headroom anyway - a 500 is still a broken page. Static, so BSS
+     * rather than stack. */
     char *const page = s_scratch;   /* shared with /logs - see WEB_SCRATCH_BYTES */
     int n = 0;
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<!doctype html><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         "<title>RO Hub calibration</title>"
@@ -1043,7 +1098,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             snprintf(link_s, sizeof(link_s), "NOT connected");
         }
 
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<fieldset id=wifi><legend>Wi-Fi</legend>"
             "<p><b>%s</b> &middot; SSID <code>%s</code> &middot; IP <code>%s</code></p>"
             "<form method=post action='/api/cal/wifi' style='display:inline'>"
@@ -1052,10 +1107,10 @@ static esp_err_t cal_get(httpd_req_t *req)
             "<input type=hidden name=go value=1><button>Scan</button></form>",
             link_s, ssid_html, ip_s);
 
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<form method=post action='/api/cal/wifi'>");
         if (s_scan_n > 0) {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+            PAGE_APPEND(
                 "<select name=ssid><option value=''>&mdash; pick a network &mdash;</option>");
             for (int i = 0; i < s_scan_n; i++) {
                 /* A scanned SSID is a string a stranger within radio range chose,
@@ -1063,21 +1118,21 @@ static esp_err_t cal_get(httpd_req_t *req)
                  * turns the quote into &#39; so it cannot close value='...'. */
                 char e[200];
                 html_escape(e, sizeof(e), s_scan[i].ssid);
-                n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+                PAGE_APPEND(
                     "<option value='%s'>%s &middot; %d dBm%s</option>",
                     e, e, s_scan[i].rssi, s_scan[i].open ? " &middot; OPEN" : "");
             }
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "</select> or type ");
+            PAGE_APPEND( "</select> or type ");
         } else {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "SSID ");
+            PAGE_APPEND( "SSID ");
         }
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<input name=ssid_other size=14 maxlength=32> "
             "password <input name=pass type=password size=16 maxlength=63> "
             "<button>Join</button></form>");
 
         if (s_scan_n > 0) {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+            PAGE_APPEND(
                 "<p><small>%d network%s, strongest first, scanned %lu s ago. A typed "
                 "name wins over the list, which is how you reach a hidden one."
                 "</small></p>",
@@ -1085,7 +1140,7 @@ static esp_err_t cal_get(httpd_req_t *req)
                 (unsigned long)((esp_timer_get_time() - s_scan_us) / 1000000));
         }
 
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<p><small><b>Reconnect</b> retries the credentials already stored and "
             "changes nothing else. That is the fix for the failure this page exists "
             "for: the hub boots faster than the access point, finds no network, "
@@ -1146,7 +1201,7 @@ static esp_err_t cal_get(httpd_req_t *req)
     fw_word(s_util_fw, sizeof s_util_fw, s->utility_fw);
     hub_state_unlock();
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=tanks><legend>Tank levels</legend>");
+    PAGE_APPEND( "<fieldset id=tanks><legend>Tank levels</legend>");
     for (int i = 0; i < CAL_TANK_COUNT; i++) {
         const cal_tank_cfg_t *c = cal_tank(i);
 
@@ -1171,7 +1226,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             src = !sump_online ? " (node offline)" : (sump_pressure ? " (4-20 mA loop)" : " (ultrasonic)");
         }
 
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<h3>%s</h3><p>live <b>%u mm</b> &rarr; <b>%s</b>%s"
             "<br><small>full and empty are both distances from the transducer FACE "
             "to the water. Measure straight down. <b>full</b> must be at least "
@@ -1183,18 +1238,18 @@ static esp_err_t cal_get(httpd_req_t *req)
             cal_tank_label(i), live[i], pctbuf, src, BLIND_ZONE_MM,
             cal_tank_key(i), c->full_mm, c->empty_mm);
         if (i == CAL_TANK_SUMP) {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+            PAGE_APPEND(
                 "transducer range mm <input name=range size=6 value='%u'> ", c->press_range_mm);
         }
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<button>Save</button></form>");
+        PAGE_APPEND( "<button>Save</button></form>");
     }
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<p><small>Empty must be a longer distance than full, and full must be "
         "outside the %d mm blind zone. Sump: transducer range is the 4-20 mA "
         "sensor's full scale in mm, 0 when the ultrasonic is fitted; the node's "
         "J-PRESS shunt decides which one it reads.</small></p></fieldset>", BLIND_ZONE_MM);
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=clamps><legend>Current clamps</legend>");
+    PAGE_APPEND( "<fieldset id=clamps><legend>Current clamps</legend>");
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         const cal_ct_cfg_t *c = cal_ct(i);
 
@@ -1229,7 +1284,7 @@ static esp_err_t cal_get(httpd_req_t *req)
             }
         }
 
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/ct'>"
             "<input type=hidden name=ct value='%s'>"
@@ -1248,7 +1303,7 @@ static esp_err_t cal_get(httpd_req_t *req)
          * figure comes from a different observation than the other four - you
          * cannot derive it from a nameplate, only from watching the bore fail. */
         if (i == CAL_CT_BORE) {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+            PAGE_APPEND(
                 "<form method=post action='/api/cal/ct_dry'>"
                 "dry below A <input name=dry size=5 value='%u.%u'> "
                 "<button>Save</button> "
@@ -1268,7 +1323,7 @@ static esp_err_t cal_get(httpd_req_t *req)
                 BORE_DRY_WINDOW_MIN);
         }
     }
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<p><small>An SCT-013-030 is nominally 30 A per volt, but two-point "
         "calibrate against a clamp meter: this is a trend instrument and "
         "consistency matters more than absolute accuracy. <b>Turns</b> is how many "
@@ -1279,7 +1334,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         "this. Borewell and sump motor share one calibration across their three "
         "channels.</small></p></fieldset>");
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<fieldset id=fan><legend>Battery room fan</legend>"
         "<form method=post action='/api/cal/fan'>"
         "on above <input name=on size=5 value='%u.%u'> &deg;C, "
@@ -1294,12 +1349,12 @@ static esp_err_t cal_get(httpd_req_t *req)
         FAN_LIMIT_HIGH_DECI / 10, FAN_LIMIT_HIGH_DECI % 10,
         FAN_MIN_HYST_DECI / 10, FAN_MIN_HYST_DECI % 10);
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<fieldset id=wq><legend>Water quality probes</legend>");
+    PAGE_APPEND( "<fieldset id=wq><legend>Water quality probes</legend>");
     for (int i = 0; i < 2; i++) {          /* RWT, TWT - dosing and sump have no TDS probe */
         const cal_tank_cfg_t *c = cal_tank(i);
         char reading[360];
         wq_reading(reading, sizeof reading, &wq[i], wq_up[i]);
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/wq'><input type=hidden name=tank value=%d>"
             "k <input name=k size=5 value='%u.%02u'> &nbsp; "
@@ -1308,14 +1363,14 @@ static esp_err_t cal_get(httpd_req_t *req)
             i == CAL_TANK_RWT ? "RWT" : "TWT", reading, i,
             c->tds_k_x100 / 100, c->tds_k_x100 % 100, c->tds_min_pct);
     }
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<p><small><b>k</b> scales the TDS reading: a 707 ppm sachet reading 640 wants "
         "707/640 = 1.10. Re-do it after extending a probe lead. <b>Under water at</b> is "
         "the level where the probe tip goes dry: below it the hub keeps the last good "
         "reading and the dashboard shows its age, instead of believing a probe in air. "
         "0.50&ndash;2.00 and 0&ndash;100.</small></p></fieldset>");
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<fieldset id=plant><legend>Plant output</legend>"
         "<form method=post action='/api/cal/plant'>"
         "rated permeate <input name=lph size=5 value='%u'> L/h &nbsp; "
@@ -1332,7 +1387,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         cal_plant_lph(), cal_motor_w(CAL_CT_HPP), cal_motor_w(CAL_CT_RWP), cal_tariff_paise(),
         PLANT_LPH_MIN, PLANT_LPH_MAX, MOTOR_W_MIN, MOTOR_W_MAX);
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<fieldset id=gf><legend>Ground floor nodes</legend>"
         "<p><small>Wi-Fi nodes the hub polls every %d s. Give each a fixed address on the "
         "router (or in its firmware) and type it here. Empty = not fitted: nothing is polled "
@@ -1343,7 +1398,7 @@ static esp_err_t cal_get(httpd_req_t *req)
     const char *gf_fw[CAL_GF_COUNT] = { s_sump_fw, s_util_fw };
     for (int i = 0; i < CAL_GF_COUNT; i++) {
         const char *ip = cal_gf_ip(i);
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<h3>%s</h3><p>%s</p>"
             "<form method=post action='/api/cal/gf'>"
             "<input type=hidden name=node value='%s'>"
@@ -1353,13 +1408,15 @@ static esp_err_t cal_get(httpd_req_t *req)
             ip[0] == '\0' ? "not fitted" : (gf_on[i] ? "online" : "configured, not answering"),
             cal_gf_key(i), ip);
         if (ip[0] && gf_on[i] && gf_fw[i][0]) {
-            n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "<p><small>fw %s</small></p>", gf_fw[i]);
+            PAGE_APPEND( "<p><small>fw %s</small></p>", gf_fw[i]);
         }
     }
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "</fieldset>");
+    PAGE_APPEND( "</fieldset>");
 
-    const cal_ctl_t *k = cal_ctl();
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    cal_ctl_t kc;
+    cal_ctl_get(&kc);
+    const cal_ctl_t *k = &kc;
+    PAGE_APPEND(
         "<fieldset id=ctl><legend>Ground-floor control</legend>"
         "<form method=post action='/api/cal/ctl'>"
         "token <input type=password name=token maxlength=%d size=14 autocomplete=off placeholder='%s'> "
@@ -1377,15 +1434,15 @@ static esp_err_t cal_get(httpd_req_t *req)
         k->sump_noload_da / 10, k->sump_noload_da % 10, k->max_run_min,
         k->ctrl_node ? " checked" : "", k->bore_act ? " checked" : "", k->sump_act ? " checked" : "");
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<fieldset id=relays><legend>Relay test</legend>");
     for (int i = 0; i < RELAY_HUB_COUNT; i++) {
-        n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        PAGE_APPEND(
             "<form method=post action='/api/cal/relay' style='display:inline'>"
             "<input type=hidden name=n value='%d'>"
             "<button>%d &middot; %s</button></form> ", i + 1, i + 1, relay_name(i));
     }
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<form method=post action='/api/cal/relay' style='display:inline'>"
         "<input type=hidden name=n value='%d'>"
         "<button>%d &middot; Battery fan</button></form>"
@@ -1410,7 +1467,7 @@ static esp_err_t cal_get(httpd_req_t *req)
         RELAY_TEST_MS / 1000, RELAY_TEST_MS / 1000,
         (RELAY_TEST_MS + POLL_CYCLE_MS) / 1000);
 
-    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+    PAGE_APPEND(
         "<fieldset><legend>This page's password</legend>"
         "<form method=post action='/api/cal/pass'>"
         "new password <input name=pass type=password size=20> <button>Change</button></form>"
@@ -1743,6 +1800,7 @@ static esp_err_t cal_gf_post(httpd_req_t *req)
     if (cal_set_gf_ip((cal_gf_t)idx, q) != ESP_OK) {
         return bad(req, "rejected: a.b.c.d or a.b.c.d:port, or empty to remove");
     }
+    if (idx == CAL_GF_UTIL) gf_cfg_push();   /* a new or moved node gets the control config */
     return redirect_to(req, "/cal#gf");
 }
 
@@ -1750,11 +1808,22 @@ static esp_err_t cal_gf_post(httpd_req_t *req)
  * an absent box is false; an absent or blank token keeps the stored one. tok
  * holds 32 characters fully %XX-encoded, so an over-long token reaches the
  * length check instead of reading as absent. */
+/* The form's values; token[0] == '\0' means "keep the stored one". Applied
+ * inside cal_update_ctl() so it cannot interleave with an app toggle. */
+static void apply_ctl_form(cal_ctl_t *k, void *arg)
+{
+    const cal_ctl_t *f = (const cal_ctl_t *)arg;
+    char keep[sizeof(k->token)];
+    memcpy(keep, k->token, sizeof(keep));
+    *k = *f;
+    if (f->token[0] == '\0') memcpy(k->token, keep, sizeof(keep));
+}
+
 static esp_err_t cal_ctl_post(httpd_req_t *req)
 {
     char body[320], tok[3 * CAL_CTL_TOKEN_MAX + 8], nl[16], mr[12], box[4];
     if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
-    cal_ctl_t k = *cal_ctl();
+    cal_ctl_t k = { 0 };
     if (form_field(body, "token", tok, sizeof(tok)) && tok[0]) {
         if (strlen(tok) > CAL_CTL_TOKEN_MAX) return bad(req, "rejected: token is at most 32 characters");
         memcpy(k.token, tok, strlen(tok) + 1);   /* length checked on the line above */
@@ -1772,7 +1841,7 @@ static esp_err_t cal_ctl_post(httpd_req_t *req)
     k.ctrl_node = form_field(body, "node", box, sizeof(box));
     k.bore_act  = form_field(body, "bact", box, sizeof(box));
     k.sump_act  = form_field(body, "sact", box, sizeof(box));
-    if (cal_set_ctl(&k) != ESP_OK) return bad(req, "rejected: sump dry 0-30.0 A, max run 0-1440 min");
+    if (cal_update_ctl(apply_ctl_form, &k) != ESP_OK) return bad(req, "rejected: sump dry 0-30.0 A, max run 0-1440 min");
     gf_cfg_push();
     return redirect_to(req, "/cal#ctl");
 }
@@ -1782,9 +1851,16 @@ static esp_err_t cal_ctl_post(httpd_req_t *req)
  * a refusal shows up as the next telemetry's last_cmd. */
 static esp_err_t motor_post(httpd_req_t *req)
 {
-    char body[96];
+    char body[96], ct[48] = "";
     gf_cmd_t c = { .src = GF_SRC_DASH };
     httpd_resp_set_type(req, "application/json");
+    /* JSON only: an HTML form cannot send this type cross-site without a CORS
+     * preflight, which this server never answers. Prefix, for "; charset=". */
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", ct, sizeof(ct)) == ESP_ERR_NOT_FOUND ||
+        strncasecmp(ct, "application/json", 16) != 0) {
+        httpd_resp_set_status(req, "415 Unsupported Media Type");
+        return httpd_resp_sendstr(req, "{\"queued\":false}");
+    }
     if (read_body(req, body, sizeof(body)) != ESP_OK || !gf_parse_motor_req(body, &c)) {
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, "{\"queued\":false}");

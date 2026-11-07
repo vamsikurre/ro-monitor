@@ -290,5 +290,47 @@ def main_fake():
         paths[role] = path
     return subprocess.call([exe, paths['sump'], paths['util']])
 
+WEB = 'firmware/hub_prod/main/app_web.c'
+WEB_BEGIN, WEB_END = '/* WEB_PURE_BEGIN */', '/* WEB_PURE_END */'
+
+WEB_HARNESS = r'''
+#include <stdio.h>
+#include <stdbool.h>
+#include <string.h>
+#include <strings.h>
+%s
+static int fails = 0;
+#define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
+int main(void) {
+    /* CSRF guard on the hub's POSTs: Origin/Referer host must be the Host header. */
+    CHECK(same_origin("192.168.2.158", "http://192.168.2.158"));
+    CHECK(same_origin("192.168.2.158", "http://192.168.2.158/cal#ctl"));          /* Referer */
+    CHECK(same_origin("192.168.2.158:8080", "http://192.168.2.158:8080"));
+    CHECK(same_origin("Hub.local", "http://hub.LOCAL/"));
+    CHECK(!same_origin("192.168.2.158", "http://192.168.2.158:8080"));            /* other port */
+    CHECK(!same_origin("192.168.2.158", "http://evil.example"));
+    CHECK(!same_origin("192.168.2.158", "http://192.168.2.158.evil.example/"));
+    CHECK(!same_origin("192.168.2.158", "http://evil.example/http://192.168.2.158"));
+    CHECK(!same_origin("192.168.2.158", "null"));                                  /* sandboxed / file: */
+    CHECK(!same_origin("192.168.2.158", ""));
+    CHECK(!same_origin("", "http://192.168.2.158") && !same_origin(NULL, "http://x"));
+    CHECK(!same_origin("x", NULL));
+    printf(fails ? "check_gf web: %%d FAILED\n" : "check_gf web: OK\n", fails);
+    return fails ? 1 : 0;
+}
+'''
+
+def main_web():
+    src = io.open(WEB, encoding='utf-8').read()
+    if WEB_BEGIN not in src or WEB_END not in src:
+        print('markers %s / %s not found in %s' % (WEB_BEGIN, WEB_END, WEB)); return 1
+    block = src[src.index(WEB_BEGIN) + len(WEB_BEGIN):src.index(WEB_END)]
+    d = tempfile.mkdtemp()
+    c_path, exe = os.path.join(d, 'web.c'), os.path.join(d, 'web.exe')
+    io.open(c_path, 'w', encoding='utf-8').write(WEB_HARNESS % block)
+    if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-o', exe, c_path]) != 0:
+        print('gcc refused the extracted web block -- that is the finding.'); return 1
+    return subprocess.call([exe])
+
 if __name__ == '__main__':
-    sys.exit(main() or main_parse() or main_fake())
+    sys.exit(main() or main_parse() or main_fake() or main_web())

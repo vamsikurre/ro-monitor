@@ -11,6 +11,8 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -77,6 +79,10 @@ static const char *s_gf_keys[CAL_GF_COUNT]       = { "sump", "util" };
 static const char *s_gf_nvs[CAL_GF_COUNT]        = { "gf_sump", "gf_util" };
 static char        s_gf_ip[CAL_GF_COUNT][24];    /* "255.255.255.255:65535" fits */
 static cal_ctl_t   s_ctl;                        /* all off, no token: the node's own defaults */
+/* s_ctl is changed from the RainMaker work queue and the httpd task, and read
+ * by gf_task: every access goes through this. Static, so it cannot fail. */
+static StaticSemaphore_t s_ctl_mux_buf;
+static SemaphoreHandle_t s_ctl_mux;
 
 const char *cal_tank_key(cal_tank_t t)   { return (t < CAL_TANK_COUNT) ? s_tank_keys[t] : "?"; }
 const char *cal_tank_label(cal_tank_t t) { return (t < CAL_TANK_COUNT) ? s_tank_labels[t] : "?"; }
@@ -127,6 +133,7 @@ static void load_u16(nvs_handle_t h, const char *base, const char *suffix, uint1
 
 esp_err_t cal_init(void)
 {
+    s_ctl_mux = xSemaphoreCreateMutexStatic(&s_ctl_mux_buf);
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
@@ -420,9 +427,15 @@ esp_err_t cal_set_gf_ip(cal_gf_t n, const char *ip)
     return err;
 }
 
-const cal_ctl_t *cal_ctl(void) { return &s_ctl; }
+void cal_ctl_get(cal_ctl_t *out)
+{
+    xSemaphoreTake(s_ctl_mux, portMAX_DELAY);
+    *out = s_ctl;
+    xSemaphoreGive(s_ctl_mux);
+}
 
-esp_err_t cal_set_ctl(const cal_ctl_t *c)
+/* Validate and store; the caller holds s_ctl_mux. */
+static esp_err_t store_ctl(const cal_ctl_t *c)
 {
     if (c == NULL || strnlen(c->token, sizeof(c->token)) > CAL_CTL_TOKEN_MAX ||
         c->sump_noload_da > CAL_SUMP_NOLOAD_DA_MAX || c->max_run_min > CAL_MAX_RUN_MIN_MAX) {
@@ -450,6 +463,16 @@ esp_err_t cal_set_ctl(const cal_ctl_t *c)
                  s_ctl.token[0] ? "set" : "not set", c->sump_noload_da / 10, c->sump_noload_da % 10,
                  c->max_run_min, c->ctrl_node, c->bore_act, c->sump_act);
     }
+    return err;
+}
+
+esp_err_t cal_update_ctl(void (*fn)(cal_ctl_t *c, void *arg), void *arg)
+{
+    xSemaphoreTake(s_ctl_mux, portMAX_DELAY);
+    cal_ctl_t k = s_ctl;
+    fn(&k, arg);
+    esp_err_t err = store_ctl(&k);
+    xSemaphoreGive(s_ctl_mux);
     return err;
 }
 

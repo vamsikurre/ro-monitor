@@ -421,13 +421,15 @@ static void gf_drain_cmds(void)
     while (xQueueReceive(s_cmdq, &c, 0) == pdTRUE) {
         char ip[24], body[160], resp[64] = "";
         const char *mn = s_motor_name[c.motor], *cn = s_cmd_name[c.cmd];
+        cal_ctl_t k;
+        cal_ctl_get(&k);
         util_ip(ip);
         int status = 0;
         if (ip[0] == '\0') {
             ESP_LOGW(TAG, "%s %s dropped: no utility node on /cal", mn, cn);
         } else if (!gf_lan_up()) {
             ESP_LOGW(TAG, "%s %s dropped: hub has no LAN", mn, cn);
-        } else if (gf_ctl_body(&c, cal_ctl()->token, body, sizeof(body)) < 0) {
+        } else if (gf_ctl_body(&c, k.token, body, sizeof(body)) < 0) {
             ESP_LOGW(TAG, "%s %s dropped: could not build the body", mn, cn);
         } else {
             status = gf_post(ip, "/api/ctl", body, resp, sizeof(resp));
@@ -444,7 +446,9 @@ static void gf_drain_cmds(void)
 static void gf_push_cfg(void)
 {
     const cal_ct_cfg_t *b = cal_ct(CAL_CT_BORE), *s = cal_ct(CAL_CT_SUMP);
-    const cal_ctl_t *k = cal_ctl();
+    cal_ctl_t kc;
+    cal_ctl_get(&kc);
+    const cal_ctl_t *k = &kc;
     gf_ctl_cfg_t g = {
         .bore_apv_x100 = b->amps_per_volt_x100, .sump_apv_x100 = s->amps_per_volt_x100,
         .bore_turns = b->turns, .sump_turns = s->turns,
@@ -463,9 +467,18 @@ static void gf_push_cfg(void)
     if (ip[0] && gf_cfg_body(&g, k->token, body, sizeof(body)) > 0) {
         status = gf_post(ip, "/api/ctl/cfg", body, resp, sizeof(resp));
     }
+    /* Logged on the first failure and on each change of answer, not every
+     * 5 s: a token mismatch would otherwise fill the console for as long as
+     * it lasts. */
+    static int last_status = 200;
+    bool changed = status != last_status;
+    last_status = status;
     if (status != 200) {
         s_cfg_dirty = true;
-        ESP_LOGW(TAG, "control config push to %s: HTTP %d %s - retry next poll", ip, status, resp);
+        if (changed) {
+            ESP_LOGW(TAG, "control config push to %s: HTTP %d %s - retrying each poll, logged again on change",
+                     ip, status, resp);
+        }
         return;
     }
     ESP_LOGI(TAG, "control config pushed: ctrl_node=%d bore_act=%d sump_act=%d",

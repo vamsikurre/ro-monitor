@@ -112,9 +112,12 @@ typedef struct {
     bool     ctrl_node;        /* node reads the float and runs the borewell */
     bool     bore_act, sump_act;   /* protections stop the motor, not just alert */
 } cal_ctl_t;
-const cal_ctl_t *cal_ctl(void);
-/* Validates (token <= 32, ranges above) and stores every field. */
-esp_err_t cal_set_ctl(const cal_ctl_t *c);
+/* A copy, taken under the lock. */
+void      cal_ctl_get(cal_ctl_t *out);
+/* Read-modify-write under one lock: fn edits a copy of the current values,
+ * which is then validated (token <= 32, ranges above) and stored as a whole.
+ * Nothing changes if validation or NVS fails. */
+esp_err_t cal_update_ctl(void (*fn)(cal_ctl_t *c, void *arg), void *arg);
 
 /* Pure ground-floor maths, host-tested by docs/check_gf.py. */
 uint16_t gfLoopDistanceMM(uint32_t loop_ua, uint16_t range_mm);
