@@ -36,6 +36,25 @@ SDK = ('firmware/hub_prod/managed_components/espressif__esp_rainmaker/'
 # real strings from above instead of guessing under them.
 WIDTHS = {'d': 4, 'u': 4, 'lu': 10, 's': 13}
 
+# The one %s wider than 13: the borewell lost-a-phase alert substitutes
+# "L1 99.9 / L2 99.9 / L3 99.9 A" (29 bytes; the hub clamps each phase to 99.9).
+WIDE_S = {'lost a phase': 29}
+
+# Texts the utility-node control flags must raise, verbatim (the SINGLE_PHASE and
+# SUMP_HOLD "alert only" variants differ in their tail). Missing one fails.
+REQUIRED = [
+    "Borewell was started but draws no current. Check the starter and the supply.",
+    "Borewell lost a phase (%s). Stopped: press Start once supply is fixed.",
+    "Borewell lost a phase (%s). Not stopped (alert only).",
+    "Borewell running dry (%d.%d A). Resting 30 min before retry.",
+    "Borewell dry 3 times. Stopped until you press Start.",
+    "Borewell has run %u min and the sump float has not risen.",
+    "Sump draining with the borewell down. Sump motor held off.",
+    "Sump draining with the borewell down. Sump motor NOT stopped (alert only).",
+    "Sump motor running dry (%d.%d A).",
+    "Sump motor Start winding draws nothing. Check the start capacitor.",
+]
+
 
 def literals(text):
     """Every run of adjacent C string literals, concatenated as the compiler would."""
@@ -54,6 +73,10 @@ def literals(text):
 def expanded_len(lit):
     """Bytes on the wire, with %d and friends at their widest."""
     def sub(m):
+        if m.group(1) == 's':
+            for k, w in WIDE_S.items():
+                if k in lit:
+                    return 'X' * w
         return 'X' * WIDTHS.get(m.group(1), 8)
     s = re.sub(r'%[-+ #0-9.]*(lu|[dusf])', sub, lit)
     return len(s.encode('utf-8'))
@@ -72,7 +95,12 @@ def main():
     block = main_c[start:main_c.index('\n}\n', start)]
 
     failures = 0
-    for lit in literals(block):
+    lits = literals(block)
+    for want in REQUIRED:
+        if want not in lits:
+            print('MISSING  %s' % want)
+            failures += 1
+    for lit in lits:
         if len(lit) < 25:          # not an alert message, a format fragment or a label
             continue
         n = expanded_len(lit)

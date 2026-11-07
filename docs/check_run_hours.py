@@ -16,7 +16,7 @@ The fix flushes mid-run, which introduces a third way to be wrong that is
 worse than either — counting the flushed seconds twice, once in NVS and again
 in the run-in-progress term. So all three are tested here.
 
-Same approach as check_bore_dry.py: run_account() is lifted out of the firmware
+Same approach as the other lifted-source checks: run_account() is lifted out of the firmware
 between the RUN_ACCT_BEGIN/END markers and built with gcc against stub types,
 so what is tested is what ships.
 

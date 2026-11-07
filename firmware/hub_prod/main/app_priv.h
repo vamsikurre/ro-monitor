@@ -791,6 +791,7 @@ typedef struct {
     bool     no_production;        /* HPP running, TWT not rising - see NOPROD_* */
     bool     bore_dry;             /* borewell energised, not lifting water - BORE_DRY_* */
     uint8_t  bore_dry_why;         /* BORE_DRY_BY_*, 0 while bore_dry is false */
+    uint16_t bore_run_min;         /* this borewell run so far, 0 while stopped */
 
     /* Run accounting. "today" resets at local midnight and is lost on reboot;
      * the totals are the NVS figure (cal_runtime_get) and survive both. */
