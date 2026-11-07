@@ -2665,9 +2665,10 @@ const EV = {
     const WHY = ["", "single phase", "sump held", "not settled", "sump full", "no float"];
     const who = ({ 1: "App", 2: "Dashboard" })[e[2] & 3] || "Hub";
     const what = `${who}: ${(e[2] >> 4) & 1 ? "Sump" : "Borewell"} ${((e[2] >> 2) & 3) ? "Stop" : "Start"}`;
-    if (e[3] === 202) return ["", what, "sent"];
-    const why = e[4] ? ` (${WHY[e[4]] || "other"})` : "";
-    return ["warn", what, (e[3] === 0 ? "no answer" : e[3] === 503 ? "busy" : "refused") + why];
+    if (e[3] === 200) return ["", what, "sent"];
+    if (e[3] === 0) return ["warn", what, "no answer"];
+    if (e[3] === 403) return ["warn", what, "refused (token)"];
+    return ["warn", what, "refused" + (e[4] ? ` (${WHY[e[4]] || "other"})` : "")];
   },
 };
 const nodeName = a => ({ 2: "0x02 Raw Water", 3: "0x03 Treated Water", 4: "0x04 Battery Room", 5: "0x05 Sump", 6: "0x06 Utility" })[a] || ("0x0" + a);

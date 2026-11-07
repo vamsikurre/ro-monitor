@@ -103,7 +103,12 @@ def main():
           + '\nconst demo = ' + brace_object(text, 'const demo = {') + ';\n'
           + 'const before = JSON.stringify(demo);\n'
           + 'const after = offlineView(demo);\n'
-          + 'console.log(JSON.stringify({after, mutated: JSON.stringify(demo) !== before}));\n')
+          # EVT_MOTOR_CMD rides along: e[3] is the NODE's HTTP status
+          # (gf_drain_cmds), so 200 is the success the log must call "sent".
+          + 'const EV = ' + brace_object(text, 'const EV = {') + ';\n'
+          + 'const ev27 = [[200, 0], [0, 0], [403, 0], [409, 2], [500, 0]]'
+          + '.map(([a, b]) => EV[27]([0, 27, 0, a, b])[2]);\n'
+          + 'console.log(JSON.stringify({after, ev27, mutated: JSON.stringify(demo) !== before}));\n')
 
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'ov.js')
@@ -122,6 +127,12 @@ def main():
         fails.append('offlineView() mutated its argument - LAST would be destroyed')
 
     after = res['after']
+
+    # 0. The event-log decoder for a motor command: the hub logs the node's
+    #    status, never its own 202, so 200 must read as "sent".
+    want = ['sent', 'no answer', 'refused (token)', 'refused (sump held)', 'refused']
+    if res['ev27'] != want:
+        fails.append('EV[27] motor-cmd decoder gave %r, expected %r' % (res['ev27'], want))
 
     # 2. Structural claims: these are what the render keys off to show "no data".
     for name, t in (after.get('tanks') or {}).items():
