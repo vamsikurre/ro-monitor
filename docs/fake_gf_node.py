@@ -42,6 +42,17 @@ def coerce(role, k, v):
         if any(x < 0 or x > 65535 for x in vals):
             raise ValueError('%s values must be 0-65535' % k)
         return vals
+    if k in ('ctrl_node', 'bore_act', 'sump_act'):
+        return v not in ('0', 'false', '')
+    if k == 'float_low':
+        return None if v in ('null', '') else v not in ('0', 'false')
+    if k == 'relays':
+        vals = [x not in ('0', 'false', '') for x in v.split(',')]
+        if len(vals) != 3:
+            raise ValueError('relays needs exactly 3 values, got %d' % len(vals))
+        return vals
+    if k == 'last_cmd':
+        return v
     if k in ('sump_on', 'sht_ok'):
         return v not in ('0', 'false', '')
     if k == 'rwt_floty':
