@@ -27,7 +27,7 @@ static esp_err_t root_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
-    static char json[512];
+    static char json[768];
     int n = sensors_json(json, sizeof json);
     if (n <= 0 || n >= (int)sizeof json) {
         return httpd_resp_send_500(req);

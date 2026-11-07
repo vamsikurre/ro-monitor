@@ -55,6 +55,9 @@ static void sample_task(void *arg)
 
 void app_main(void)
 {
+#if CONFIG_GF_ROLE_UTILITY
+    relay_init();   /* before anything slow: relays must be driven off from the first instant */
+#endif
     ESP_LOGI(TAG, "gf_node %s (id 0x%02X) fw %s", GF_ROLE_NAME, GF_NODE_ID, esp_app_get_description()->version);
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -63,6 +66,9 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+#if CONFIG_GF_ROLE_UTILITY
+    ctl_glue_init();
+#endif
     sensors_init();
     ESP_ERROR_CHECK(net_start());
     ESP_ERROR_CHECK(web_start());

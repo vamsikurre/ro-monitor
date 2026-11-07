@@ -14,6 +14,7 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "sdkconfig.h"
+#include "ctl.h"
 
 #if CONFIG_GF_ROLE_SUMP
 #define GF_NODE_ID          5
@@ -38,7 +39,10 @@
 #define GPIO_SUMP_CT_L2     36      /* ADC1_CH0 - Start */
 #define GPIO_SUMP_CT_L3     39      /* ADC1_CH3 - Run */
 #define GPIO_PUMP_ON        25      /* Astero PUMP ON C/NO, closed = running */
-#define GPIO_RWT_FLOTY      26      /* opto across the float loop, when wired */
+#define GPIO_SUMP_FLOAT     26      /* PC817 output, low = opto on = float loop closed */
+#define GPIO_RLY_BORE_START 16      /* high-trigger, 10 k pull-down; 1 s pulse */
+#define GPIO_RLY_BORE_STOP  17
+#define GPIO_RLY_SUMP_STOP  18
 #define GPIO_I2C_SDA        21
 #define GPIO_I2C_SCL        22
 
@@ -57,3 +61,13 @@ esp_err_t ota_handle(httpd_req_t *req);
 void sensors_init(void);
 void sensors_sample(void);            /* one cycle; called from main every SAMPLE_PERIOD_MS */
 int  sensors_json(char *buf, size_t len);   /* the whole telemetry object */
+
+/* Utility node control (relay.c, ctl_glue.c). */
+void relay_init(void);                       /* first thing in app_main, before NVS */
+void relay_apply(const ctl_out_t *o);        /* levels + 1 s START pulse on a rising bore_start */
+void ctl_glue_init(void);                    /* NVS load (namespace "ctl"), ctl_init; needs NVS up */
+void ctl_glue_step(const ctl_in_t *in);      /* fills now_ms and float_low itself, then ctl_step + relays */
+ctl_result_t ctl_glue_command(ctl_motor_t m, ctl_cmd_t c, ctl_src_t src);
+void ctl_glue_cfg_set(const ctl_cfg_t *c);   /* replaces and saves the config */
+void ctl_glue_cfg_get(ctl_cfg_t *c);
+int  ctl_glue_json(char *buf, size_t len);   /* ",\"float_low\":..." fields spliced into sensors_json() */

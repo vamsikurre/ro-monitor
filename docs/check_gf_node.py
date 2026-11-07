@@ -23,6 +23,7 @@ import importlib.util, json, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUMP_C = os.path.join(ROOT, 'firmware', 'gf_node', 'main', 'sensors_sump.c')
 UTIL_C = os.path.join(ROOT, 'firmware', 'gf_node', 'main', 'sensors_util.c')
+CTL_GLUE_C = os.path.join(ROOT, 'firmware', 'gf_node', 'main', 'ctl_glue.c')
 FAKE   = os.path.join(ROOT, 'docs', 'fake_gf_node.py')
 
 NODE_ID = {'sump': 5, 'util': 6}
@@ -48,6 +49,9 @@ SCHEMA = {
         'sump_on': bool, 'sht_ok': bool,
         'rwt_floty': (bool, type(None)),
         't_deci_c': int, 'rh_deci_pct': int,
+        # pump control, appended from ctl_glue.c's ctl_glue_json()
+        'float_low': (bool, type(None)), 'ctrl_node': bool, 'bore_act': bool, 'sump_act': bool,
+        'flags': int, 'relays': list, 'last_cmd': str,
     },
 }
 
@@ -72,7 +76,7 @@ STATUS_VALUES = ('OK', 'BLIND', 'NO_ECHO', 'HW_FAULT')
 # see it" - distinct facts a hardcoded false would erase.
 NULLABLE_BARE_KEYS = {
     'sump': ('distance_mm', 'quality', 'loop_ua'),
-    'util': ('rwt_floty',),
+    'util': ('rwt_floty', 'float_low'),
 }
 
 def check_status_literals(src):
@@ -125,6 +129,15 @@ def extract_format(path):
     fmt, _ = _parse_concat_string(src, m.end())
     return fmt
 
+def extract_util_format():
+    """sensors_util.c's format ends `...%s%s}`: the last %s is the fields
+    ctl_glue_json() adds (ctl_glue.c, leading comma, no closing brace). Splice
+    that format in where the %s is so the whole object is checked."""
+    fmt = extract_format(UTIL_C)
+    if not fmt.endswith('%s}'):
+        raise AssertionError('%s: format must end with %%s} (the ctl_glue_json splice)' % UTIL_C)
+    return fmt[:-3] + extract_format(CTL_GLUE_C) + '}'
+
 def io_read(path):
     with open(path, encoding='utf-8') as f:
         return f.read()
@@ -176,7 +189,7 @@ def load_fake_state():
 def check_role(role, c_path, fake_state):
     fails = []
     try:
-        fmt = extract_format(c_path)
+        fmt = extract_util_format() if role == 'util' else extract_format(c_path)
         obj = json.loads(fill_format(fmt, role))
     except Exception as e:
         print('FAIL %s: %s' % (c_path, e))
@@ -202,9 +215,11 @@ def check_role(role, c_path, fake_state):
         elif v is None and not _is_nullable(role, k):
             fails.append('%s is null but the hub requires a value there' % k)
 
-    for arr_key in ('bore_mv', 'sump_mv'):
-        if arr_key in schema and isinstance(obj.get(arr_key), list) and len(obj[arr_key]) != 3:
-            fails.append('%s has %d elements, want 3' % (arr_key, len(obj[arr_key])))
+    for arr_key, n in (('bore_mv', 3), ('sump_mv', 3), ('relays', 3)):
+        if arr_key in schema and isinstance(obj.get(arr_key), list) and len(obj[arr_key]) != n:
+            fails.append('%s has %d elements, want %d' % (arr_key, len(obj[arr_key]), n))
+    if 'relays' in schema and isinstance(obj.get('relays'), list) and             not all(isinstance(x, bool) for x in obj['relays']):
+        fails.append('relays must be three bools')
 
     if 'status' in schema:
         bad = check_status_literals(io_read(c_path))

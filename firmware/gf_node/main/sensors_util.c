@@ -80,7 +80,7 @@ static const adc_channel_t s_ch[6] = {
     ADC_CHANNEL_7, ADC_CHANNEL_0, ADC_CHANNEL_3,   /* GPIO 35 36 39: sump L1 L2 L3 */
 };
 static uint16_t s_mv[6];
-static bool s_pump_on; static int8_t s_floty = -1;
+static bool s_pump_on;
 static int16_t s_t; static uint16_t s_rh; static bool s_sht_ok;
 static adc_oneshot_unit_handle_t s_adc; static adc_cali_handle_t s_cali; static bool s_cali_ok;
 static i2c_master_bus_handle_t s_bus; static i2c_master_dev_handle_t s_sht;
@@ -160,7 +160,7 @@ static bool sht30_read(int16_t *t, uint16_t *rh)
 
 void sensors_init(void)
 {
-    gpio_config_t io = { .pin_bit_mask = (1ULL << GPIO_PUMP_ON) | (1ULL << GPIO_RWT_FLOTY),
+    gpio_config_t io = { .pin_bit_mask = (1ULL << GPIO_PUMP_ON),
                          .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE };
     gpio_config(&io);
 
@@ -177,44 +177,31 @@ void sensors_init(void)
     i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = 0x44, .scl_speed_hz = 100000 };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(s_bus, &dc, &s_sht));
 
-    /* CONFIG_GF_RWT_FLOTY_WIRED is a Kconfig bool: OFF means the macro is
-     * undefined, not zero, so it cannot appear in an ordinary C ternary here
-     * (that would be an undeclared identifier in the default config) the way
-     * it can inside a preprocessor #if. #ifdef for the log line, same as the
-     * read in sensors_sample() below. */
-#ifdef CONFIG_GF_RWT_FLOTY_WIRED
-    ESP_LOGI(TAG, "6 ADC1 clamp channels, PUMP ON on %d, floaty wired, SHT30 0x44", GPIO_PUMP_ON);
-#else
-    ESP_LOGI(TAG, "6 ADC1 clamp channels, PUMP ON on %d, floaty not wired (null), SHT30 0x44", GPIO_PUMP_ON);
-#endif
+    ESP_LOGI(TAG, "6 ADC1 clamp channels, PUMP ON on %d, SHT30 0x44", GPIO_PUMP_ON);
 }
 
 void sensors_sample(void)
 {
     for (int i = 0; i < 6; i++) s_mv[i] = rms_mv(s_ch[i]);
     s_pump_on = gpio_get_level(GPIO_PUMP_ON) == 0;          /* contact closed pulls low */
-#ifdef CONFIG_GF_RWT_FLOTY_WIRED
-    s_floty = gpio_get_level(GPIO_RWT_FLOTY) == 0 ? 1 : 0;  /* opto on = float closed */
-#else
-    s_floty = -1;   /* optocoupler not fitted: cannot see the float at all, not "open" */
-#endif
     s_sht_ok = sht30_read(&s_t, &s_rh);
+
+    ctl_in_t in = { .pump_on = s_pump_on };   /* now_ms and float_low are filled in by ctl_glue_step */
+    for (int i = 0; i < 3; i++) { in.bore_mv[i] = s_mv[i]; in.sump_mv[i] = s_mv[3 + i]; }
+    ctl_glue_step(&in);
 }
 
 int sensors_json(char *buf, size_t len)
 {
-    /* -1 (opto not fitted) prints null - "we cannot see it" - which is a
-     * different fact from false ("we can see it and it is open"). Whichever
-     * literal lands here comes from the branch above, never hardcoded, so
-     * the checker's splice assertion (docs/check_gf_node.py) can hold this
-     * to the same standard as sensors_sump.c's nullable fields. */
-    const char *fl = s_floty < 0 ? "null" : (s_floty ? "true" : "false");
+    char ctl_part[256];
+    ctl_glue_json(ctl_part, sizeof ctl_part);
     return snprintf(buf, len,
         "{\"id\":6,\"fw\":\"%s\",\"uptime_s\":%lld,\"rssi\":%d,"
         "\"bore_mv\":[%u,%u,%u],\"sump_mv\":[%u,%u,%u],\"sump_on\":%s,\"rwt_floty\":%s,"
-        "\"t_deci_c\":%d,\"rh_deci_pct\":%u,\"sht_ok\":%s}",
+        "\"t_deci_c\":%d,\"rh_deci_pct\":%u,\"sht_ok\":%s%s}",
         esp_app_get_description()->version, esp_timer_get_time() / 1000000, net_rssi(),
         s_mv[0], s_mv[1], s_mv[2], s_mv[3], s_mv[4], s_mv[5],
-        s_pump_on ? "true" : "false", fl, s_t, s_rh, s_sht_ok ? "true" : "false");
+        s_pump_on ? "true" : "false", "null" /* rwt_floty: never wired */, s_t, s_rh, s_sht_ok ? "true" : "false",
+        ctl_part);
 }
 #endif

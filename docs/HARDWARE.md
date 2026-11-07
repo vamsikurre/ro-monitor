@@ -178,7 +178,10 @@ what is actually a sensor input.
 | **GPIO 36** | `SUMP_CT_L2` | SCT-013-030 clamp | Input | Analog, ADC1_CH0. Sump motor phase L2 |
 | **GPIO 39** | `SUMP_CT_L3` | SCT-013-030 clamp | Input | Analog, ADC1_CH3. Sump motor phase L3 — socket built, no clamp fitted yet |
 | **GPIO 25** | `PUMP_ON` | Astero `PUMP ON (C, NO)` dry contact | Input, pull-up | Sump-motor run signal, wired like the hub's own `IN_ALARM` — `WIRING.md` §11.2, §11.4 |
-| **GPIO 26** | `RWT_FLOTY` | Astero `TWT FLOTY` terminal, via opto | Input, pull-up | Only after metering the loop — mains potential is never tapped — `WIRING.md` §11.2, §11.4 |
+| **GPIO 26** | `SUMP_FLOAT` | PC817 opto across the float loop | Input, pull-up | Low = opto on = float loop closed (`CONFIG_GF_FLOAT_LOW_LEVEL`); the node's own sump-low reading for pump control |
+| **GPIO 16** | `RLY_BORE_START` | Relay, borewell START | Output | High-trigger, 10 k pull-down on the relay input; 1 s pulse |
+| **GPIO 17** | `RLY_BORE_STOP` | Relay, borewell STOP | Output | High-trigger, 10 k pull-down on the relay input |
+| **GPIO 18** | `RLY_SUMP_STOP` | Relay, sump motor STOP | Output | High-trigger, 10 k pull-down on the relay input |
 | **GPIO 21** | `I2C_SDA` | GY-SHT30-D `SDA` | Bidirectional | Utility room temperature/humidity |
 | **GPIO 22** | `I2C_SCL` | GY-SHT30-D `SCL` | Output | I2C SCL |
 

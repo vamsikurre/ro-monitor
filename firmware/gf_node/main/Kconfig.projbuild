@@ -24,10 +24,16 @@ menu "Ground-floor node"
     config GF_NETMASK
         string "Netmask"
         default "255.255.255.0"
-    config GF_RWT_FLOTY_WIRED
-        bool "RWT floaty opto is wired to GPIO 26 (utility node)"
-        default n
+    config GF_FLOAT_LOW_LEVEL
+        int "GPIO 26 level that means the sump float is LOW (utility node)"
+        range 0 1
+        default 0
         help
-            Off until the Astero's TWT FLOTY loop voltage has been metered and
-            an optocoupler fitted. While off the node reports rwt_floty:null.
+            The PC817 pulls GPIO 26 low when the float loop is closed. 0 = opto
+            on means sump low; set 1 if the float is wired the other way round.
+    config GF_CTL_TOKEN
+        string "Control token for pump Start/Stop commands (utility node)"
+        default ""
+        help
+            Empty means every command is refused.
 endmenu

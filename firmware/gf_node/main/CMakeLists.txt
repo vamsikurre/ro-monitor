@@ -4,5 +4,5 @@
 # net.c's event loop, esp_app_format for the version banner) - components
 # that are not in IDF's always-added common set either. Match hub_prod/main:
 # SRCS and INCLUDE_DIRS only, and let main have the whole component graph.
-idf_component_register(SRCS "main.c" "net.c" "web.c" "ota.c" "sensors_sump.c" "sensors_util.c"
+idf_component_register(SRCS "main.c" "net.c" "web.c" "ota.c" "sensors_sump.c" "sensors_util.c" "ctl.c" "relay.c" "ctl_glue.c"
                        INCLUDE_DIRS ".")

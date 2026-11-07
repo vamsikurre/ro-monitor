@@ -21,7 +21,9 @@ STATE = {
     'sump': {'id': 5, 'fw': 'fake', 'source': 'ultrasonic', 'distance_mm': 1750, 'quality': 95,
              'status': 'OK', 'loop_ua': None},
     'util': {'id': 6, 'fw': 'fake', 'bore_mv': [412, 405, 398], 'sump_mv': [398, 0, 0], 'sump_on': False,
-             'rwt_floty': None, 't_deci_c': 312, 'rh_deci_pct': 548, 'sht_ok': True},
+             'rwt_floty': None, 't_deci_c': 312, 'rh_deci_pct': 548, 'sht_ok': True,
+             'float_low': None, 'ctrl_node': False, 'bore_act': False, 'sump_act': False, 'flags': 0,
+             'relays': [False, False, False], 'last_cmd': ''},
 }
 SILENT = {'on': False}
 T0 = time.time()
