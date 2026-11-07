@@ -63,7 +63,7 @@ Every transmission (both Request and Response) uses the standard binary frame fo
 | `0x03` | **Treated Water Tank (TWT)** | Roof Top RS485 | Arduino Nano | Waterproof Ultrasonic (AJ-SR04M). Optional TDS + DS18B20 pair (§4.5) |
 | `0x04` | **Battery Room Climate & Fan**| Battery Room RS485 | Arduino Pro Mini (5V/16MHz) | GY-SHT30-D (Temp/RH) + 1-Ch Exhaust Fan Relay |
 | `0x05` | **Ground Sump Level** | Ground Floor Wi-Fi (polled) | ESP32 | Waterproof Ultrasonic (AJ-SR04M), **or** a 4-20 mA submersible pressure transducer on the `J-LOOP`/`J-PRESS` provision (§5, `WIRING.md` §11.1) |
-| `0x06` | **Ground Utility Room** | Ground Floor Wi-Fi (polled) | ESP32 | 3× CT borewell + 3× CT sump motor, Astero `PUMP ON` dry contact, RWT floaty opto, SHT30. **No relays** — monitoring only (`WIRING.md` §11.2) |
+| `0x06` | **Ground Utility Room** | Ground Floor Wi-Fi (polled) | ESP32 | 3× CT borewell + 3× CT sump motor, Astero `PUMP ON` dry contact, isolated sump float, SHT30, and **three relays** controlling the borewell (START/STOP) and the sump motor (STOP via the Astero float loop). `rwt_floty` is always `null` (`WIRING.md` §11.2) |
 | `0xFF` | **Broadcast Address** | Global Sync | All Slaves | Global synchronization / Bus Reset |
 
 ---

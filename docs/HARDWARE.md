@@ -73,7 +73,7 @@ was never built.
 | **Auxiliary Supply** | Hi-Link `HLK-10M05` (5V / 10W / 2.0A) | 1 | Spare / Local 5V high-current logic rail |
 | **RS485 Transceiver** | `XY-485` (Auto-Flow Control) | 4 | Hardware auto TX/RX direction switching (1x Hub, 3x slave nodes) |
 | **Current Clamp** | `SCT-013-030` split-core CT, 30 A / 1 V output | 8 | 1x HPP + 1x RWP on the hub (`WIRING.md` §14; nameplates in §14.5 — RWP is 6.2 A max, so 3 turns), then **3 phases each** on the ground-floor sump and borewell motors (§11.3). Voltage-output variant: burden resistor is inside, do not add one. Sump and borewell have **no readable nameplate** (submersible, confirmed 2026-08-27) — size from the starter overload dial and a clamp meter, and expect to need 2-3 turns for resolution (`WIRING.md` §11.3.1) |
-| **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 2 | RO Room (HPP/RWP) only. **The ground floor has none** — its motors are read by CT clamps and the Astero `PUMP ON` dry contact, not by sensing the contactor coil (`WIRING.md` §11.2). A DC optocoupler for the ground floor's `RWT FLOTY` loop is a separate part, added only if metering that loop finds low-voltage DC (§11.4) — **a 5th of this AC part** is still needed only if the Aster `ALARM` output measures as switched mains — see `WIRING.md` 6.4 |
+| **220V AC Opto Isolator** | 1-Channel 220V AC Optocoupler Module | 2 | RO Room (HPP/RWP) only. **The ground floor has none** — its motors are read by CT clamps and the Astero `PUMP ON` dry contact, not by sensing the contactor coil (`WIRING.md` §11.2). The ground floor's sump float uses its own PC817 and isolated 12 V module (rows below) — **a 5th of this AC part** is still needed only if the Aster `ALARM` output measures as switched mains — see `WIRING.md` 6.4 |
 | **DC Dry-Contact Opto** | 4-Channel PC817 Optocoupler Board | 1 | RO Room - Aster controller dry switch isolation. **As-built part**; all 4 channels used: `RL1`, `RL2`, `LPS`, `TWT FLOTY`. `IN_ALARM` needed no optocoupler and moved to a direct input on GPIO 13, which freed channel 3 for `LPS` (`WIRING.md` §6.6). **An 8-channel PC817 board is already owned and unused** (order 2026-08-16) — the 4-channel one was fitted because it was to hand, so extra taps need no purchase, only a rewire. See §0.4 of `WIRING.md` for why pins, not channels, are now the limit |
 | **Relay Modules** | 4-Channel 5V Relay Board | 1 | RO Room (Aster Float Emulation) only. The ground floor's only relays are node `0x06`'s 3-channel module below (`WIRING.md` §11.2); node `0x05` has none |
 | **Relay Module (Utility node)** | 3-channel 5 V relay module, high/low trigger jumper set HIGH, ≥ 250 VAC 10 A, JD-VCC opto | 1 | Node `0x06`: `RLY_BORE_START` / `RLY_BORE_STOP` / `RLY_SUMP_STOP` on GPIO 16/17/18 — `WIRING.md` §11.2 |
@@ -168,14 +168,11 @@ Built on a **Pro Mini (5V / 16 MHz)**, not a Nano. Pin functions are identical �
 
 ### 3.5. Ground Floor ESP32 Node 2: Utility Room Monitoring (0x06)
 
-**Corrected 2026-09-08: this table described a 4-channel relay board doing
-starter interlocks. That node was never built that way — it only reads the
-panel; nothing here switches anything, and the relay interlock idea stays a
-Phase-2 option, out of scope for this round (`WIRING.md` §11).** Two of the
-four GPIOs this table used to list as relay outputs, 25 and 26, are real
-inputs on the built node — the Astero `PUMP ON` contact and the RWT floaty
-opto — so wiring this table as printed would have driven a relay coil into
-what is actually a sensor input.
+**History.** Until 2026-11-07 this node only read the panel (a 4-channel relay
+interlock design of 2026-09-08 and before was never built). The pump-control
+design supersedes that: three relays on GPIO 16/17/18 and the sump float on
+GPIO 26 (`WIRING.md` §11.2). The RWT floaty is no longer read (`rwt_floty` is
+always `null`).
 
 | ESP32 GPIO | Pin Function | Connected Hardware | Direction | Notes |
 | :--- | :--- | :--- | :--- | :--- |

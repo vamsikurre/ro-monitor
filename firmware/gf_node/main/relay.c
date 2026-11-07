@@ -2,7 +2,7 @@
  * relay.c - the three relay outputs on the utility node.
  *
  * Relays are high-trigger with a 10 k pull-down on each input (WIRING.md
- * 11.5), so a pin that is high-Z through reset is off. relay_init() still
+ * 11.2), so a pin that is high-Z through reset is off. relay_init() still
  * latches the level to 0 BEFORE making the pin an output so it never glitches
  * high between direction and level.
  */

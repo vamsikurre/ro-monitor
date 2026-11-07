@@ -173,8 +173,10 @@ turn it on does nothing. If the Alexa app will not offer it as a routine
 trigger, the one-line change is the device type to `esp.device.contact-sensor`,
 which Alexa treats as a sensor rather than a control.
 
-No relays, no float cutoffs, no pump control on either ground-floor node —
-they are monitoring only (`WIRING.md` §11). There is no separate "Ground
+Node `0x06` controls the borewell (Start/Stop) and can stop the sump motor
+through the Astero float loop; Start/Stop are in the app and on the dashboard,
+and control is Alert only by default (`WIRING.md` §11.2). Node `0x05` has no
+relays. There is no separate "Ground
 Sump" or "Pumps & Motors" or "Ventilation" device: the sump level lives on
 Water Tanks, the fan controls live on Battery Room, and there are only ever
 these four devices on the node.

@@ -85,7 +85,7 @@ happens at deployment.
 - [ ] **6 × SCT-013-030** for the ground floor: three phases each on the sump and borewell motors (§11.3). Neither motor has a readable nameplate, so size from the starter's overload dial and a clamp meter (§11.3.1)
 - [ ] **Tank calibration ×4** — RWT, TWT, dosing, and sump when it exists. Until a tank is calibrated its level reads `--`, never a plausible wrong number
 - [ ] **Tank node headers `J-LOOP` + `J-PRESS`** — on both `0x02` and `0x03`, plus the 100 R / 1 k / 100 nF. Solder them while the boards are open, sensor or no sensor; the firmware ships the loop reader already. §9.4.2
-- [ ] **Node `0x05` and `0x06`** — firmware built and OTA-capable (`firmware/gf_node`), polled from `/cal` by IP (§11, §11.4). Deployment is landing the CT clamps, `PUMP ON` and (after metering) `RWT FLOTY` on the physical panels — not writing any code.
+- [ ] **Node `0x05` and `0x06`** — firmware built and OTA-capable (`firmware/gf_node`), polled from `/cal` by IP (§11, §11.4). Deployment is landing the CT clamps, `PUMP ON`, the sump float loop and the three relays on the physical panels (§11.2) — not writing any code.
 
 ### 0.3.1. Programming the hub
 
@@ -1622,10 +1622,11 @@ borewell START/STOP and sump STOP (§11.2); node `0x05` has none.
 
 ### 11.2. Ground Floor ESP32 Node 2: Utility Room Monitoring and Pump Control (0x06)
 
-**Safety first.** The borewell panel is **415 V three-phase**. Isolate and lock
-off before any wire is touched. Two conductors are known to be green-yellow
+**Safety first.** The borewell panel is **415 V three-phase**; the sump panel is
+**230 V**. Isolate and lock off before any wire is touched. Two conductors are known to be green-yellow
 wires **used as live conductors** (borewell tail 4/T2 and sump `Y`), so wire
-colour is not evidence of earth here. Meter every conductor dead before
+colour is not evidence of earth here. **Label the green-yellow live
+conductors** while the panel is isolated, and meter every conductor dead before
 handling it.
 
 **Commissioning — measure before wiring** (spec §9). Each result decides a
@@ -1665,12 +1666,24 @@ contacts ≥ 250 VAC 10 A, JD-VCC opto isolation. `VCC`/`JD-VCC` from the node's
 5 V, `GND` common, `IN1..3` from GPIO 16/17/18, **10 kΩ from each `IN` to GND**
 so a pin floating during reset or flashing reads off.
 
+**Isolation:** with the `JD-VCC` jumper fitted (same 5 V for coil and logic) there
+is **no opto isolation** between the node and the relay coils. That is
+acceptable here (the contacts are what touch the panel); for full isolation,
+remove the jumper and feed `JD-VCC` from a separate 5 V supply.
+
+**If commissioning item 1 measures a 415 V coil, STOP:** a ≥ 250 VAC contact is
+under-rated for `RLY_BORE_STOP`. Re-specify that relay before wiring.
+
 #### Borewell starter (MK1 DOL + NEC-49)
 
 | Relay | Contact | Before cutover | After cutover (NEC-49 removed) |
 |---|---|---|---|
 | `RLY_BORE_STOP` | COM + **NC** | in series with the NEC-49 **"NV Coil Series"** pair (break one of its two wires and insert COM/NC) | the two "NV Coil Series" wires join through COM/NC only |
 | `RLY_BORE_START` | COM + **NO** | in parallel with the NEC-49 **"ON Button Side"** pair (both land on the same two terminals) | COM/NO alone across those two terminals |
+
+Terminals: STOP is the 95-96 side; START is the 93-94 / 13-14 side, where the
+NEC-49 "ON Button Side" lands. `RLY_BORE_START` gives a **1 s pulse**, not a
+level.
 
 A **2-pole bypass switch**: pole 1 shorts the `RLY_BORE_STOP` COM-NC pair,
 pole 2 opens the `RLY_BORE_START` COM-NO line. Bypass ON = node out of the
@@ -1699,7 +1712,8 @@ Bypass switch: shorts the NC (series case) or opens the NO (parallel case).
 **The 12 V module's output is not connected to the node's ground** — that
 isolation is why a float cable running through a pump pit cannot put anything
 on the ESP32. Float wires A/B are the pair that closes with the float
-**hanging down** (measured on site); third wire insulated. Joint to the
+**hanging down** (measured on site); third wire insulated. If the float turns out to be wired the other way round,
+change `CONFIG_GF_FLOAT_LOW_LEVEL` (menuconfig) rather than rewiring. Joint to the
 extension cable above water in a junction box; route away from mains conduit
 where possible.
 
@@ -1708,7 +1722,8 @@ where possible.
 HLK-20M5 fed from the **same L-N as the borewell contactor coil** (if the coil
 is 230 V), through a 1 A fuse — losing the coil's phase drops coil and node
 together, and losing any other phase leaves the node alive to see the
-single-phasing. The isolated 12 V module from the same feed, own fuse.
+single-phasing. **If the coil is 415 V** (L-L), feed the HLK-20M5 from a
+separate L-N, **never L-L**. The isolated 12 V module from the same feed, own fuse.
 
 #### Clamps
 
