@@ -2008,7 +2008,7 @@ beam to block. It answers one question: is there liquid at this height.
 | :--- | :--- | :--- |
 | Brown (+) | Brown | 5 V (the old AJ-SR04M `VCC`) |
 | Blue (-) | Blue | GND |
-| Yellow (OUT) | Orange | the old `ECHO` wire, into the existing 1 kΩ / 1.8 kΩ divider → GPIO 4 |
+| Yellow (OUT) | Orange | `J_DOS` **`ECHO`** — the old `ECHO` position, into the existing 1 kΩ / 1.8 kΩ divider → GPIO 4. **Not `TRIG`**: that is GPIO 5, undivided and no longer read; the drum then reads *Below sensor* with the LED lit (happened on 2026-11-07) |
 | Black (mode) | **not extended** — insulated and folded back at the sensor | — |
 
 Black floating is the datasheet's normally-open mode: OUT is **high when wet**.
