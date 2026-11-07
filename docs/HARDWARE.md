@@ -51,7 +51,7 @@ GROUND FLOOR SUBSYSTEM (WI-FI LAN, POLLED BY THE HUB) - MONITORING ONLY, NO RELA
 │  - Sump Level: ultrasonic OR  │        │  - Borewell + sump motor CT clamps      │
 │    4-20 mA loop (J-LOOP)      │        │    (6 channels, 5 fitted, 1 empty)      │
 │  - AJ-SR04M Sensor            │        │  - Astero PUMP ON dry contact (sump)    │
-│  - 230V -> 12V module -> buck │        │  - Sump float opto + 3 relays (ctl)    │
+│  - 230V -> 12V module -> buck │        │  - Sump float opto + 3 relays (ctl)     │
 │    -> 5V (loop needs the 12V) │        │  - SHT30 (utility room temp/RH)         │
 │                                │        │  - Hi-Link HLK-20M5 (5V DC)             │
 └───────────────────────────────┘        └─────────────────────────────────────────┘
