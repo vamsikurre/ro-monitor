@@ -231,6 +231,79 @@ static void t_alert_only_dry_flag_follows_condition(void) {
     CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY_LATCH)); CHECK(!r.stop_seen);
 }
 
+/* Sump rig: bore clamp a on [0], sump Common/Start on sump_mv[0]/[1]. 67 mV = 20 da, 100 mV = 30 da. */
+static void stepsump(rig_t *r, int8_t fl, uint16_t bore, uint16_t common, uint16_t start, bool pump) {
+    ctl_in_t in = { .now_ms = r->t, .float_low = fl, .bore_mv = { bore, bore, bore }, .sump_mv = { common, start, 0 }, .pump_on = pump };
+    ctl_step(&r->s, &r->c, &in, &r->o);
+    r->t += 1000;
+}
+static void runsump(rig_t *r, int secs, int8_t fl, uint16_t bore, uint16_t common, uint16_t start, bool pump) {
+    for (int i = 0; i < secs; i++) stepsump(r, fl, bore, common, start, pump);
+}
+static void bore_failed(rig_t *r) { settled(r); runsump(r, 40, 1, 0, 0, 0, false); }   /* low float, no current: START_FAILED */
+
+static void t_sump_hold_only_when_bore_failed_and_float_low(void) {
+    rig_t r; bore_failed(&r);  r.c.sump_act = true;
+    runsump(&r, 2, 1, 0, 0, 0, false);
+    CHECK(ctl_flags(&r.s) & CTL_F_START_FAILED); CHECK(ctl_flags(&r.s) & CTL_F_SUMP_HOLD); CHECK(r.o.sump_stop);
+    rig_t m; settled(&m);  m.c.sump_act = true; m.c.max_run_min = 1;
+    runsump(&m, 70, 1, 100, 0, 0, false);
+    CHECK(ctl_flags(&m.s) & CTL_F_MAX_RUN); CHECK(!(ctl_flags(&m.s) & CTL_F_SUMP_HOLD)); CHECK(!m.o.sump_stop);
+}
+static void t_sump_hold_releases_after_five_clear_minutes(void) {
+    rig_t r; bore_failed(&r);  r.c.sump_act = true;
+    runsump(&r, 2, 1, 0, 0, 0, false);
+    CHECK(r.o.sump_stop);
+    runsump(&r, 300, 1, 200, 0, 0, false);              /* borewell running: +0 .. +299 s */
+    CHECK(r.o.sump_stop);
+    stepsump(&r, 1, 200, 0, 0, false);                  /* +300 s */
+    CHECK(!r.o.sump_stop); CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_HOLD));
+}
+static void t_sump_dry_needs_threshold_and_pump_on(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 0;
+    runsump(&r, 60, 1, 100, 67, 0, true);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY));
+    rig_t a; settled(&a);  a.c.sump_noload_da = 30;
+    runsump(&a, 20, 1, 100, 67, 0, true);
+    CHECK(!(ctl_flags(&a.s) & CTL_F_SUMP_DRY));
+    runsump(&a, 1, 1, 100, 67, 0, true);
+    CHECK(ctl_flags(&a.s) & CTL_F_SUMP_DRY);
+    rig_t b; settled(&b);  b.c.sump_noload_da = 30;
+    runsump(&b, 60, 1, 100, 67, 0, false);
+    CHECK(!(ctl_flags(&b.s) & CTL_F_SUMP_DRY));
+}
+static void t_sump_alert_only_never_energises(void) {
+    rig_t r; bore_failed(&r);  r.c.sump_noload_da = 30;
+    runsump(&r, 30, 1, 0, 67, 0, true);
+    CHECK(ctl_flags(&r.s) & CTL_F_SUMP_HOLD); CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY);
+    CHECK(!r.o.sump_stop);
+}
+static void t_sump_dry_stop_releases_after_five_minutes(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
+    runsump(&r, 21, 1, 100, 67, 0, true);               /* stop begins at the 21st step */
+    CHECK(r.o.sump_stop);
+    runsump(&r, 299, 1, 100, 0, 0, false);              /* stopped: pump off, held */
+    CHECK(r.o.sump_stop);
+    stepsump(&r, 1, 100, 0, 0, false);
+    CHECK(!r.o.sump_stop); CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY));
+}
+static void t_nec_mode_sump_dry_still_runs(void) {
+    rig_t r; rig(&r, false);  r.c.sump_noload_da = 30; r.c.sump_act = true;
+    runsump(&r, 31, -1, 100, 100, 0, false);
+    runsump(&r, 21, -1, 100, 67, 0, true);
+    CHECK(ctl_flags(&r.s) & CTL_F_SUMP_DRY); CHECK(r.o.sump_stop);
+}
+static void t_cap_suspect_alert_only(void) {
+    rig_t r; settled(&r);  r.c.sump_noload_da = 30; r.c.sump_act = true;
+    runsump(&r, 25, 1, 100, 100, 0, true);              /* Start never read: not suspect */
+    CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
+    runsump(&r, 3, 1, 100, 100, 100, true);             /* Start reads once */
+    runsump(&r, 25, 1, 100, 100, 0, true);              /* then goes dead while Common is fine */
+    CHECK(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT); CHECK(!r.o.sump_stop);
+    runsump(&r, 3, 1, 100, 100, 100, true);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_CAP_SUSPECT));
+}
+
 int main(void) {
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
@@ -253,6 +326,13 @@ int main(void) {
     t_no_start_edge_while_stop_held();
     t_brief_recovery_does_not_reset_dry_attempts();
     t_alert_only_dry_flag_follows_condition();
+    t_sump_hold_only_when_bore_failed_and_float_low();
+    t_sump_hold_releases_after_five_clear_minutes();
+    t_sump_dry_needs_threshold_and_pump_on();
+    t_sump_alert_only_never_energises();
+    t_sump_dry_stop_releases_after_five_minutes();
+    t_nec_mode_sump_dry_still_runs();
+    t_cap_suspect_alert_only();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }

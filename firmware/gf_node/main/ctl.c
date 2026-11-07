@@ -112,6 +112,48 @@ static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in,
     return (s->flags & (CTL_F_SINGLE_PHASE | CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH)) != 0;
 }
 
+/* Sump motor. Returns true while a sump stop is held (Act only). */
+static bool sump_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in)
+{
+    int64_t now = in->now_ms;
+    int com = ctl_deci_amps(in->sump_mv[0], c->sump_apv_x100, c->sump_turns);
+    int st  = ctl_deci_amps(in->sump_mv[1], c->sump_apv_x100, c->sump_turns);
+    if (com < 0) com = 0;
+    if (st > 0) s->cap_seen = true;
+
+    /* Hold: the borewell has failed and the tank is low, so the sump motor is held off.
+     * It frees only after the borewell runs (or the float is high) and stays that way. */
+    if (!(s->flags & CTL_F_SUMP_HOLD)) {
+        if (s->float_db == 1 && !s->bore_running
+            && (s->flags & (CTL_F_START_FAILED | CTL_F_BORE_DRY | CTL_F_SINGLE_PHASE))) {
+            s->flags |= CTL_F_SUMP_HOLD;  s->sc_on = false;
+        }
+    } else if (held_for(s->bore_running || s->float_db == 0, &s->sc_on, &s->sc_since_ms, now, CTL_SUMP_RELEASE_MS)) {
+        s->flags &= ~CTL_F_SUMP_HOLD;
+    }
+
+    /* No-load dry. In Act the stop is timed, not condition-based: a stopped pump draws
+     * nothing, so it cannot prove itself healthy. */
+    bool dry = c->sump_noload_da && in->pump_on && com < (int)c->sump_noload_da;
+    if (!c->sump_act) {
+        if (held_for(dry, &s->sd_on, &s->sd_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_SUMP_DRY;
+        else if (!dry) s->flags &= ~CTL_F_SUMP_DRY;
+    } else if (!(s->flags & CTL_F_SUMP_DRY)) {
+        if (held_for(dry, &s->sd_on, &s->sd_since_ms, now, CTL_DRY_MS)) {
+            s->flags |= CTL_F_SUMP_DRY;  s->sd_on = false;  s->sd_until_ms = now + CTL_SUMP_RELEASE_MS;
+        }
+    } else if (now >= s->sd_until_ms) {
+        s->flags &= ~CTL_F_SUMP_DRY;
+    }
+
+    /* Capacitor suspect (alert only): Common fine, Start channel dead after having read */
+    bool cap = c->sump_noload_da && in->pump_on && com >= (int)c->sump_noload_da && s->cap_seen && st <= 0;
+    if (held_for(cap, &s->cap_on, &s->cap_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_CAP_SUSPECT;
+    else if (!cap) s->flags &= ~CTL_F_CAP_SUSPECT;
+
+    return c->sump_act && (s->flags & (CTL_F_SUMP_HOLD | CTL_F_SUMP_DRY));
+}
+
 void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -126,6 +168,7 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
         s->settled = true;
     if (!s->settled) return;
 
+    out->sump_stop = sump_protect(s, c, in);
     if (bore_protect(s, c, in, out)) { out->bore_stop = true; return; }
     if (!c->ctrl_node) return;     /* NEC mode: the float logic below is node-only */
     if (out->bore_start) return;   /* the dry rest's restart already owns this step */

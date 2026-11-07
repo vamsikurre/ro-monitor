@@ -33,6 +33,7 @@ typedef enum { CTL_SRC_AUTO, CTL_SRC_APP, CTL_SRC_DASH } ctl_src_t;
 #define CTL_DRY_REST_MS       (30LL * 60 * 1000)
 #define CTL_DRY_OK_MS         (10LL * 60 * 1000)
 #define CTL_DRY_ATTEMPTS      3
+#define CTL_SUMP_RELEASE_MS   (5LL * 60 * 1000)
 
 typedef struct {
     uint16_t bore_apv_x100, sump_apv_x100;  uint8_t bore_turns, sump_turns;
@@ -69,6 +70,9 @@ struct ctl_state {
     bool     sp_on, dry_on, ok_on, run_on;
     int64_t  sp_since_ms, dry_since_ms, ok_since_ms, run_since_ms, rest_until_ms;
     uint8_t  dry_attempts;
+    /* sump motor */
+    bool     sc_on, sd_on, cap_on, cap_seen;
+    int64_t  sc_since_ms, sd_since_ms, sd_until_ms, cap_since_ms;
 };
 typedef struct ctl_state ctl_state_t;  /* opaque to callers by convention */
 
