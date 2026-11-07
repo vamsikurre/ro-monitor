@@ -602,7 +602,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         size_t o = 0;
         for (const char *c = s->ctl.last_cmd; *c && o < sizeof last_cmd - 1; c++)
             if (isalnum((unsigned char)*c) || *c == ':' || *c == '_' || *c == '-') last_cmd[o++] = *c;
-        last_cmd[o] = ' ';
+        last_cmd[o] = '\0';
     }
     const char *float_low = (!util_live || s->ctl.float_low < 0) ? "null" : (s->ctl.float_low ? "true" : "false");
 
