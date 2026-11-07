@@ -5,7 +5,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define CT_NOISE_FLOOR_MV 15   /* under this a clamp channel is "no clamp" (same as the hub) */
+/* Same as the hub. 0 mV = no clamp (pedestal fault); 1-14 mV = a clamp present at 0 A,
+ * which the presence checks (lost phase, sump dry) count; anything under 15 mV
+ * converts to -1 da. */
+#define CT_NOISE_FLOOR_MV 15
 
 typedef enum { CTL_BORE = 0, CTL_SUMP = 1 } ctl_motor_t;
 typedef enum { CTL_CMD_START, CTL_CMD_STOP } ctl_cmd_t;
@@ -93,7 +96,7 @@ int8_t   ctl_float_low(const ctl_state_t *s);      /* debounced: 1 low, 0 high, 
 int16_t  ctl_deci_amps(uint16_t mv, uint16_t apv_x100, uint8_t turns);  /* == hub gfPhaseDeciAmps */
 
 /* Stop is always accepted. Start is refused (and changes nothing) before settle, while single-phasing
- * is measured now, while the sump is held (sump), or while the tank reads full (borewell, node mode). */
+ * is measured now, while the sump is held (sump, Act only), or while the tank reads full (borewell, node mode). */
 ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_cmd_t cmd, ctl_src_t src, int64_t now_ms);
 void        ctl_persist(const ctl_state_t *s, ctl_persist_t *p);   /* what to write to NVS */
 bool        ctl_persist_changed(const ctl_state_t *s);             /* since last ctl_persist() */

@@ -89,7 +89,9 @@ static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in,
 
     bool dry = c->bore_dry_da && s->bore_running && hi < (int)c->bore_dry_da;
     if (!c->bore_act) {
-        /* Alert only: no rest, no retries -- the flag just follows the debounced condition */
+        /* Alert only: no rest, no retries -- the flag just follows the debounced condition.
+         * A latch left over from Act is dropped, or switching back to Act would hold a STOP. */
+        s->flags &= ~CTL_F_BORE_DRY_LATCH;  s->dry_attempts = 0;
         if (held_for(dry, &s->dry_on, &s->dry_since_ms, now, CTL_DRY_MS)) s->flags |= CTL_F_BORE_DRY;
         else if (!dry) s->flags &= ~CTL_F_BORE_DRY;
     } else if (!(s->flags & (CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH))) {
@@ -229,7 +231,7 @@ ctl_result_t ctl_command(ctl_state_t *s, const ctl_cfg_t *c, ctl_motor_t m, ctl_
     } else {
         if (!s->settled) return CTL_REFUSED_NOT_SETTLED;
         if (m == CTL_SUMP) {
-            if (s->flags & CTL_F_SUMP_HOLD) return CTL_REFUSED_SUMP_HOLD;
+            if (c->sump_act && (s->flags & CTL_F_SUMP_HOLD)) return CTL_REFUSED_SUMP_HOLD;   /* Alert only: hold is advice */
             s->flags &= ~(CTL_F_USER_STOP_SUMP | CTL_F_SUMP_DRY);  s->sd_on = false;
         } else {
             if (c->ctrl_node && s->float_db < 0) return CTL_REFUSED_NO_FLOAT;

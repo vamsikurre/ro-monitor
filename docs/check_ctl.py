@@ -414,7 +414,7 @@ static void t_sump_start_releases_stop_and_dry_but_not_hold(void) {
     CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
     CHECK(!(ctl_flags(&r.s) & CTL_F_SUMP_DRY));
     stepsump(&r, 1, 100, 5, 0, true);  CHECK(!r.o.sump_stop);
-    rig_t h; bore_failed(&h);                               /* borewell failed + float low */
+    rig_t h; bore_failed(&h);  h.c.sump_act = true;         /* borewell failed + float low */
     runsump(&h, 1, 1, 0, 0, 0, false);
     CHECK(ctl_flags(&h.s) & CTL_F_SUMP_HOLD);
     CHECK(ctl_command(&h.s, &h.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, h.t) == CTL_REFUSED_SUMP_HOLD);
@@ -455,6 +455,22 @@ static void t_bore_start_refused_without_float_in_node_mode(void) {
     CHECK(ctl_command(&r.s, &r.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_REFUSED_NO_FLOAT);
     rig_t n; rig(&n, false); runmv(&n, 31, -1, 0, 0, 0);
     CHECK(ctl_command(&n.s, &n.c, CTL_BORE, CTL_CMD_START, CTL_SRC_APP, n.t) == CTL_OK);
+}
+static void t_sump_hold_refuses_start_only_in_act(void) {
+    rig_t r; bore_failed(&r);                               /* node mode, sump Alert only */
+    runsump(&r, 1, 1, 0, 0, 0, false);
+    CHECK(ctl_flags(&r.s) & CTL_F_SUMP_HOLD);
+    CHECK(ctl_command(&r.s, &r.c, CTL_SUMP, CTL_CMD_START, CTL_SRC_APP, r.t) == CTL_OK);
+}
+static void t_alert_only_drops_stale_dry_latch(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true; r.c.bore_dry_da = 20;
+    r.s.flags |= CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH;  r.s.dry_attempts = 3;
+    stepmv(&r, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop);                                   /* Act: the latch holds */
+    r.c.bore_act = false;  stepmv(&r, 1, 0, 0, 0);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY_LATCH)); CHECK(r.s.dry_attempts == 0);
+    r.c.bore_act = true;  stepmv(&r, 1, 0, 0, 0);
+    CHECK(!r.o.bore_stop);                                  /* no held STOP from the stale latch */
 }
 
 int main(void) {
@@ -502,6 +518,8 @@ int main(void) {
     t_invalid_command_changes_nothing();
     t_pending_start_dropped_if_float_goes_high();
     t_bore_start_refused_without_float_in_node_mode();
+    t_sump_hold_refuses_start_only_in_act();
+    t_alert_only_drops_stale_dry_latch();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }
