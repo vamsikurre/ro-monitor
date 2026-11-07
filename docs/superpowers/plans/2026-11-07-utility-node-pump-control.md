@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Relays are **de-energised in the normal state**; a dead node = motors as if the node did not exist (spec §4, §5.3).
-- **No spurious START** at power-up, reboot, OTA or reconnect. START is blocked for **30 s after boot** and until ≥ 2 consistent float reads and ≥ 1 clamp read (spec §6.5).
+- **No spurious START** at power-up, reboot, OTA or reconnect. START is blocked for **30 s after boot** and until ≥ 2 float reads and ≥ 1 completed `ctl_step` (each step follows a full clamp sample; no current threshold) (spec §6.5).
 - STOP is **pulsed** (3 s) for float-full; **held** for a person's Stop, single-phasing and dry-run (spec §6.1).
 - Persist in NVS: a person's Stop latch (per motor) and the single-phasing latch. Do **not** persist: failed-restart give-up, dry retry count, sump hold (spec §6.5).
 - Pressing **Start** clears single-phasing and dry latches if the condition is gone; there is no Reset command (spec §6.4).
@@ -109,7 +109,7 @@ int16_t  ctl_deci_amps(uint16_t mv, uint16_t apv_x100, uint8_t turns);  /* == hu
 ```
 `out->bore_start` true means "begin a START pulse now" (an edge); the relay driver (Task 5) times it. `out->bore_stop` / `sump_stop` are levels.
 
-Values pinned by this task: float debounce **5000 ms**; START verify window **10000 ms**; one retry; STOP pulse **3000 ms**; settle **30000 ms** + 2 float reads + 1 step with any clamp reading.
+Values pinned by this task: float debounce **5000 ms**; START verify window **10000 ms**; one retry; STOP pulse **3000 ms**; settle **30000 ms** + 2 float reads + 1 completed step (no current threshold).
 
 - [ ] **Step 1: Write the failing tests** in `docs/check_ctl.py` harness (each a C function `t_<name>()` using `CHECK`):
   - `conversion_matches_hub`: for (mv, apv, turns) in {(100,3000,1)→30, (100,3000,2)→15, (10,3000,1)→-1, (15,3000,1)→4}, `ctl_deci_amps` equals those values (same table as `check_gf.py`).
@@ -277,7 +277,7 @@ Alert texts (exact, each ≤ 100 bytes), raised on the flag's rising edge throug
 
 Lamps on the relay contacts, float in a bucket, clamps on a test load (a kettle or fan), node + hub on the bench LAN. Record results in `docs/WIRING.md` §11.2 "Bench, <date>".
 - [ ] Node unpowered: all three contacts in their resting state (meter): STOP NCs closed, START NO open.
-- [ ] Power-cycle the node 20 times with the float low and `ctrl_node=true`: the START lamp never lights before 30 s; it pulses once after.
+- [ ] Power-cycle the node 20 times with the float low, `ctrl_node=true` and both motors idle: the START lamp never lights before 30 s; it pulses once after.
 - [ ] OTA the node with the float low: no START during or after the update until settled.
 - [ ] Each app button and each dashboard button: correct lamp, event logged with source.
 - [ ] Stop from the app, power-cycle the node: STOP lamp re-lit within one cycle, START never.
