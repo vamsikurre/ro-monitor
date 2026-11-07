@@ -48,6 +48,64 @@ static bool any_at_least(const uint16_t mv[3], uint16_t apv, uint8_t turns, uint
     return false;
 }
 
+/* Present = raw mv non-zero: 0 mV is an unplugged clamp (ignored), while a few mV
+ * is a plugged clamp on a dead conductor = 0 A = a lost phase. */
+static void phase_range(const ctl_cfg_t *c, const ctl_in_t *in, int *n, int *lo, int *hi)
+{
+    *n = 0; *lo = 0; *hi = 0;
+    for (int i = 0; i < 3; i++) {
+        if (in->bore_mv[i] == 0) continue;
+        int a = ctl_deci_amps(in->bore_mv[i], c->bore_apv_x100, c->bore_turns);
+        if (a < 0) a = 0;
+        if ((*n)++ == 0 || a < *lo) *lo = a;
+        if (a > *hi) *hi = a;
+    }
+}
+
+/* true while `cond` has held for ms; restarts the clock when it breaks */
+static bool held_for(bool cond, bool *on, int64_t *since, int64_t now, int64_t ms)
+{
+    if (!cond) { *on = false; return false; }
+    if (!*on) { *on = true; *since = now; }
+    return now - *since >= ms;
+}
+
+/* Borewell protections. Returns true while a protective stop is held. */
+static bool bore_protect(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t *out)
+{
+    int n, lo, hi;
+    phase_range(c, in, &n, &lo, &hi);
+    int64_t now = in->now_ms;
+
+    if (held_for(s->bore_running && n >= 2 && lo * 100 < hi * 30, &s->sp_on, &s->sp_since_ms, now, CTL_SINGLE_PHASE_MS))
+        s->flags |= CTL_F_SINGLE_PHASE;
+
+    if (held_for(s->bore_running, &s->run_on, &s->run_since_ms, now, (int64_t)c->max_run_min * 60000 + 1) && c->max_run_min)
+        s->flags |= CTL_F_MAX_RUN;
+    if (!s->bore_running) s->flags &= ~CTL_F_MAX_RUN;
+
+    if (!(s->flags & (CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH))) {
+        bool dry = c->bore_dry_da && s->bore_running && hi < (int)c->bore_dry_da;
+        if (held_for(dry, &s->dry_on, &s->dry_since_ms, now, CTL_DRY_MS)) {
+            s->flags |= CTL_F_BORE_DRY;  s->dry_on = false;
+            s->rest_until_ms = now + CTL_DRY_REST_MS;
+            if (++s->dry_attempts >= CTL_DRY_ATTEMPTS) s->flags |= CTL_F_BORE_DRY_LATCH;
+        }
+        /* a full dry window of healthy running earns the attempts back */
+        if (held_for(c->bore_dry_da && s->bore_running && hi >= (int)c->bore_dry_da, &s->ok_on, &s->ok_since_ms, now, CTL_DRY_MS))
+            s->dry_attempts = 0;
+    } else if (!(s->flags & CTL_F_BORE_DRY_LATCH) && now >= s->rest_until_ms) {
+        if (!c->bore_act) s->flags &= ~CTL_F_BORE_DRY;
+        else if (s->float_db == 1) {   /* the rest's own timed restart: a verified START */
+            s->flags &= ~CTL_F_BORE_DRY;
+            s->start_try = 1;  s->start_deadline_ms = now + CTL_START_VERIFY_MS;  out->bore_start = true;
+        }
+    }
+
+    if (!c->bore_act) return false;
+    return (s->flags & (CTL_F_SINGLE_PHASE | CTL_F_BORE_DRY | CTL_F_BORE_DRY_LATCH)) != 0;
+}
+
 void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -62,6 +120,9 @@ void ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t 
     if (!s->settled && in->now_ms - s->boot_ms >= CTL_SETTLE_MS && s->float_reads >= 2)
         s->settled = true;
     if (!s->settled) return;
+
+    if (bore_protect(s, c, in, out)) { out->bore_stop = true; return; }
+    if (out->bore_start) return;   /* the dry rest's restart already owns this step */
 
     /* a person's float going high clears a failed start so the next low gets a fresh try */
     if (s->float_db != 1) { s->flags &= ~CTL_F_START_FAILED; s->start_try = 0; }

@@ -122,6 +122,69 @@ static void t_zero_thresholds_disable_checks(void) {
     CHECK(!(ctl_flags(&r.s) & (CTL_F_BORE_DRY | CTL_F_SUMP_DRY | CTL_F_MAX_RUN)));
 }
 
+/* Protection rig: settled node, 1 s steps, explicit raw clamp mV. 100 mV = 30 da, 17 mV = 5 da. */
+static void stepmv(rig_t *r, int8_t fl, uint16_t a, uint16_t b, uint16_t c3) {
+    ctl_in_t in = { .now_ms = r->t, .float_low = fl, .bore_mv = { a, b, c3 } };
+    ctl_step(&r->s, &r->c, &in, &r->o);
+    if (r->o.bore_start) r->starts++;
+    if (r->o.bore_stop) r->stop_seen = true;
+    r->t += 1000;
+}
+static void runmv(rig_t *r, int secs, int8_t fl, uint16_t a, uint16_t b, uint16_t c3) { for (int i = 0; i < secs; i++) stepmv(r, fl, a, b, c3); }
+static void settled(rig_t *r) { rig(r, true); runmv(r, 31, 1, 100, 100, 100); r->starts = 0; r->stop_seen = false; }
+
+static void t_single_phase_alert_only_does_not_stop(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 6, 1, 200, 200, 17);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE); CHECK(!r.stop_seen);
+}
+static void t_single_phase_act_holds_stop_and_blocks_auto(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true;
+    runmv(&r, 6, 1, 200, 200, 17);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE); CHECK(r.o.bore_stop);
+    runmv(&r, 600, 1, 0, 0, 0);
+    CHECK(r.o.bore_stop); CHECK(r.starts == 0);
+}
+static void t_missing_clamp_is_not_single_phasing(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 60, 1, 200, 200, 0);
+    runmv(&r, 60, 1, 200, 0, 0);
+    runmv(&r, 60, 1, 0, 200, 0);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE));
+}
+static void t_lost_phase_with_clamp_present_is_single_phasing(void) {
+    rig_t r; settled(&r);
+    runmv(&r, 6, 1, 200, 200, 3);
+    CHECK(ctl_flags(&r.s) & CTL_F_SINGLE_PHASE);
+}
+static void t_dry_retry_three_times_then_latch(void) {
+    rig_t r; settled(&r);  r.c.bore_act = true; r.c.bore_dry_da = 20;
+    for (int k = 1; k <= 3; k++) {
+        runmv(&r, 20, 1, 34, 34, 34);                 /* 10 da: running but dry */
+        CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY));
+        stepmv(&r, 1, 34, 34, 34);                    /* 20 s */
+        CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY); CHECK(r.o.bore_stop);
+        if (k == 3) break;
+        int before = r.starts;
+        runmv(&r, 1790, 1, 0, 0, 0);                  /* resting, held */
+        CHECK(r.o.bore_stop); CHECK(r.starts == before);
+        runmv(&r, 11, 1, 0, 0, 0);                    /* rest over: the one START edge */
+        CHECK(r.starts == before + 1);
+        CHECK(!(ctl_flags(&r.s) & CTL_F_BORE_DRY));
+    }
+    CHECK(ctl_flags(&r.s) & CTL_F_BORE_DRY_LATCH);
+    int before = r.starts;
+    runmv(&r, 3 * 3600, 1, 0, 0, 0);
+    CHECK(r.starts == before); CHECK(r.o.bore_stop);
+}
+static void t_max_run_flags_never_stops(void) {
+    rig_t r; settled(&r);  r.c.max_run_min = 60; r.c.bore_act = true;
+    runmv(&r, 60 * 60 - 40, 1, 200, 200, 200);
+    CHECK(!(ctl_flags(&r.s) & CTL_F_MAX_RUN));
+    runmv(&r, 100, 1, 200, 200, 200);
+    CHECK(ctl_flags(&r.s) & CTL_F_MAX_RUN); CHECK(!r.stop_seen);
+}
+
 int main(void) {
     t_conversion_matches_hub();
     t_nec_mode_never_drives_float_logic();
@@ -133,6 +196,12 @@ int main(void) {
     t_no_current_retries_once_then_flags();
     t_current_cancels_retry();
     t_zero_thresholds_disable_checks();
+    t_single_phase_alert_only_does_not_stop();
+    t_single_phase_act_holds_stop_and_blocks_auto();
+    t_missing_clamp_is_not_single_phasing();
+    t_lost_phase_with_clamp_present_is_single_phasing();
+    t_dry_retry_three_times_then_latch();
+    t_max_run_flags_never_stops();
     printf(fails ? "check_ctl: %d FAILED\n" : "check_ctl: OK\n", fails);
     return fails ? 1 : 0;
 }

@@ -28,6 +28,10 @@ typedef enum { CTL_SRC_AUTO, CTL_SRC_APP, CTL_SRC_DASH } ctl_src_t;
 #define CTL_START_VERIFY_MS   10000
 #define CTL_STOP_PULSE_MS     3000
 #define CTL_SETTLE_MS         30000
+#define CTL_SINGLE_PHASE_MS   5000
+#define CTL_DRY_MS            20000
+#define CTL_DRY_REST_MS       (30LL * 60 * 1000)
+#define CTL_DRY_ATTEMPTS      3
 
 typedef struct {
     uint16_t bore_apv_x100, sump_apv_x100;  uint8_t bore_turns, sump_turns;
@@ -60,6 +64,10 @@ struct ctl_state {
     uint8_t  start_try;  int64_t start_deadline_ms;
     bool     stop_sent;  int64_t stop_until_ms;   /* one STOP pulse per float-high episode */
     bool     bore_running;
+    /* borewell protections: timers use *_on as "condition currently holding" */
+    bool     sp_on, dry_on, ok_on, run_on;
+    int64_t  sp_since_ms, dry_since_ms, ok_since_ms, run_since_ms, rest_until_ms;
+    uint8_t  dry_attempts;
 };
 typedef struct ctl_state ctl_state_t;  /* opaque to callers by convention */
 
