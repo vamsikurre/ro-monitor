@@ -1534,7 +1534,11 @@ static void gf_apply(hub_state_t *s)
             if (sm->phase_da[i] > sm->deci_amps) sm->deci_amps = sm->phase_da[i];
         }
         bm->imbalance_pct = gfImbalancePct(bm->phase_da);
-        sm->imbalance_pct = gfImbalancePct(sm->phase_da);
+        /* The sump motor is single-phase, 3-wire (Common / Start / Run, panel
+         * B / R / Y, B tied to neutral - WIRING.md 11.3). Those three currents
+         * are never equal, so an imbalance figure would always look alarming
+         * and mean nothing. deci_amps = highest channel = Common = motor total. */
+        sm->imbalance_pct = 0;
         /* Borewell has no contact of its own: running = drawing current. The
          * sump motor has the Astero PUMP ON contact, which cannot be fooled by
          * a floating channel, so the clamps there are for amps only.

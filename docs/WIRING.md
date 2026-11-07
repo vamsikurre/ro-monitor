@@ -1659,13 +1659,27 @@ earlier two-per-motor decision.
 | `BORE_CT_L1` | **32** | CH4 | Borewell starter, phase L1 |
 | `BORE_CT_L2` | **33** | CH5 | Borewell starter, phase L2 |
 | `BORE_CT_L3` | **34** | CH6 | Borewell starter, phase L3 |
-| `SUMP_CT_L1` | **35** | CH7 | Sump starter, phase L1 |
-| `SUMP_CT_L2` | **36** | CH0 | Sump starter, phase L2 |
-| `SUMP_CT_L3` | **39** | CH3 | Sump starter, phase L3 — **socket built, no clamp fitted yet** |
+| `SUMP_CT_L1` | **35** | CH7 | Sump controller **`B` = Common** (motor total) |
+| `SUMP_CT_L2` | **36** | CH0 | Sump controller **Start** winding — whichever of `R`/`Y` goes to the start capacitor |
+| `SUMP_CT_L3` | **39** | CH3 | Sump controller **Run** winding — **socket built, no clamp fitted yet** |
+
+> **Corrected 2026-11-07: the sump motor is single-phase, 3-wire, not
+> three-phase.** The Astero's mains side is only `P` / `N`, its board has a
+> `STARTING RELAY O/P` (a start-capacitor switch, which no three-phase motor
+> needs), and its pump terminal `B` is tied straight to neutral — the Common of
+> a Common / Run / Start submersible (`images/groundfloor/sump_motor_controller/`).
+> So the three "phases" are windings. Common carries the whole motor current,
+> which is why it gets the first clamp; Start is the second, because Start
+> reading 0 A while Common draws is a dead start capacitor, the usual way these
+> pumps fail. The hub reports the sump motor's imbalance as 0 and the dashboard
+> labels the channels Common / Start / Run. Tell `R` from `Y` with a clamp
+> meter: the Start winding is the one wired through the capacitor box. The wire
+> on `Y` is green-and-yellow but **live** — it is not an earth. The sump panel
+> is 230 V; the 415 V warning below is the borewell's.
 
 **All six ADC1 channels on this node are taken** — six bias networks and six
 clamp sockets are built; five clamps are fitted on day one and the sixth
-(sump L3) waits for a clamp to be bought.
+(sump L3, the Run winding) waits for a clamp to be bought.
 
 > **A channel with nothing plugged in reads ~0 V at the pin, NOT the bias
 > pedestal, and that is not a fault.** Look at the schematic below: the bias

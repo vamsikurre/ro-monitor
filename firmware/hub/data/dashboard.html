@@ -1188,8 +1188,11 @@ function ampsText(a) {
 }
 
 /* "L1 4.1 \u00b7 L2 4.0 \u00b7 L3 \u2014 \u00b7 imb 5%" - a socket with no clamp draws a dash, never 0 */
-function phasesText(ph, imb) {
-  const one = (v, i) => `L${i + 1} ${v === null || v === undefined ? "\u2014" : v.toFixed(1)}`;
+/* The sump motor is single-phase, 3-wire: its channels are windings, not
+   phases (WIRING.md 11.3), and the hub always sends its imbalance as 0. */
+const SUMP_WINDINGS = ["Common", "Start", "Run"];
+function phasesText(ph, imb, names) {
+  const one = (v, i) => `${names ? names[i] : "L" + (i + 1)} ${v === null || v === undefined ? "\u2014" : v.toFixed(1)}`;
   const s = ph.map(one).join(" \u00b7 ");
   return (imb > 0 ? `${s} \u00b7 imb ${imb}%` : s);
 }
@@ -1625,7 +1628,7 @@ function buildPlant(s) {
       if (Array.isArray(sct.phases) && sct.phases.some(p => p !== null && p !== undefined)) {
         const sp = node("amps");
         sp.dataset.phases = "smotor";
-        sp.innerHTML = phasesText(sct.phases, sct.imbalance_pct);
+        sp.innerHTML = phasesText(sct.phases, sct.imbalance_pct, SUMP_WINDINGS);
         sumpHost.appendChild(sp);
       }
     }
@@ -1770,7 +1773,8 @@ function updatePlant(s) {
       aEl.className = "amps" + (s.motors && s.motors.overcurrent ? " over" : "");
     }
     const phEl = u.querySelector(`[data-phases="${id}"]`);
-    if (phEl && ct && Array.isArray(ct.phases)) phEl.innerHTML = phasesText(ct.phases, ct.imbalance_pct);
+    if (phEl && ct && Array.isArray(ct.phases))
+      phEl.innerHTML = phasesText(ct.phases, ct.imbalance_pct, id === "smotor" ? SUMP_WINDINGS : null);
   });
 
   /* Toggled here rather than in the structural rebuild: the alarm flips on a
@@ -2274,7 +2278,7 @@ const demo = {
        Flip dry to true and dry_why to 1 or 2 to review either alert wording. */
     borewell:   { amps: 4.1, phases: [4.1, 4.0, 3.9], imbalance_pct: 5, running: true,
                   dry: false, dry_why: 0, dry_at_deci_a: 29 },
-    sump_motor: { amps: 3.3, phases: [3.3, 3.2, null], imbalance_pct: 3, running: true },
+    sump_motor: { amps: 9.1, phases: [9.1, 3.2, null], imbalance_pct: 0, running: true },
   },
   env: {
     ro_room:      { t: 31.4, rh: 62, state: "ONLINE", src: "SHT30 · I2C 0x44", age_s: 2 },

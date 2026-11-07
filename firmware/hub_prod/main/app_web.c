@@ -1214,7 +1214,8 @@ static esp_err_t cal_get(httpd_req_t *req)
                 else snprintf(a[k], sizeof a[k], "%d.%d", ct_ph[i][k] / 10, ct_ph[i][k] % 10);
             }
             snprintf(p, sizeof p, "%s / %s / %s A", a[0], a[1], a[2]);
-            snprintf(reading, sizeof reading, "%s%s", util_online ? "phases " : "node offline; last ", p);
+            snprintf(reading, sizeof reading, "%s%s%s", util_online ? "" : "node offline; last ",
+                     i == CAL_CT_SUMP ? "common / start / run " : "phases ", p);
         } else {
             if (ct_mid[i] == 0) {
                 snprintf(reading, sizeof reading,

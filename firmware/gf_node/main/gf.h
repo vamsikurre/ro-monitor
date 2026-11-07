@@ -32,9 +32,11 @@
 #define GPIO_BORE_CT_L1     32      /* ADC1_CH4 */
 #define GPIO_BORE_CT_L2     33      /* ADC1_CH5 */
 #define GPIO_BORE_CT_L3     34      /* ADC1_CH6 */
-#define GPIO_SUMP_CT_L1     35      /* ADC1_CH7 */
-#define GPIO_SUMP_CT_L2     36      /* ADC1_CH0 */
-#define GPIO_SUMP_CT_L3     39      /* ADC1_CH3 */
+/* The sump motor is single-phase 3-wire, so these are windings, not phases
+ * (WIRING.md 11.3): L1 = Common (panel B), L2 = Start, L3 = Run. */
+#define GPIO_SUMP_CT_L1     35      /* ADC1_CH7 - Common */
+#define GPIO_SUMP_CT_L2     36      /* ADC1_CH0 - Start */
+#define GPIO_SUMP_CT_L3     39      /* ADC1_CH3 - Run */
 #define GPIO_PUMP_ON        25      /* Astero PUMP ON C/NO, closed = running */
 #define GPIO_RWT_FLOTY      26      /* opto across the float loop, when wired */
 #define GPIO_I2C_SDA        21
