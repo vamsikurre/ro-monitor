@@ -31,6 +31,7 @@
 #include "mbedtls/base64.h"
 
 #include "app_cal.h"
+#include "app_gf.h"
 #include "app_priv.h"
 #include "app_rs485.h"
 #include "app_sensors.h"
@@ -1357,6 +1358,25 @@ static esp_err_t cal_get(httpd_req_t *req)
     }
     n += snprintf(page + n, WEB_SCRATCH_BYTES - n, "</fieldset>");
 
+    const cal_ctl_t *k = cal_ctl();
+    n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
+        "<fieldset id=ctl><legend>Ground-floor control</legend>"
+        "<form method=post action='/api/cal/ctl'>"
+        "token <input type=password name=token maxlength=%d size=14 autocomplete=off placeholder='%s'> "
+        "sump dry below A <input name=noload size=5 value='%u.%u'> "
+        "borewell max run <input name=maxrun size=5 value='%u'> min<br>"
+        "<label><input type=checkbox name=node value=1%s> node controls borewell</label> "
+        "<label><input type=checkbox name=bact value=1%s> borewell protection acts</label> "
+        "<label><input type=checkbox name=sact value=1%s> sump protection acts</label> "
+        "<button>Save</button></form>"
+        "<p><small>The token must match the utility node's GF_CTL_TOKEN; blank keeps the stored one. "
+        "These and the borewell / sump motor clamp figures are sent to the node when saved and each "
+        "time it comes back online. 0 switches a check off; an unticked protection only alerts.</small></p>"
+        "</fieldset>",
+        CAL_CTL_TOKEN_MAX, k->token[0] ? "set" : "not set",
+        k->sump_noload_da / 10, k->sump_noload_da % 10, k->max_run_min,
+        k->ctrl_node ? " checked" : "", k->bore_act ? " checked" : "", k->sump_act ? " checked" : "");
+
     n += snprintf(page + n, WEB_SCRATCH_BYTES - n,
         "<fieldset id=relays><legend>Relay test</legend>");
     for (int i = 0; i < RELAY_HUB_COUNT; i++) {
@@ -1631,6 +1651,7 @@ static esp_err_t cal_ct_post(httpd_req_t *req)
     if (cal_set_ct((cal_ct_t)idx, apv_x100, (uint8_t)t, oc_deci, run_deci) != ESP_OK) {
         return bad(req, "rejected: check A/V (1-200), turns (1-10), run (>= 0.1 A) and trip (1.0-30.0 A, above run)");
     }
+    if (idx == CAL_CT_BORE || idx == CAL_CT_SUMP) gf_cfg_push();   /* the utility node uses these too */
     return redirect_to(req, "/cal#clamps");
 }
 
@@ -1654,6 +1675,7 @@ static esp_err_t cal_ct_dry_post(httpd_req_t *req)
                  c->oc_deci_amps / 10, c->oc_deci_amps % 10);
         return bad(req, m);
     }
+    gf_cfg_push();
     return redirect_to(req, "/cal#clamps");
 }
 
@@ -1722,6 +1744,57 @@ static esp_err_t cal_gf_post(httpd_req_t *req)
         return bad(req, "rejected: a.b.c.d or a.b.c.d:port, or empty to remove");
     }
     return redirect_to(req, "/cal#gf");
+}
+
+/* One form for the whole fieldset. Checkboxes send nothing when unticked, so
+ * an absent box is false; an absent or blank token keeps the stored one. tok
+ * holds 32 characters fully %XX-encoded, so an over-long token reaches the
+ * length check instead of reading as absent. */
+static esp_err_t cal_ctl_post(httpd_req_t *req)
+{
+    char body[320], tok[3 * CAL_CTL_TOKEN_MAX + 8], nl[16], mr[12], box[4];
+    if (read_body(req, body, sizeof(body)) != ESP_OK) return bad(req, "body too long");
+    cal_ctl_t k = *cal_ctl();
+    if (form_field(body, "token", tok, sizeof(tok)) && tok[0]) {
+        if (strlen(tok) > CAL_CTL_TOKEN_MAX) return bad(req, "rejected: token is at most 32 characters");
+        snprintf(k.token, sizeof(k.token), "%s", tok);
+    }
+    if (!form_field(body, "noload", nl, sizeof(nl)) || !form_field(body, "maxrun", mr, sizeof(mr))) {
+        return bad(req, "need noload and maxrun");
+    }
+    uint16_t nld = 0;
+    char *end = NULL;
+    unsigned long m = strtoul(mr, &end, 10);
+    if (!parse_deci(nl, &nld) || end == mr || *end != '\0') return bad(req, "sump dry or max run not a number");
+    if (m > CAL_MAX_RUN_MIN_MAX) return bad(req, "rejected: max run 0-1440 min");
+    k.sump_noload_da = nld;
+    k.max_run_min = (uint16_t)m;
+    k.ctrl_node = form_field(body, "node", box, sizeof(box));
+    k.bore_act  = form_field(body, "bact", box, sizeof(box));
+    k.sump_act  = form_field(body, "sact", box, sizeof(box));
+    if (cal_set_ctl(&k) != ESP_OK) return bad(req, "rejected: sump dry 0-30.0 A, max run 0-1440 min");
+    gf_cfg_push();
+    return redirect_to(req, "/cal#ctl");
+}
+
+/* POST {"motor":"bore"|"sump","cmd":"start"|"stop"} from the dashboard. Only
+ * queues: gf_task forwards it and logs the node's answer as EVT_MOTOR_CMD, and
+ * a refusal shows up as the next telemetry's last_cmd. */
+static esp_err_t motor_post(httpd_req_t *req)
+{
+    char body[96];
+    gf_cmd_t c = { .src = GF_SRC_DASH };
+    httpd_resp_set_type(req, "application/json");
+    if (read_body(req, body, sizeof(body)) != ESP_OK || !gf_parse_motor_req(body, &c)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"queued\":false}");
+    }
+    if (!gf_cmd_post(&c)) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "{\"queued\":false}");
+    }
+    httpd_resp_set_status(req, "202 Accepted");
+    return httpd_resp_sendstr(req, "{\"queued\":true}");
 }
 
 static esp_err_t cal_plant_post(httpd_req_t *req)
@@ -1952,6 +2025,8 @@ esp_err_t web_start(void)
         { "/api/cal/plant", HTTP_POST, cal_plant_post, false },
         { "/api/cal/wq",    HTTP_POST, cal_wq_post,    false },
         { "/api/cal/gf",    HTTP_POST, cal_gf_post,    false },
+        { "/api/cal/ctl",   HTTP_POST, cal_ctl_post,   false },
+        { "/api/motor",     HTTP_POST, motor_post,     false },  /* starts a motor: password, like /cal */
         { "/api/cal/relay", HTTP_POST, cal_relay_post, false },
         { "/api/cal/scan",  HTTP_POST, cal_scan_post,  false },  /* refresh the list */
         { "/api/cal/wifi",  HTTP_POST, cal_wifi_post,  false },  /* Reconnect / Join */

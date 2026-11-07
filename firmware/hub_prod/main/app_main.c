@@ -1608,6 +1608,7 @@ static void poll_task(void *arg)
     float last_rwt_wt = -9999, last_twt_wt = -9999;
     int   last_sump = INT32_MIN, last_bore_on = -1, last_smot_on = -1, last_rwt_float = -1;
     float last_bore_a = -9999, last_smot_a = -9999, last_util_t = -9999, last_util_h = -9999;
+    int   last_ctrl_node = -1, last_bore_act = -1, last_sump_act = -1;
     int   last_lux = INT32_MIN, last_dark = -1;
 
     /* Survives a power cut: without this the first thing a returning hub reports
@@ -1899,6 +1900,11 @@ static void poll_task(void *arg)
                 report_float(s_dev_ground, PARAM_UTIL_TEMP, local.utility_room.temp_deci_c / 10.0f, &last_util_t, 0.3f);
                 report_float(s_dev_ground, PARAM_UTIL_HUM,  local.utility_room.hum_deci_pct / 10.0f, &last_util_h, 1.0f);
             }
+            /* What the NODE holds, not what the app last wrote: a refused or
+             * not-yet-pushed config shows as the setting still in force. */
+            report_bool(s_dev_ground, PARAM_CTRL_NODE, local.ctl.ctrl_node, &last_ctrl_node);
+            report_bool(s_dev_ground, PARAM_BORE_ACT, local.ctl.bore_act, &last_bore_act);
+            report_bool(s_dev_ground, PARAM_SUMP_ACT, local.ctl.sump_act, &last_sump_act);
         }
 
         report_bool(s_dev_ro_room, PARAM_HPP_ON, local.hpp.running, &last_hpp_on);
@@ -2064,9 +2070,10 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     const char *name = esp_rmaker_param_get_name(param);
     ESP_LOGI(TAG, "write %s from %s", name, ctx ? esp_rmaker_device_cb_src_to_str(ctx->src) : "?");
 
-    /* Three writable parameters, all of them the fan: the switch, the mode and
-     * the threshold. Everything else this hub publishes is a measurement, and a
-     * measurement is not a control.
+    /* Writable: the fan (switch, mode, threshold), Dark Below, and on the
+     * ground floor the pump Start/Stop triggers and the three control toggles.
+     * Everything else this hub publishes is a measurement, and a measurement
+     * is not a control.
      * Calibration deliberately lives on /cal rather than in the app: it needs a
      * live distance reading next to the tank, which a phone notification cannot
      * give you. */
@@ -2116,6 +2123,40 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
             return ESP_ERR_INVALID_ARG;
         }
         esp_rmaker_param_update_and_report(param, val);
+        return ESP_OK;
+    }
+
+    /* Pump Start/Stop: queued for gf_task, which owns the HTTP client. A
+     * trigger is momentary, so nothing is reported back - the node's answer
+     * arrives as the next telemetry's last_cmd and an EVT_MOTOR_CMD. */
+    static const struct { const char *name; uint8_t motor, cmd; } trig[] = {
+        { PARAM_BORE_START, GF_MOTOR_BORE, GF_CMD_START }, { PARAM_BORE_STOP, GF_MOTOR_BORE, GF_CMD_STOP },
+        { PARAM_SMOT_START, GF_MOTOR_SUMP, GF_CMD_START }, { PARAM_SMOT_STOP, GF_MOTOR_SUMP, GF_CMD_STOP },
+    };
+    for (size_t i = 0; i < sizeof(trig) / sizeof(trig[0]); i++) {
+        if (strcmp(name, trig[i].name) != 0) continue;
+        if (!val.val.b) return ESP_OK;
+        gf_cmd_t c = { trig[i].motor, trig[i].cmd, GF_SRC_APP };
+        if (!gf_cmd_post(&c)) {
+            ESP_LOGW(TAG, "%s dropped: command queue full", name);
+            return ESP_FAIL;
+        }
+        return ESP_OK;
+    }
+
+    /* Control toggles: write the hub cal and push it. Not reported here - the
+     * poll task reports what the node says it has once the push lands. */
+    bool is_node = strcmp(name, PARAM_CTRL_NODE) == 0, is_bact = strcmp(name, PARAM_BORE_ACT) == 0;
+    if (is_node || is_bact || strcmp(name, PARAM_SUMP_ACT) == 0) {
+        cal_ctl_t k = *cal_ctl();
+        if (is_node)      k.ctrl_node = val.val.b;
+        else if (is_bact) k.bore_act = val.val.b;
+        else              k.sump_act = val.val.b;
+        if (cal_set_ctl(&k) != ESP_OK) {
+            ESP_LOGW(TAG, "could not store %s", name);
+            return ESP_FAIL;
+        }
+        gf_cfg_push();
         return ESP_OK;
     }
 
@@ -2297,6 +2338,7 @@ static void build_node(esp_rmaker_node_t *node)
      * Node 0x06 in the starter panel: what the two motors are doing and the
      * air around them. The sump level itself sits with the other tanks. */
     s_dev_ground = esp_rmaker_device_create(DEV_GROUND, "esp.device.other", NULL);
+    esp_rmaker_device_add_cb(s_dev_ground, write_cb, NULL);
     esp_rmaker_param_t *bo = ro_param(PARAM_BORE_ON, ESP_RMAKER_PARAM_POWER,
                                       esp_rmaker_bool(false), ESP_RMAKER_UI_TOGGLE);
     esp_rmaker_device_add_param(s_dev_ground, bo);
@@ -2311,6 +2353,25 @@ static void build_node(esp_rmaker_node_t *node)
                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
     esp_rmaker_device_add_param(s_dev_ground, ro_param(PARAM_UTIL_HUM, "esp.param.humidity",
                                                        esp_rmaker_float(VAL_NO_READING_FLOAT), ESP_RMAKER_UI_TEXT));
+    /* Start/Stop buttons. The node decides whether a Start is allowed; these
+     * only ask. Plain params, no time series: a button press is not a reading. */
+    static const char *const trig[] = { PARAM_BORE_START, PARAM_BORE_STOP, PARAM_SMOT_START, PARAM_SMOT_STOP };
+    for (size_t i = 0; i < sizeof(trig) / sizeof(trig[0]); i++) {
+        esp_rmaker_param_t *t = esp_rmaker_param_create(trig[i], "esp.param.trigger", esp_rmaker_bool(false),
+                                                        PROP_FLAG_READ | PROP_FLAG_WRITE);
+        esp_rmaker_param_add_ui_type(t, ESP_RMAKER_UI_TRIGGER);
+        esp_rmaker_device_add_param(s_dev_ground, t);
+    }
+    const cal_ctl_t *k = cal_ctl();
+    const struct { const char *name; bool v; } tog[] = {
+        { PARAM_CTRL_NODE, k->ctrl_node }, { PARAM_BORE_ACT, k->bore_act }, { PARAM_SUMP_ACT, k->sump_act },
+    };
+    for (size_t i = 0; i < sizeof(tog) / sizeof(tog[0]); i++) {
+        esp_rmaker_param_t *t = esp_rmaker_param_create(tog[i].name, ESP_RMAKER_PARAM_TOGGLE, esp_rmaker_bool(tog[i].v),
+                                                        PROP_FLAG_READ | PROP_FLAG_WRITE);
+        esp_rmaker_param_add_ui_type(t, ESP_RMAKER_UI_TOGGLE);
+        esp_rmaker_device_add_param(s_dev_ground, t);
+    }
     esp_rmaker_node_add_device(node, s_dev_ground);
 
     /* ================================ OUTDOOR ================================

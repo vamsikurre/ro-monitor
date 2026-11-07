@@ -76,6 +76,7 @@ static const char *s_ct_labels[CAL_CT_COUNT]     = { "HPP", "RWP", "Borewell", "
 static const char *s_gf_keys[CAL_GF_COUNT]       = { "sump", "util" };
 static const char *s_gf_nvs[CAL_GF_COUNT]        = { "gf_sump", "gf_util" };
 static char        s_gf_ip[CAL_GF_COUNT][24];    /* "255.255.255.255:65535" fits */
+static cal_ctl_t   s_ctl;                        /* all off, no token: the node's own defaults */
 
 const char *cal_tank_key(cal_tank_t t)   { return (t < CAL_TANK_COUNT) ? s_tank_keys[t] : "?"; }
 const char *cal_tank_label(cal_tank_t t) { return (t < CAL_TANK_COUNT) ? s_tank_labels[t] : "?"; }
@@ -174,6 +175,15 @@ esp_err_t cal_init(void)
     load_u16(h, "hpp", "w", &s_motor_w[CAL_CT_HPP]);
     load_u16(h, "rwp", "w", &s_motor_w[CAL_CT_RWP]);
     load_u16(h, "plant", "tariff", &s_tariff_paise);
+    size_t tlen = sizeof(s_ctl.token);
+    if (nvs_get_str(h, "ctl_token", s_ctl.token, &tlen) != ESP_OK) s_ctl.token[0] = '\0';
+    load_u16(h, "smot", "nl", &s_ctl.sump_noload_da);
+    load_u16(h, "bore", "mr", &s_ctl.max_run_min);
+    uint16_t f = 0;
+    load_u16(h, "ctl", "fl", &f);   /* bit0 ctrl_node, bit1 bore_act, bit2 sump_act */
+    s_ctl.ctrl_node = f & 1; s_ctl.bore_act = f & 2; s_ctl.sump_act = f & 4;
+    if (s_ctl.sump_noload_da > CAL_SUMP_NOLOAD_DA_MAX) s_ctl.sump_noload_da = 0;
+    if (s_ctl.max_run_min > CAL_MAX_RUN_MIN_MAX) s_ctl.max_run_min = 0;
     for (int i = 0; i < CAL_CT_COUNT; i++) {
         char key[16];
         key_for(key, sizeof(key), s_ct_keys[i], "rt");
@@ -407,6 +417,39 @@ esp_err_t cal_set_gf_ip(cal_gf_t n, const char *ip)
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     ESP_LOGI(TAG, "ground-floor %s node: %s", s_gf_keys[n], ip[0] ? ip : "not fitted");
+    return err;
+}
+
+const cal_ctl_t *cal_ctl(void) { return &s_ctl; }
+
+esp_err_t cal_set_ctl(const cal_ctl_t *c)
+{
+    if (c == NULL || strnlen(c->token, sizeof(c->token)) > CAL_CTL_TOKEN_MAX ||
+        c->sump_noload_da > CAL_SUMP_NOLOAD_DA_MAX || c->max_run_min > CAL_MAX_RUN_MIN_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    char key[16];
+    uint16_t f = (c->ctrl_node ? 1 : 0) | (c->bore_act ? 2 : 0) | (c->sump_act ? 4 : 0);
+    err = c->token[0] ? nvs_set_str(h, "ctl_token", c->token) : nvs_erase_key(h, "ctl_token");
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    key_for(key, sizeof(key), "smot", "nl");
+    if (err == ESP_OK) err = nvs_set_u16(h, key, c->sump_noload_da);
+    key_for(key, sizeof(key), "bore", "mr");
+    if (err == ESP_OK) err = nvs_set_u16(h, key, c->max_run_min);
+    key_for(key, sizeof(key), "ctl", "fl");
+    if (err == ESP_OK) err = nvs_set_u16(h, key, f);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        s_ctl = *c;
+        s_ctl.token[CAL_CTL_TOKEN_MAX] = '\0';
+        ESP_LOGI(TAG, "pump control: token %s, sump no-load %u.%u A, max run %u min, node %d, bore acts %d, sump acts %d",
+                 s_ctl.token[0] ? "set" : "not set", c->sump_noload_da / 10, c->sump_noload_da % 10,
+                 c->max_run_min, c->ctrl_node, c->bore_act, c->sump_act);
+    }
     return err;
 }
 

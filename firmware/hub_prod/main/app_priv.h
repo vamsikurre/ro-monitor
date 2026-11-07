@@ -563,6 +563,15 @@ typedef enum {
 #define PARAM_SMOT_AMPS         "Sump Motor Current"
 #define PARAM_UTIL_TEMP         "Utility Room Temp"
 #define PARAM_UTIL_HUM          "Utility Room Humidity"
+/* Momentary (esp.ui.trigger): a write queues the command, nothing is reported back. */
+#define PARAM_BORE_START        "Borewell Start"
+#define PARAM_BORE_STOP         "Borewell Stop"
+#define PARAM_SMOT_START        "Sump Motor Start"
+#define PARAM_SMOT_STOP         "Sump Motor Stop"
+/* Toggles: a write saves the hub cal and pushes it; the value shown is the node's. */
+#define PARAM_CTRL_NODE         "Node Controls Borewell"
+#define PARAM_BORE_ACT          "Borewell Protection Acts"
+#define PARAM_SUMP_ACT          "Sump Protection Acts"
 
 #define PARAM_RWT_PCT           "Raw Water Level"
 #define PARAM_TWT_PCT           "Treated Water Level"
@@ -840,6 +849,13 @@ typedef enum {
     EVT_BORE_DRY_ON, EVT_BORE_DRY_OFF,
     /* Roof light fell below / rose back above the Dark Below threshold. */
     EVT_DARK_ON, EVT_DARK_OFF,
+    /* A pump Start/Stop forwarded to the utility node, and its answer.
+     * arg = (motor << 4) | (cmd << 2) | src, the node's ctl.h values
+     * (motor 0 bore 1 sump; cmd 0 start 1 stop; src 1 app 2 dash).
+     * a = HTTP status, 0 if the POST never got one (no node, no LAN, timeout).
+     * b = why: 0 ok, 1 single_phase, 2 sump_hold, 3 not_settled, 4 sump_full,
+     * 5 no_float, 15 anything else (403 token, 400, no answer). */
+    EVT_MOTOR_CMD,
 } evt_kind_t;
 
 /* Why bore_dry went true. Carried in the event's arg so the log says which

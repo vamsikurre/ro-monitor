@@ -99,6 +99,23 @@ const char *cal_gf_ip(cal_gf_t n);
 const char *cal_gf_key(cal_gf_t n);
 esp_err_t   cal_set_gf_ip(cal_gf_t n, const char *ip);
 
+/* Utility-node pump control (pushed to the node as /api/ctl/cfg together with
+ * the borewell and sump-motor CT figures above). The token must match the
+ * node's CONFIG_GF_CTL_TOKEN; "" = not set, and the node refuses everything. */
+#define CAL_CTL_TOKEN_MAX       32
+#define CAL_SUMP_NOLOAD_DA_MAX  300     /* 30.0 A, the CT trip ceiling */
+#define CAL_MAX_RUN_MIN_MAX     1440
+typedef struct {
+    char     token[CAL_CTL_TOKEN_MAX + 1];
+    uint16_t sump_noload_da;   /* sump running below this = dry; 0 = off */
+    uint16_t max_run_min;      /* borewell alert after this long; 0 = off */
+    bool     ctrl_node;        /* node reads the float and runs the borewell */
+    bool     bore_act, sump_act;   /* protections stop the motor, not just alert */
+} cal_ctl_t;
+const cal_ctl_t *cal_ctl(void);
+/* Validates (token <= 32, ranges above) and stores every field. */
+esp_err_t cal_set_ctl(const cal_ctl_t *c);
+
 /* Pure ground-floor maths, host-tested by docs/check_gf.py. */
 uint16_t gfLoopDistanceMM(uint32_t loop_ua, uint16_t range_mm);
 int16_t  gfPhaseDeciAmps(uint16_t rms_mv, uint16_t amps_per_volt_x100, uint8_t turns);

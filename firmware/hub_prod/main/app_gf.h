@@ -9,6 +9,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "app_priv.h"
@@ -55,14 +56,46 @@ typedef struct {
     char      last_cmd[24];        /* "<src>:<motor>:<cmd>" or "" */
 } gf_util_t;
 
+/* Pump commands to the utility node. Values = the node's ctl.h enums
+ * (ctl_motor_t, ctl_cmd_t, ctl_src_t); EVT_MOTOR_CMD packs them as they are. */
+enum { GF_MOTOR_BORE = 0, GF_MOTOR_SUMP = 1 };
+enum { GF_CMD_START = 0, GF_CMD_STOP = 1 };
+enum { GF_SRC_AUTO = 0, GF_SRC_APP = 1, GF_SRC_DASH = 2 };
+typedef struct { uint8_t motor, cmd, src; } gf_cmd_t;
+
+/* What POST /api/ctl/cfg carries - the node's ctl_cfg_t, field for field. */
+typedef struct {
+    uint16_t bore_apv_x100, sump_apv_x100;
+    uint8_t  bore_turns, sump_turns;
+    uint16_t bore_run_da, bore_dry_da, sump_noload_da, max_run_min;
+    bool     ctrl_node, bore_act, sump_act;
+} gf_ctl_cfg_t;
+
 esp_err_t gf_init(void);
 void      gf_snapshot(gf_sump_t *sump, gf_util_t *util);
+
+/* Enqueue only (zero wait): gf_task does the HTTP. false if the queue is full
+ * or gf_init() has not run. Safe from any task. */
+bool gf_cmd_post(const gf_cmd_t *c);
+/* A ground-floor control cal value changed: gf_task pushes /api/ctl/cfg after
+ * its next good poll of the utility node, and again after each failed try. */
+void gf_cfg_push(void);
 
 /* Pure; host-tested by docs/check_gf.py. Parsers leave out->link untouched
  * except fw, rssi and uptime_s, and return false on anything malformed. */
 bool gf_parse_sump(const char *json, gf_sump_t *out);
 bool gf_parse_util(const char *json, gf_util_t *out);
 void gf_link_result(gf_link_t *l, bool ok, int64_t now_us);
+/* Request bodies for the node, compact JSON, token escaped. Return strlen, or
+ * -1 on truncation, a NULL token, or a value the node would refuse (src auto). */
+int  gf_ctl_body(const gf_cmd_t *c, const char *token, char *buf, size_t len);
+int  gf_cfg_body(const gf_ctl_cfg_t *cfg, const char *token, char *buf, size_t len);
+/* EVT_MOTOR_CMD's b: 0 for 200, 1-5 for a 409's why (single_phase, sump_hold,
+ * not_settled, sump_full, no_float), 15 for anything else. */
+int  gf_why_index(int status, const char *body);
+/* POST /api/motor {"motor":"bore"|"sump","cmd":"start"|"stop"}. Sets motor and
+ * cmd only, and only on success; src is the caller's. */
+bool gf_parse_motor_req(const char *json, gf_cmd_t *out);
 
 #ifdef __cplusplus
 }

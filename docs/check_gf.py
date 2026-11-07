@@ -75,6 +75,13 @@ typedef struct { gf_link_t link; uint16_t bore_mv[3]; uint16_t sump_mv[3]; bool 
                  int8_t rwt_floty; int16_t temp_deci_c; uint16_t hum_deci_pct; bool sht_ok;
                  int8_t float_low; bool ctrl_node, bore_act, sump_act; uint16_t flags; bool relays[3];
                  char last_cmd[24]; } gf_util_t;
+enum { GF_MOTOR_BORE = 0, GF_MOTOR_SUMP = 1 };
+enum { GF_CMD_START = 0, GF_CMD_STOP = 1 };
+enum { GF_SRC_AUTO = 0, GF_SRC_APP = 1, GF_SRC_DASH = 2 };
+typedef struct { uint8_t motor, cmd, src; } gf_cmd_t;
+typedef struct { uint16_t bore_apv_x100, sump_apv_x100; uint8_t bore_turns, sump_turns;
+                 uint16_t bore_run_da, bore_dry_da, sump_noload_da, max_run_min;
+                 bool ctrl_node, bore_act, sump_act; } gf_ctl_cfg_t;
 %s
 static int fails = 0;
 #define CHECK(expr) do { if (!(expr)) { printf("FAIL %%s\n", #expr); fails++; } } while (0)
@@ -117,6 +124,53 @@ int main(int argc, char **argv) {
     CHECK(u.float_low == -1 && !u.ctrl_node && u.flags == 0 && !u.relays[1]);   /* stale ctl fields cleared */
     CHECK(strlen(u.last_cmd) == 23 && strncmp(u.last_cmd, "abcdefghijklmnopqrstuvw", 23) == 0);
     CHECK(!gf_parse_util("{\"id\":6,\"fw\":\"b\",\"bore_mv\":[1,2]}", &u));   /* short array */
+    /* Task 8: command and cfg bodies, exactly what the node's ctl_parse_cmd/cfg read. */
+    {
+        static const char *const mn[] = { "bore", "sump" }, *const cn[] = { "start", "stop" };
+        char b[160], want[160];
+        for (int m = 0; m < 2; m++) for (int k = 0; k < 2; k++) for (int s = GF_SRC_APP; s <= GF_SRC_DASH; s++) {
+            gf_cmd_t c = { (uint8_t)m, (uint8_t)k, (uint8_t)s };
+            snprintf(want, sizeof want, "{\"token\":\"tok\",\"motor\":\"%%s\",\"cmd\":\"%%s\",\"src\":\"%%s\"}",
+                     mn[m], cn[k], s == GF_SRC_APP ? "app" : "dash");
+            int n = gf_ctl_body(&c, "tok", b, sizeof b);
+            CHECK(n == (int)strlen(want) && strcmp(b, want) == 0);
+        }
+        gf_cmd_t c = { GF_MOTOR_BORE, GF_CMD_STOP, GF_SRC_DASH };
+        CHECK(gf_ctl_body(&c, "a\"b\\c", b, sizeof b) > 0 &&                 /* token a"b\c, escaped */
+              strcmp(b, "{\"token\":\"a\\\"b\\\\c\",\"motor\":\"bore\",\"cmd\":\"stop\",\"src\":\"dash\"}") == 0);
+        CHECK(gf_ctl_body(&c, "tok", b, 20) == -1);                 /* truncation */
+        CHECK(gf_ctl_body(&c, NULL, b, sizeof b) == -1);
+        gf_cmd_t bad1 = { GF_MOTOR_BORE, GF_CMD_START, GF_SRC_AUTO }, bad2 = { 2, 0, 1 }, bad3 = { 0, 2, 1 };
+        CHECK(gf_ctl_body(&bad1, "t", b, sizeof b) == -1);          /* the node refuses src auto */
+        CHECK(gf_ctl_body(&bad2, "t", b, sizeof b) == -1 && gf_ctl_body(&bad3, "t", b, sizeof b) == -1);
+        char cb[400];
+        gf_ctl_cfg_t g = { 3000, 2950, 1, 2, 10, 0, 30, 120, true, false, true };
+        int n = gf_cfg_body(&g, "t", cb, sizeof cb);
+        CHECK(n == (int)strlen(CFG_EXPECT) && strcmp(cb, CFG_EXPECT) == 0);
+        if (strcmp(cb, CFG_EXPECT) != 0) printf("  got  %%s\n", cb);
+        CHECK(gf_cfg_body(&g, "t", cb, 40) == -1);
+        CHECK(gf_cfg_body(&g, NULL, cb, sizeof cb) == -1);
+        /* why -> event b */
+        CHECK(gf_why_index(200, "{\"ok\":true}") == 0);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"single_phase\"}") == 1);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"sump_hold\"}") == 2);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"not_settled\"}") == 3);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"sump_full\"}") == 4);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"no_float\"}") == 5);
+        CHECK(gf_why_index(409, "{\"ok\":false,\"why\":\"bogus\"}") == 15);
+        CHECK(gf_why_index(409, "not json") == 15 && gf_why_index(409, NULL) == 15);
+        CHECK(gf_why_index(403, "{\"ok\":false,\"why\":\"token\"}") == 15 && gf_why_index(0, NULL) == 15);
+        /* /api/motor request body */
+        gf_cmd_t r = { 9, 9, 9 };
+        CHECK(gf_parse_motor_req("{\"motor\":\"sump\",\"cmd\":\"stop\"}", &r) &&
+              r.motor == GF_MOTOR_SUMP && r.cmd == GF_CMD_STOP && r.src == 9);
+        CHECK(gf_parse_motor_req("{\"motor\":\"bore\",\"cmd\":\"start\"}", &r) &&
+              r.motor == GF_MOTOR_BORE && r.cmd == GF_CMD_START);
+        r.motor = 7;
+        CHECK(!gf_parse_motor_req("{\"motor\":\"well\",\"cmd\":\"start\"}", &r) && r.motor == 7);
+        CHECK(!gf_parse_motor_req("{\"motor\":\"bore\"}", &r) && !gf_parse_motor_req("{\"motor\":\"bore\",\"cmd\":1}", &r));
+        CHECK(!gf_parse_motor_req("motor=bore", &r) && !gf_parse_motor_req(NULL, &r));
+    }
     /* latch: 3 misses to offline, reprobe slower, first reply restores */
     gf_link_t l = {0}; int64_t t = 1000000;
     gf_link_result(&l, true, t);  CHECK(l.online && l.valid && l.misses == 0 && l.next_poll_us == t + 5000000LL);
@@ -136,6 +190,22 @@ int main(int argc, char **argv) {
     return fails ? 1 : 0;
 }
 '''
+
+CFG_EXPECT = ('{"token":"t","bore_apv_x100":3000,"sump_apv_x100":2950,"bore_turns":1,"sump_turns":2,'
+              '"bore_run_da":10,"bore_dry_da":0,"sump_noload_da":30,"max_run_min":120,'
+              '"ctrl_node":true,"bore_act":false,"sump_act":true}')
+
+def check_cfg_keys():
+    """gf_cfg_body must send exactly the keys the node's ctl_parse_cfg accepts:
+    an unknown key is a 400, a missing one is a setting the hub never pushes."""
+    import json
+    glue = io.open('firmware/gf_node/main/ctl_glue.c', encoding='utf-8').read()
+    m = re.search(r'keys\[\]\s*=\s*\{([^}]*)\}', glue)
+    node = set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
+    hub = set(json.loads(CFG_EXPECT))
+    if not node or node != hub:
+        print('cfg keys differ hub vs node: %s' % sorted(hub ^ node or {'(node list not found)'})); return 1
+    return 0
 
 FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fake_gf_node.py')
 
@@ -163,7 +233,8 @@ def build_parse_exe():
     block = src[src.index(GF_BEGIN) + len(GF_BEGIN):src.index(GF_END)]
     d = tempfile.mkdtemp()
     c_path, exe = os.path.join(d, 'gfp.c'), os.path.join(d, 'gfp.exe')
-    io.open(c_path, 'w', encoding='utf-8').write(PARSE_HARNESS % block)
+    cfg_c = '#define CFG_EXPECT "%s"\n' % CFG_EXPECT.replace('"', '\\"')   # CFG_EXPECT has no backslashes
+    io.open(c_path, 'w', encoding='utf-8').write(cfg_c + PARSE_HARNESS % block)
     if subprocess.call(['gcc', '-Wall', '-Wextra', '-Werror', '-I', cj, '-o', exe, c_path,
                         os.path.join(cj, 'cJSON.c')]) != 0:
         print('gcc refused the extracted parser -- that is the finding.'); return None
@@ -181,7 +252,7 @@ def check_ctl_flags():
     return 0
 
 def main_parse():
-    if check_ctl_flags(): return 1
+    if check_ctl_flags() or check_cfg_keys(): return 1
     exe = build_parse_exe()
     return 1 if exe is None else subprocess.call([exe])
 
