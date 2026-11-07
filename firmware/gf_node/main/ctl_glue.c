@@ -33,14 +33,20 @@ typedef struct { uint8_t ver; ctl_cfg_t cfg; } cfg_blob_t;
 static const ctl_cfg_t CFG_DEFAULT = { .bore_apv_x100 = 3000, .sump_apv_x100 = 3000, .bore_turns = 1,
                                        .sump_turns = 1, .bore_run_da = 10 };
 
+static void set_u8(nvs_handle_t h, const char *key, uint8_t v)
+{
+    esp_err_t e = nvs_set_u8(h, key, v);
+    if (e != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8 %s: %s", key, esp_err_to_name(e));
+}
+
 static void save_persist(void)
 {
     ctl_persist_t p;  ctl_persist(&s_st, &p);
     nvs_handle_t h;
     if (nvs_open("ctl", NVS_READWRITE, &h) != ESP_OK) { ESP_LOGE(TAG, "nvs open"); return; }
-    nvs_set_u8(h, "ustop_bore", p.user_stop_bore);
-    nvs_set_u8(h, "ustop_sump", p.user_stop_sump);
-    nvs_set_u8(h, "single_ph", p.single_phase);
+    set_u8(h, "ustop_bore", p.user_stop_bore);
+    set_u8(h, "ustop_sump", p.user_stop_sump);
+    set_u8(h, "single_ph", p.single_phase);
     if (nvs_commit(h) != ESP_OK) ESP_LOGE(TAG, "nvs commit");
     nvs_close(h);
 }
@@ -50,7 +56,8 @@ static void save_cfg(void)
     cfg_blob_t b = { .ver = CFG_VER, .cfg = s_cfg };
     nvs_handle_t h;
     if (nvs_open("ctl", NVS_READWRITE, &h) != ESP_OK) { ESP_LOGE(TAG, "nvs open"); return; }
-    nvs_set_blob(h, "cfg", &b, sizeof b);
+    esp_err_t e = nvs_set_blob(h, "cfg", &b, sizeof b);
+    if (e != ESP_OK) ESP_LOGE(TAG, "nvs_set_blob cfg: %s", esp_err_to_name(e));
     if (nvs_commit(h) != ESP_OK) ESP_LOGE(TAG, "nvs commit");
     nvs_close(h);
 }
