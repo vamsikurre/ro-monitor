@@ -28,7 +28,7 @@
 
 1. **Node reboots mid-pulse or while a stop is held.** Expected: no START on the way up; a held stop that was a person's Stop or single-phasing is re-held from NVS within one cycle after boot; a float-full pulse is simply not resumed. → Task 4 test `boot_restores_held_stops_never_starts`.
 2. **Float chatter at the switching point (splash, waves from the borewell inflow).** Expected: no START/STOP flapping; debounce is time-based (5 s), not cycle-counted. → Task 1 test `float_chatter_under_debounce_does_nothing`.
-3. **Clamp unplugged or pedestal fault while running** (node reports 0 mV = no clamp, `-1` da). Expected: never read as "phase lost" or "dry"; single-phasing needs ≥ 2 phases with readings. → Task 2 test `missing_clamp_is_not_single_phasing`.
+3. **Clamp unplugged or pedestal fault while running** (node reports exactly 0 mV). Expected: never read as "phase lost" or "dry"; but a plugged clamp reading a few mV on a dead conductor IS a lost phase (Task 2 ruling). → Task 2 test `missing_clamp_is_not_single_phasing`.
 4. **Hub sends a command while Wi-Fi flaps / duplicate POSTs.** Expected: a repeated Start or Stop is idempotent; wrong or missing token → 403 and no state change. → Task 6 test `bad_token_refused_and_state_unchanged`.
 5. **Settings never pushed (fresh node, hub down).** Expected: node runs with safe defaults from NVS or compiled-in (controller = NEC-49, Alert only, thresholds 0 = that check disabled), never acts on a zero threshold. → Task 1 test `zero_thresholds_disable_checks`.
 
@@ -104,6 +104,7 @@ void     ctl_init(ctl_state_t *s, const ctl_persist_t *p, int64_t boot_ms);
 void     ctl_step(ctl_state_t *s, const ctl_cfg_t *c, const ctl_in_t *in, ctl_out_t *out);
 uint16_t ctl_flags(const ctl_state_t *s);
 bool     ctl_bore_running(const ctl_state_t *s);   /* any phase >= bore_run_da */
+int8_t   ctl_float_low(const ctl_state_t *s);      /* debounced: 1 low, 0 high, -1 not read */
 int16_t  ctl_deci_amps(uint16_t mv, uint16_t apv_x100, uint8_t turns);  /* == hub gfPhaseDeciAmps */
 ```
 `out->bore_start` true means "begin a START pulse now" (an edge); the relay driver (Task 5) times it. `out->bore_stop` / `sump_stop` are levels.
@@ -128,12 +129,13 @@ Values pinned by this task: float debounce **5000 ms**; START verify window **10
 **Files:** Modify `ctl.c`; Test `docs/check_ctl.py`
 **Interfaces:** Consumes Task 1. Produces flag semantics `CTL_F_SINGLE_PHASE`, `CTL_F_BORE_DRY`, `CTL_F_BORE_DRY_LATCH`, `CTL_F_MAX_RUN`.
 
-Pinned values: single-phasing = running and one phase with a reading **< 30 %** of the highest for **5000 ms**, needs ≥ 2 phases reading; dry = running and highest phase **< bore_dry_da** for **20000 ms**; dry rest **30 min**, **3** attempts, then latch; max run = running continuously **> max_run_min**.
+Pinned values: single-phasing = running and one **present** phase **< 30 %** of the highest for **5000 ms**, needs ≥ 2 present phases. **A phase is present when its raw `bore_mv` is non-zero.** The node's `rms_mv()` returns exactly 0 only when the pedestal is invalid (clamp unplugged / divider fault); a plugged clamp on a dead conductor reads a few mV of noise, which converts to -1 da (under the floor) but is still *present* and counts as 0 A. So 0 mV = ignore the channel; 1–14 mV = present at 0 A (a lost phase); dry = running and highest phase **< bore_dry_da** for **20000 ms**; dry rest **30 min**, **3** attempts, then latch; max run = running continuously **> max_run_min**.
 
 - [ ] **Step 1: Write failing tests:**
   - `single_phase_alert_only_does_not_stop`: `bore_act=false`, phases (60,60,5) da for 6 s → flag set, `bore_stop` false.
   - `single_phase_act_holds_stop_and_blocks_auto`: `bore_act=true` → `bore_stop` held true; float low for 10 min → no START edge.
-  - `missing_clamp_is_not_single_phasing`: phases (60,60,-1) and (60,-1,-1) for 1 min → flag never set.
+  - `missing_clamp_is_not_single_phasing`: raw `bore_mv` with one or two channels at exactly 0 mV, the rest drawing, for 1 min → flag never set.
+  - `lost_phase_with_clamp_present_is_single_phasing`: `bore_mv` = (two channels drawing ~60 da, third at 3 mV) for 6 s → flag set.
   - `dry_retry_three_times_then_latch`: `bore_act=true, bore_dry_da=20`, running at 10 da: stop held after 20 s; START edge at +30 min; repeat; after the 3rd dry stop `CTL_F_BORE_DRY_LATCH` set and no START for 3 h.
   - `max_run_flags_never_stops`: `max_run_min=60`, running 61 min → `CTL_F_MAX_RUN`, `bore_stop` false.
 - [ ] **Step 2: Run** → FAIL.
@@ -201,9 +203,9 @@ int  ctl_glue_json(char *buf, size_t len);   /* the fields appended to telemetry
 - Telemetry additions to the utility JSON: `"float_low":true|false|null,"ctrl_node":bool,"bore_act":bool,"sump_act":bool,"flags":<uint>,"relays":[bore_stop,bore_start,sump_stop],"last_cmd":"<str>"`. `rwt_floty` stays, always `null`.
 - Telemetry buffer in `web.c` grows from 512 to 768.
 
-- [ ] **Step 1: Update `docs/check_gf_node.py`** expected-key table with the fields above (types: bool, bool, bool, int, list of 3 bools, str; `float_low` nullable) and **`docs/check_pinmap.py`**'s doc source (Task 11 updates the doc; in this task add the three relay pins and `SUMP_FLOAT` to the firmware side) → run both → FAIL.
+- [ ] **Step 1: Update `docs/check_gf_node.py`** expected-key table with the fields above (types: bool, bool, bool, int, list of 3 bools, str; `float_low` nullable) → run → FAIL. Also add the three relay rows and the `SUMP_FLOAT` row to the GPIO table in `docs/WIRING.md` §11.2 (pins only; Task 11 writes the prose) so `docs/check_pinmap.py` stays green.
 - [ ] **Step 2: Implement** the files above. `sensors_sample()` calls `ctl_glue_step()` with the fresh readings at the end of each sample.
-- [ ] **Step 3: Run** `python docs/check_gf_node.py` and `python docs/check_ctl.py` → OK (pinmap waits for Task 11).
+- [ ] **Step 3: Run** `python docs/check_gf_node.py`, `python docs/check_ctl.py` and `python docs/check_pinmap.py` → OK.
 - [ ] **Step 4: Commit**, then **build** gf_node utility role (`idf.py -B build_util -D SDKCONFIG=build_util/sdkconfig build`) → succeeds with no warnings.
 
 ### Task 6: Node command endpoints
@@ -240,7 +242,7 @@ bool gf_cmd_post(const gf_cmd_t *c);   /* enqueue (xQueueSend, no wait); false i
 - New cal (NVS, `/cal` "Ground-floor control" fieldset): `ctl_token` (str ≤ 32), `sump_noload_da`, `max_run_min`, `ctrl_node`, `bore_act`, `sump_act`. CT A/V, turns, `run_deci_amps`, `bore_dry_deci_a` already exist and are pushed as `bore_apv_x100`, etc.
 - `POST /api/motor` on the hub: `{"motor":"bore"|"sump","cmd":"start"|"stop"}` → enqueues with `src=dash` → 202; queue full → 503. The node's 409 reason is surfaced as the next telemetry's `last_cmd` plus an event.
 - RainMaker, ground-floor device: `"Borewell Start"`, `"Borewell Stop"`, `"Sump Motor Start"`, `"Sump Motor Stop"` (bool, `esp.ui.trigger`, write-only), `"Node Controls Borewell"`, `"Borewell Protection Acts"`, `"Sump Protection Acts"` (bool toggles). `write_cb` only enqueues / writes cal; never does HTTP itself.
-- [ ] **Step 1: Failing tests:** `docs/check_telemetry.py` gains the `/api/motor` route and the cal keys; a host test of the pure body builder `int gf_ctl_body(const gf_cmd_t*, const char *token, char *buf, size_t)` (between `GF_PARSE_BEGIN/END`) produces exactly the Task 6 JSON.
+- [ ] **Step 1: Failing tests:** a host test of the pure body builder `int gf_ctl_body(const gf_cmd_t*, const char *token, char *buf, size_t)` (between `GF_PARSE_BEGIN/END`) produces exactly the Task 6 JSON.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** all hub checkers → OK.
 - [ ] **Step 5: Commit**, **build** hub_prod → OK, app partition still ≥ 10 % free.
 
