@@ -52,9 +52,14 @@ static bool read_body(httpd_req_t *req, char *b)
         return false;
     }
     size_t got = 0;
+    int stalls = 0;
     while (got < req->content_len) {
         int n = httpd_req_recv(req, b + got, req->content_len - got);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) {      /* a stalled client must not hold the one httpd task */
+            if (++stalls > 3) { httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "stalled"); return false; }
+            continue;
+        }
+        stalls = 0;
         if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "short body"); return false; }
         got += n;
     }
@@ -85,6 +90,7 @@ static esp_err_t ctl_post(httpd_req_t *req)
     if (r == CTL_OK) return httpd_resp_sendstr(req, "{\"ok\":true}");
     static const char *const why[] = { [CTL_REFUSED_SINGLE_PHASE] = "single_phase", [CTL_REFUSED_SUMP_HOLD] = "sump_hold",
         [CTL_REFUSED_NOT_SETTLED] = "not_settled", [CTL_REFUSED_SUMP_FULL] = "sump_full", [CTL_REFUSED_NO_FLOAT] = "no_float" };
+    if ((unsigned)r >= sizeof why / sizeof why[0] || !why[r]) return httpd_resp_send_500(req);
     char o[48];
     snprintf(o, sizeof o, "{\"ok\":false,\"why\":\"%s\"}", why[r]);
     httpd_resp_set_status(req, "409 Conflict");

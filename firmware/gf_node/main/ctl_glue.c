@@ -86,18 +86,20 @@ int ctl_parse_cmd(const char *json, const char *token, ctl_motor_t *m, ctl_cmd_t
     cJSON *j = cJSON_Parse(json);
     if (!cJSON_IsObject(j)) { cJSON_Delete(j); return 400; }
     int rc = 0;
+    ctl_motor_t lm = CTL_BORE;  ctl_cmd_t lc = CTL_CMD_STOP;  ctl_src_t ls = CTL_SRC_APP;
     if (!tok_ok(j, token)) rc = 403;
-    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "start")) { *m = CTL_BORE; *c = CTL_CMD_START; }
-    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "stop"))  { *m = CTL_BORE; *c = CTL_CMD_STOP; }
-    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "start")) { *m = CTL_SUMP; *c = CTL_CMD_START; }
-    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "stop"))  { *m = CTL_SUMP; *c = CTL_CMD_STOP; }
+    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "start")) { lm = CTL_BORE; lc = CTL_CMD_START; }
+    else if (str_is(j, "motor", "bore") && str_is(j, "cmd", "stop"))  { lm = CTL_BORE; lc = CTL_CMD_STOP; }
+    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "start")) { lm = CTL_SUMP; lc = CTL_CMD_START; }
+    else if (str_is(j, "motor", "sump") && str_is(j, "cmd", "stop"))  { lm = CTL_SUMP; lc = CTL_CMD_STOP; }
     else rc = 400;
     if (rc == 0) {
-        if (str_is(j, "src", "app"))       *src = CTL_SRC_APP;
-        else if (str_is(j, "src", "dash")) *src = CTL_SRC_DASH;
+        if (str_is(j, "src", "app"))       ls = CTL_SRC_APP;
+        else if (str_is(j, "src", "dash")) ls = CTL_SRC_DASH;
         else rc = 400;
     }
     cJSON_Delete(j);
+    if (rc == 0) { *m = lm; *c = lc; *src = ls; }   /* outputs only on full success */
     return rc;
 }
 
@@ -127,6 +129,14 @@ int ctl_parse_cfg(const char *json, const char *token, ctl_cfg_t *cfg)
     cJSON *j = cJSON_Parse(json);
     if (!cJSON_IsObject(j)) { cJSON_Delete(j); return 400; }
     if (!tok_ok(j, token)) { cJSON_Delete(j); return 403; }
+    static const char *const keys[] = { "token", "bore_apv_x100", "sump_apv_x100", "bore_turns", "sump_turns",
+        "bore_run_da", "bore_dry_da", "sump_noload_da", "max_run_min", "ctrl_node", "bore_act", "sump_act" };
+    for (const cJSON *e = j->child; e; e = e->next) {      /* a typo'd key must not return 200 */
+        bool known = false;
+        for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++)
+            if (e->string && strcmp(e->string, keys[i]) == 0) known = true;
+        if (!known) { cJSON_Delete(j); return 400; }
+    }
     ctl_cfg_t n = *cfg;                       /* only copied back when every field is valid */
     unsigned v;
     bool ok = true;
@@ -137,7 +147,8 @@ int ctl_parse_cfg(const char *json, const char *token, ctl_cfg_t *cfg)
     ok = ok && bool_field(j, "ctrl_node", &n.ctrl_node) && bool_field(j, "bore_act", &n.bore_act)
             && bool_field(j, "sump_act", &n.sump_act);
     cJSON_Delete(j);
-    if (!ok) return 400;
+    /* zero scale / run threshold would make the borewell never (or always) read as running */
+    if (!ok || n.bore_apv_x100 == 0 || n.sump_apv_x100 == 0 || n.bore_run_da == 0) return 400;
     *cfg = n;
     return 0;
 }
@@ -198,8 +209,10 @@ ctl_result_t ctl_glue_command(ctl_motor_t m, ctl_cmd_t c, ctl_src_t src)
 void ctl_glue_cfg_set(const ctl_cfg_t *c)
 {
     xSemaphoreTake(s_mx, portMAX_DELAY);
-    s_cfg = *c;
-    save_cfg();
+    if (memcmp(&s_cfg, c, sizeof s_cfg) != 0) {   /* no NVS wear for an unchanged config */
+        s_cfg = *c;
+        save_cfg();
+    }
     xSemaphoreGive(s_mx);
 }
 

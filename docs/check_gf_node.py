@@ -251,7 +251,7 @@ int main(void) {
     CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"start\",\"src\":\"dash\"}", "s3cret", &m, &c, &src) == 0
           && m == CTL_BORE && c == CTL_CMD_START && src == CTL_SRC_DASH);
     /* bad_token_refused_and_state_unchanged */
-    ctl_cfg_t cfg = { .bore_apv_x100 = 3000, .bore_turns = 1, .bore_run_da = 10, .ctrl_node = true };
+    ctl_cfg_t cfg = { .bore_apv_x100 = 3000, .sump_apv_x100 = 3000, .bore_turns = 1, .bore_run_da = 10, .ctrl_node = true };
     ctl_cfg_t before = cfg;
     const char *body = "{\"token\":\"%%s\",\"bore_run_da\":99,\"ctrl_node\":false}";
     char b[128];
@@ -291,6 +291,19 @@ int main(void) {
     CHECK(ctl_parse_cmd("not json", "s3cret", &m, &c, &src) == 400);
     CHECK(ctl_parse_cmd("[1,2]", "s3cret", &m, &c, &src) == 400);
     CHECK(ctl_parse_cfg("{\"token\":\"s3cret\"", "s3cret", &cfg) == 400);
+    /* unknown_cfg_key_is_400 */
+    before = cfg;
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":7,\"bore_trns\":2}", "s3cret", &cfg) == 400);
+    CHECK(memcmp(&cfg, &before, sizeof cfg) == 0);
+    /* zero_scale_or_run_threshold_is_400 */
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_apv_x100\":0}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"sump_apv_x100\":0}", "s3cret", &cfg) == 400);
+    CHECK(ctl_parse_cfg("{\"token\":\"s3cret\",\"bore_run_da\":0}", "s3cret", &cfg) == 400);
+    CHECK(memcmp(&cfg, &before, sizeof cfg) == 0);
+    /* a failed command parse leaves the outputs alone */
+    m = CTL_SUMP; c = CTL_CMD_STOP; src = CTL_SRC_DASH;
+    CHECK(ctl_parse_cmd("{\"token\":\"s3cret\",\"motor\":\"bore\",\"cmd\":\"start\",\"src\":\"auto\"}", "s3cret", &m, &c, &src) == 400
+          && m == CTL_SUMP && c == CTL_CMD_STOP && src == CTL_SRC_DASH);
     printf(fails ? "ctl_parse: %%d FAILED\n" : "ctl_parse: OK\n", fails);
     return fails ? 1 : 0;
 }
