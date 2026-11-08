@@ -1840,6 +1840,91 @@ is ADC2, which is dead whenever Wi-Fi is up.
 
 So the node's interface board is **two resistors and two capacitors once, plus one 1 k, one 100 nF and one socket per channel** — 14 passives and six sockets.
 
+#### CT bias board — perfboard layout (as planned 2026-11-08)
+
+The network above is built on **its own perfboard**, apart from the node board:
+an 11 × 21 hole piece (~28 × 53 mm), columns 1–9 and rows 2–19 used. The six
+3.5 mm sockets are panel-mounted on the enclosure and wired in; the node board
+then needs only a header for the 8-wire lead from this one.
+
+Parts: 1 kΩ ¼ W × 6, 100 nF ceramic (`104`) × 7 (six channels + C2),
+10 kΩ ¼ W × 2 (R1, R2), 10 µF ≥ 16 V electrolytic × 1 (C1), 14-pin single-row
+male header × 1, ~12 cm bare tinned wire for the two buses.
+
+Key (parts side): `●` soldered hole · `─` solder bridge / link underneath ·
+`║` bare tinned bus wire underneath, one unbroken piece · `[═══]` resistor lying
+flat · `┃` 100 nF standing between the two rows.
+
+```
+         col: 1     2     3     4     5     6     7     8     9
+              RAIL  TIP                           NODE  OUT   AGND
+row  2  CH1   ●     ●─────●[═══════ 1k ══════════]●─────●S1         sump Start  → GPIO 36
+              ║                                   ┃ 100nF
+row  3        ║                                   ●─────●G────●
+              ║                                               ║
+row  4  CH2   ●     ●─────●[═══════ 1k ══════════]●─────●S2   ║     sump Run    → GPIO 39
+              ║                                   ┃ 100nF     ║
+row  5        ║                                   ●─────●G────●
+              ║                                               ║
+row  6  CH3   ●     ●─────●[═══════ 1k ══════════]●─────●S3   ║     bore L3     → GPIO 34
+              ║                                   ┃ 100nF     ║
+row  7        ║                                   ●─────●G────●
+              ║                                               ║
+row  8  CH4   ●     ●─────●[═══════ 1k ══════════]●─────●S4   ║     sump Common → GPIO 35
+              ║                                   ┃ 100nF     ║
+row  9        ║                                   ●─────●G────●
+              ║                                               ║
+row 10  CH5   ●     ●─────●[═══════ 1k ══════════]●─────●S5   ║     bore L1     → GPIO 32
+              ║                                   ┃ 100nF     ║
+row 11        ║                                   ●─────●G────●
+              ║                                               ║
+row 12  CH6   ●     ●─────●[═══════ 1k ══════════]●─────●S6   ║     bore L2     → GPIO 33
+              ║                                   ┃ 100nF     ║
+row 13        ║                                   ●─────●G────●
+              ║                                               ║
+row 14        ║                                         ●G────●
+              ║                                               ║
+row 15  3V3   ●─────●─────●[═════ R1 10k ════════]●─────●3V3  ║     ← from ESP32 3V3
+              ║                                               ║
+row 16        ║                                               ║
+              ║                                               ║
+row 17  R2    ●─────●─────●[═════ R2 10k ════════]●─────●─────●
+              ║                                               ║
+row 18  C2    ●─────●[ C2 100n ]●─────────────────────────────●
+              ║                                               ║
+row 19  C1    ●─────●(+C1 10µF )●─────────────────────────────●
+              └ BIAS RAIL (1.65 V)                            └ AGND
+```
+
+| Column | What it is |
+| :--- | :--- |
+| **1** | **Bias rail** — one unbroken bare wire, rows 2–19. The six jack **RING** wires land here (rows 2, 4, 6, 8, 10, 12) |
+| **2** | Jack **TIP**, same rows. Bridged to column 3 only |
+| **3 → 7** | The 1 kΩ, legs in columns 3 and 7 |
+| **7** | Channel node. Its 100 nF stands from here to the hole directly below |
+| **8** | Output header, rows 2–15: `S1 G S2 G S3 G S4 G S5 G S6 G G 3V3` |
+| **9** | **AGND bus** — one unbroken bare wire, rows 3–19 |
+
+Bottom block: row 15 3V3 pin → R1 → rail; row 17 rail → R2 → AGND; row 18
+rail → C2 → AGND; row 19 rail → C1 **+** → C1 − → AGND.
+
+**Do not:**
+1. bridge column 1 to column 2 on a channel row — ring shorted to tip;
+2. let row 15 column 8 (3V3) touch column 9 (AGND) — 3V3 shorted to ground;
+3. fit C1 backwards — **+** leg in column 2, the rail side;
+4. break either bus — one piece of wire each, soldered at every hole it passes.
+
+**Lead to the node** (8 wires, ideally a ribbon, ≤ 15 cm): S1–S6 → GPIO 36, 39,
+34, 35, 32, 33 in that order; one G → the ESP32 GND that the node's signal
+grounds return to (**not** the relay ground); 3V3 → ESP32 3V3.
+
+**Checks before it meets the ESP32:**
+1. Unpowered: column 1 to column 9 settles at ~5 kΩ; 3V3 pin to G at ~10 kΩ
+   (both drift while C1 charges from the meter); no S pin beeps to G.
+2. 3.3 V fed into the header: column 1 reads ~1.65 V.
+3. A clamp plugged in with no current: that S pin reads ~1.65 V. A channel with
+   no clamp reads ~0 V, which is normal (note above).
+
 #### 11.3.1. Sizing these channels with no nameplate to read
 
 **Confirmed on site 2026-08-27: neither motor has a readable nameplate.** The sump
